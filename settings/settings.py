@@ -10,11 +10,28 @@ import environ
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 env = environ.Env()
+# El archivo .env es OPCIONAL en desarrollo local: si no existe se ignora
+# y se usan los valores por defecto de abajo (SQLite + DEBUG).
 environ.Env.read_env(BASE_DIR / '.env')
 
-SECRET_KEY = env('SECRET_KEY')
+# --- Selección de base de datos ---
+# PostgreSQL SOLO si hay credenciales reales. En cualquier otro caso
+# (sin .env, o con los valores de ejemplo sin rellenar) se usa SQLite
+# local para poder arrancar y desarrollar las interfaces sin depender de PG.
+# En cuanto NAME_DB/USER_DB/PASSWORD_DB tengan valores reales, se usa PG.
+_PG_PLACEHOLDERS = {'', 'name_db', 'user_db', 'password_db'}
+_USE_POSTGRESQL = all(
+    env(var, default='') not in _PG_PLACEHOLDERS
+    for var in ('NAME_DB', 'USER_DB', 'PASSWORD_DB')
+)
 
-DEBUG = env.bool('DEBUG', default=False)
+# Clave por defecto SOLO para desarrollo local; en producción SIEMPRE
+# definir una SECRET_KEY real en el .env o en variables de entorno.
+SECRET_KEY = env('SECRET_KEY', default='django-insecure-solo-desarrollo-local')
+
+# Sin .env y sin PostgreSQL se asume desarrollo local (DEBUG=True).
+# Un valor explícito en .env o en el entorno siempre tiene prioridad.
+DEBUG = env.bool('DEBUG', default=not _USE_POSTGRESQL)
 
 ALLOWED_HOSTS = []
 
@@ -48,7 +65,7 @@ ROOT_URLCONF = 'settings.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -64,16 +81,24 @@ WSGI_APPLICATION = 'settings.wsgi.application'
 
 # Database
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': env('NAME_DB'),
-        'USER': env('USER_DB'),
-        'PASSWORD': env('PASSWORD_DB'),
-        'HOST': env('HOST_DB', default='localhost'),
-        'PORT': env('PORT_DB', default='5432'),
+if _USE_POSTGRESQL:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': env('NAME_DB'),
+            'USER': env('USER_DB'),
+            'PASSWORD': env('PASSWORD_DB'),
+            'HOST': env('HOST_DB', default='localhost'),
+            'PORT': env('PORT_DB', default='5432'),
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # Password validation
 
@@ -107,6 +132,8 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 
 STATIC_URL = 'static/'
+
+STATICFILES_DIRS = [BASE_DIR / 'static']
 
 
 # Email

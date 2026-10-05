@@ -3,3 +3,4 @@ venv
 __pycache__
 .vscode/
 AGENTS.md
+db.sqlite3

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 120" width="100%" height="100%">
+  <g fill="#049FD9">
+    <rect x="25" y="45" width="8" height="25" rx="4"/>
+    <rect x="50" y="25" width="8" height="45" rx="4"/>
+    <rect x="75" y="45" width="8" height="25" rx="4"/>
+    <rect x="100" y="10" width="8" height="60" rx="4"/>
+    <rect x="125" y="30" width="8" height="40" rx="4"/>
+    <rect x="150" y="10" width="8" height="60" rx="4"/>
+    <rect x="175" y="45" width="8" height="25" rx="4"/>
+    <rect x="200" y="25" width="8" height="45" rx="4"/>
+    <rect x="225" y="45" width="8" height="25" rx="4"/>
+    <text x="128" y="105" font-family="'Segoe UI', Roboto, sans-serif" font-size="34" font-weight="900" fill="#049FD9" text-anchor="middle" letter-spacing="4">CISCO</text>
+  </g>
+</svg>

@@ -15,8 +15,21 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path
+from django.urls import include, path
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.generic import TemplateView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    # Vistas de presentación (templates/): solo renderizan HTML estático.
+    # El backend conectará modelos y datos reales más adelante.
+    path('', TemplateView.as_view(template_name='inicio.html'), name='inicio'),
+    path('clientes/', TemplateView.as_view(template_name='clientes.html'), name='clientes'),
+    path('cotizador/', TemplateView.as_view(template_name='cotizador.html'), name='cotizador'),
+    path('comparador/', TemplateView.as_view(template_name='comparador.html'), name='comparador'),
+    # ensure_csrf_cookie: el modal de envío por correo hace POST por fetch
+    # y el JS lee el token CSRF desde la cookie.
+    path('resumen/', ensure_csrf_cookie(TemplateView.as_view(template_name='resumen.html')), name='resumen'),
+    # App quotes: descarga de PDF oficial y envío de cotización por correo.
+    path('', include('apps.quotes.urls')),
 ]

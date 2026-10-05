@@ -1,0 +1,179 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}CCONOR - Soluciones Tecnológicas{% endblock %}</title>
+    
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    
+    <!-- Custom Styles (v=2 invalida la caché del navegador tras el rediseño) -->
+    <link rel="stylesheet" href="{% static 'css/custom.css' %}?v=2">
+    
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+    <!-- TOPBAR SUPERIOR -->
+    <div class="cconor-topbar">
+        <div class="container d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center gap-3">
+                <span class="d-flex align-items-center gap-2">
+                    <i class="bi bi-telephone-fill small"></i>
+                    <a href="tel:+526181814359" class="text-white text-decoration-none fw-semibold">+52 618-181-4359</a>
+                </span>
+                <span class="d-none d-md-flex align-items-center gap-2">
+                    <i class="bi bi-envelope-fill small"></i>
+                    <a href="mailto:ventas@cconor.com" class="text-white text-decoration-none">ventas@cconor.com</a>
+                </span>
+                <span class="d-none d-lg-flex align-items-center gap-2">
+                    <i class="bi bi-geo-alt-fill small"></i>
+                    <span>Durango, Dgo.</span>
+                </span>
+            </div>
+            <div class="d-flex align-items-center gap-3 fs-6">
+                <a href="#" title="Facebook"><i class="bi bi-facebook"></i></a>
+                <a href="#" title="Instagram"><i class="bi bi-instagram"></i></a>
+                <a href="#" title="WhatsApp"><i class="bi bi-whatsapp"></i></a>
+                <a href="mailto:ventas@cconor.com" title="Email"><i class="bi bi-envelope-fill"></i></a>
+            </div>
+        </div>
+    </div>
+
+    <!-- NAVBAR PRINCIPAL (IDÉNTICO A LA CAPTURA) -->
+    <nav class="navbar navbar-expand-lg cconor-navbar sticky-top">
+        <div class="container">
+            <!-- LOGOTIPO CCONOR SOLUCIONES TECNOLÓGICAS -->
+            <a class="navbar-brand d-flex align-items-center text-decoration-none py-0" href="{% url 'inicio' %}">
+                <img src="{% static 'img/logo.png' %}" alt="CCONOR Soluciones Tecnológicas" class="brand-logo" width="135" height="48">
+            </a>
+
+            <!-- BOTÓN RESPONSIVO MÓVIL -->
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarMainContent" aria-controls="navbarMainContent" aria-expanded="false" aria-label="Abrir menú">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
+            <!-- MENÚ DE NAVEGACIÓN DERECHO -->
+            <div class="collapse navbar-collapse" id="navbarMainContent">
+                <ul class="navbar-nav ms-auto mb-2 mb-lg-0 align-items-center gap-1 gap-lg-2">
+                    <li class="nav-item">
+                        <a class="nav-link cconor-nav-link {% if request.resolver_match.url_name == 'inicio' %}active{% endif %}" href="{% url 'inicio' %}">
+                            <i class="bi bi-house-door-fill me-1"></i> INICIO
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link cconor-nav-link {% if request.resolver_match.url_name == 'clientes' %}active{% endif %}" href="{% url 'clientes' %}">
+                            <i class="bi bi-people-fill me-1"></i> CLIENTES
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link cconor-nav-link {% if request.resolver_match.url_name == 'cotizador' %}active{% endif %}" href="{% url 'cotizador' %}">
+                            <i class="bi bi-file-earmark-text-fill me-1"></i> COTIZADOR
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link cconor-nav-link {% if request.resolver_match.url_name == 'comparador' %}active{% endif %}" href="{% url 'comparador' %}">
+                            <i class="bi bi-hdd-stack-fill me-1"></i> COMPARADOR
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link cconor-nav-link {% if request.resolver_match.url_name == 'resumen' %}active{% endif %}" href="{% url 'resumen' %}">
+                            <i class="bi bi-list-check me-1"></i> RESUMEN
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- MENSAJES DJANGO -->
+    <div class="container mt-2">
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show shadow-sm" role="alert">
+                    <i class="bi bi-info-circle-fill me-2"></i>
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar"></button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    </div>
+
+    <!-- CONTENIDO DE CADA PÁGINA -->
+    <main class="flex-grow-1">
+        {% block content %}
+        {% endblock %}
+    </main>
+
+    <!-- FOOTER INSTITUCIONAL -->
+    <footer class="cconor-footer">
+        <div class="container">
+            <div class="row g-4">
+                <div class="col-lg-4 col-md-6">
+                    <h4 class="text-white fw-bold mb-1">CCONOR</h4>
+                    <p class="small text-uppercase tracking-wider text-white-50 fw-bold mb-2">SOLUCIONES TECNOLÓGICAS</p>
+                    <p class="text-white-50 small mb-3">
+                        Tecnología que conecta oportunidades. Infraestructura, redes, telecomunicaciones y equipo de cómputo mayorista.
+                    </p>
+                </div>
+                
+                <div class="col-lg-2 col-md-6">
+                    <h6>Navegación</h6>
+                    <ul class="list-unstyled mb-0 small">
+                        <li class="mb-2"><a href="{% url 'inicio' %}">Inicio</a></li>
+                        <li class="mb-2"><a href="{% url 'clientes' %}">Gestión de Clientes</a></li>
+                        <li class="mb-2"><a href="{% url 'cotizador' %}">Cotizador</a></li>
+                        <li class="mb-2"><a href="{% url 'comparador' %}">Comparador</a></li>
+                        <li class="mb-2"><a href="{% url 'resumen' %}">Historial & Resumen</a></li>
+                    </ul>
+                </div>
+
+                <div class="col-lg-3 col-md-6">
+                    <h6>Distribuidores Afiliados</h6>
+                    <ul class="list-unstyled mb-0 small text-white-50">
+                        <li class="mb-2"><span class="badge badge-provider badge-syscom me-1">SYSCOM</span> CCTV, Redes y Telecomunicaciones</li>
+                        <li class="mb-2"><span class="badge badge-provider badge-ct me-1">CT Online</span> Cómputo, Servidores y Partes</li>
+                    </ul>
+                </div>
+
+                <div class="col-lg-3 col-md-6">
+                    <h6>Contacto</h6>
+                    <p class="small text-white-50 mb-1"><i class="bi bi-telephone text-primary me-2"></i> +52 618-181-4359</p>
+                    <p class="small text-white-50 mb-1"><i class="bi bi-envelope text-primary me-2"></i> contacto@cconor.com</p>
+                    <p class="small text-white-50 mb-0"><i class="bi bi-shield-check text-primary me-2"></i> Soporte y Distribución Mayorista</p>
+                </div>
+            </div>
+
+            <div class="cconor-footer-bottom d-flex flex-column flex-md-row justify-content-between align-items-center">
+                <p class="mb-0 text-white-50 small">
+                    &copy; 2026 CCONOR Soluciones Tecnológicas. Todos los derechos reservados.
+                </p>
+                <div class="small text-white-50">
+                    Portal de Cotización Multi-Proveedor
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Bootstrap 5 Bundle JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    
+    <!-- Capa de Servicios y API Client Desacoplada -->
+    <script src="{% static 'js/api.js' %}"></script>
+
+    <!-- Script General (v=2 invalida la caché del navegador) -->
+    <script src="{% static 'js/main.js' %}?v=2"></script>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

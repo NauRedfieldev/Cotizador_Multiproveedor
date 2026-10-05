@@ -1,0 +1,429 @@
+/* ==========================================================================
+   CCONOR - PÁGINA DE INICIO (tema B2B azul/blanco).
+   Solo se carga en inicio.html vía {% block extra_css %}.
+   ========================================================================== */
+
+:root {
+    --navy: #10183A;
+    --navy-dark: #0D2753;
+    --primary: #146EF5;
+    --primary-hover: #0F5ED7;
+    --cyan: #06B6D4;
+    --background: #F8FAFC;
+    --surface: #FFFFFF;
+    --text: #0F172A;
+    --text-secondary: #64748B;
+    --border: #E2E8F0;
+}
+
+/* ================= HERO ================= */
+
+.home-hero {
+    background: linear-gradient(110deg, #F8FAFC 0%, #EDF6FF 48%, #DCEEFF 100%);
+    position: relative;
+    overflow: hidden;
+    padding: 48px 0 72px 0;
+}
+
+/* Formas abstractas azules muy suaves */
+.home-hero::before {
+    content: "";
+    position: absolute;
+    width: 560px;
+    height: 560px;
+    right: -140px;
+    top: -160px;
+    background: radial-gradient(circle, rgba(20, 110, 245, 0.10) 0%, rgba(20, 110, 245, 0) 65%);
+    pointer-events: none;
+}
+
+.home-hero::after {
+    content: "";
+    position: absolute;
+    width: 420px;
+    height: 420px;
+    left: -140px;
+    bottom: -180px;
+    background: radial-gradient(circle, rgba(6, 182, 212, 0.08) 0%, rgba(6, 182, 212, 0) 65%);
+    pointer-events: none;
+}
+
+.home-hero .container {
+    max-width: 1350px;
+    position: relative;
+    z-index: 1;
+}
+
+.hero-eyebrow {
+    color: var(--primary);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 14px;
+}
+
+.hero-title {
+    font-size: clamp(3rem, 4.2vw, 3.7rem);
+    font-weight: 800;
+    line-height: 0.98;
+    letter-spacing: -1px;
+    color: var(--navy);
+    margin-bottom: 18px;
+}
+
+.hero-title .accent {
+    color: var(--primary);
+}
+
+.hero-subtitle {
+    color: #475569;
+    font-size: 19px;
+    line-height: 1.5;
+    margin-bottom: 30px;
+    max-width: 480px;
+}
+
+.hero-actions {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 14px;
+}
+
+.btn-hero-primary,
+.btn-hero-outline {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    border-radius: 26px;
+    min-height: 50px;
+    padding: 13px 24px;
+    font-weight: 700;
+    font-size: 0.95rem;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: all 0.25s ease;
+    line-height: 1;
+}
+
+/* Entre 992 y 1200px la columna es angosta: botones algo más compactos
+   para que se mantengan en una fila sin desbordar. */
+@media (max-width: 1199.98px) {
+    .btn-hero-primary,
+    .btn-hero-outline {
+        padding: 12px 18px;
+        font-size: 0.85rem;
+    }
+}
+
+.btn-hero-primary {
+    background: var(--primary);
+    color: #FFFFFF !important;
+    border: none;
+    box-shadow: 0 8px 20px rgba(20, 110, 245, 0.25);
+}
+
+.btn-hero-primary:hover {
+    background: var(--primary-hover);
+    color: #FFFFFF !important;
+    transform: translateY(-2px);
+}
+
+.btn-hero-outline {
+    background: var(--surface);
+    color: var(--primary) !important;
+    border: 2px solid var(--primary);
+}
+
+.btn-hero-outline:hover {
+    background: #EFF6FF;
+    color: var(--primary) !important;
+    transform: translateY(-2px);
+}
+
+/* ---- Lado derecho: composición de productos ---- */
+
+.hero-media {
+    position: relative;
+    text-align: center;
+}
+
+.hero-products-image img {
+    width: 100%;
+    max-width: 680px;
+    height: auto;
+    object-fit: contain;
+    /* El PNG ya trae fondo transparente; sombra suave de asentamiento */
+    filter: drop-shadow(0 14px 22px rgba(15, 23, 42, 0.10));
+}
+
+/* ---- Badge flotante de confianza ---- */
+
+.trust-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 16px;
+    padding: 16px 18px;
+    box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+    text-align: left;
+    max-width: 220px;
+}
+
+.trust-badge i {
+    font-size: 2rem;
+    color: var(--primary);
+    line-height: 1;
+}
+
+.trust-badge span {
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.4px;
+    color: var(--navy);
+    line-height: 1.35;
+}
+
+/* ================= BARRA DE BENEFICIOS ================= */
+
+.benefits-wrap {
+    position: relative;
+    z-index: 5;
+}
+
+.benefits-bar {
+    background: var(--surface);
+    border-radius: 16px;
+    box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+    padding: 20px 25px;
+    margin-top: -40px;
+    width: calc(100% - 70px);
+    max-width: 1450px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.benefit-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 6px 10px;
+}
+
+.benefit-item + .benefit-item {
+    border-left: 1px solid var(--border);
+}
+
+.benefit-icon {
+    flex: 0 0 auto;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: #EAF4FF;
+    color: var(--primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.35rem;
+}
+
+.benefit-title {
+    font-weight: 700;
+    color: var(--text);
+    font-size: 0.95rem;
+    line-height: 1.25;
+}
+
+.benefit-sub {
+    color: var(--text-secondary);
+    font-size: 0.83rem;
+}
+
+/* ================= SECCIÓN CATÁLOGO ================= */
+
+.catalog-section {
+    background: var(--surface);
+    padding: 70px 0 80px 0;
+}
+
+.catalog-section .container {
+    max-width: 1350px;
+}
+
+.catalog-title {
+    font-size: clamp(1.7rem, 3vw, 2.2rem);
+    font-weight: 800;
+    color: var(--navy);
+    margin-bottom: 10px;
+}
+
+.catalog-title .accent {
+    color: var(--primary);
+}
+
+.catalog-subtitle {
+    color: var(--text-secondary);
+    font-size: 16px;
+    margin-bottom: 0;
+}
+
+/* ================= TARJETAS DE CATEGORÍAS ================= */
+
+.cat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 4px 15px rgba(15, 23, 42, 0.05);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    transition: all 0.25s ease;
+}
+
+.cat-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.10);
+}
+
+.cat-card-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.cat-icon {
+    flex: 0 0 auto;
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #FFFFFF;
+    font-size: 1.4rem;
+}
+
+.cat-icon.red { background: #EF4444; }
+.cat-icon.blue { background: var(--primary); }
+.cat-icon.cyan { background: var(--cyan); }
+.cat-icon.purple { background: #7C3AED; }
+
+.cat-name {
+    font-size: 0.92rem;
+    font-weight: 800;
+    letter-spacing: 0.2px;
+    line-height: 1.3;
+    margin: 2px 0 0 0;
+}
+
+.cat-name.red { color: #EF4444; }
+.cat-name.blue { color: var(--primary); }
+.cat-name.cyan { color: var(--cyan); }
+.cat-name.purple { color: #7C3AED; }
+
+.cat-desc {
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    line-height: 1.5;
+    margin-bottom: 16px;
+    flex-grow: 1;
+}
+
+.cat-foot {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.cat-arrow {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    text-decoration: none;
+    transition: all 0.25s ease;
+}
+
+.cat-arrow.red { background: #FEF2F2; color: #EF4444; }
+.cat-arrow.blue { background: #EAF4FF; color: var(--primary); }
+.cat-arrow.cyan { background: #ECFEFF; color: var(--cyan); }
+.cat-arrow.purple { background: #F5F0FF; color: #7C3AED; }
+
+.cat-arrow:hover {
+    transform: translateX(3px);
+    color: #FFFFFF;
+}
+
+.cat-arrow.red:hover { background: #EF4444; }
+.cat-arrow.blue:hover { background: var(--primary); }
+.cat-arrow.cyan:hover { background: var(--cyan); }
+.cat-arrow.purple:hover { background: #7C3AED; }
+
+/* Slot listo para fotos de producto por categoría (PNG transparente).
+   Colocar <img> dentro de .cat-media cuando existan los assets. */
+.cat-media img {
+    width: 100%;
+    max-height: 110px;
+    object-fit: contain;
+}
+
+/* ================= RESPONSIVE ================= */
+
+@media (max-width: 991.98px) {
+    .home-hero {
+        padding: 40px 0 70px 0;
+        text-align: center;
+    }
+
+    .hero-subtitle {
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    .hero-actions {
+        justify-content: center;
+    }
+
+    .hero-media {
+        margin-top: 36px;
+    }
+
+    .trust-badge {
+        position: static;
+        margin: 18px auto 0 auto;
+    }
+
+    .benefit-item + .benefit-item {
+        border-left: none;
+    }
+}
+
+@media (max-width: 599.98px) {
+    .hero-title {
+        font-size: 2.35rem;
+    }
+
+    .hero-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .btn-hero-primary,
+    .btn-hero-outline {
+        justify-content: center;
+    }
+
+    .benefits-bar {
+        width: calc(100% - 32px);
+    }
+}

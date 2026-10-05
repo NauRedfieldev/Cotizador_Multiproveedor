@@ -1,0 +1,372 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}CCONOR - Gestión de Clientes B2B (CRUD){% endblock %}
+
+{% block content %}
+<div class="container py-4">
+
+    <!-- ENCABEZADO DE SECCIÓN -->
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+        <div>
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <span class="badge bg-primary bg-opacity-10 text-primary fw-bold text-uppercase px-2.5 py-1 rounded-pill small">
+                    <i class="bi bi-shield-lock-fill me-1"></i> Módulo B2B
+                </span>
+                <span class="text-muted small">|</span>
+                <span class="text-muted small">Catálogo Maestro de Empresas</span>
+            </div>
+            <h2 class="fw-bold mb-1" style="color: var(--cconor-azul-marino);">
+                <i class="bi bi-people-fill text-primary me-2"></i>Gestión de Clientes
+            </h2>
+            <p class="text-muted mb-0 small">
+                Administra empresas compradoras, integra RFCs fiscales y emite cotizaciones personalizadas en minutos.
+            </p>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1.5" id="refreshClientsBtn" title="Recargar catálogo">
+                <i class="bi bi-arrow-clockwise"></i>
+                <span class="d-none d-sm-inline">Actualizar</span>
+            </button>
+            <button type="button" class="btn btn-cconor-primary d-flex align-items-center gap-2 shadow-sm" id="openCreateClientModalBtn">
+                <i class="bi bi-plus-lg"></i>
+                <span>Nuevo Cliente</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- TARJETAS DE MÉTRICAS RÁPIDAS -->
+    <div class="row g-3 mb-4">
+        <div class="col-sm-6 col-lg-3">
+            <div class="cconor-card p-3 h-100 d-flex align-items-center gap-3">
+                <div class="w-12 h-12 rounded-3 bg-primary bg-opacity-10 text-primary d-flex align-items-center justify-content-center fs-4 flex-shrink-0" style="width: 48px; height: 48px;">
+                    <i class="bi bi-building"></i>
+                </div>
+                <div>
+                    <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Total Registrados</div>
+                    <div class="fs-4 fw-bold text-dark" id="metricTotalClients">--</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-sm-6 col-lg-3">
+            <div class="cconor-card p-3 h-100 d-flex align-items-center gap-3">
+                <div class="w-12 h-12 rounded-3 bg-success bg-opacity-10 text-success d-flex align-items-center justify-content-center fs-4 flex-shrink-0" style="width: 48px; height: 48px;">
+                    <i class="bi bi-check-circle"></i>
+                </div>
+                <div>
+                    <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Clientes Activos</div>
+                    <div class="fs-4 fw-bold text-success" id="metricActiveClients">--</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-sm-6 col-lg-3">
+            <div class="cconor-card p-3 h-100 d-flex align-items-center gap-3">
+                <div class="w-12 h-12 rounded-3 text-warning bg-warning bg-opacity-10 d-flex align-items-center justify-content-center fs-4 flex-shrink-0" style="width: 48px; height: 48px;">
+                    <i class="bi bi-diagram-3"></i>
+                </div>
+                <div>
+                    <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Integradores TI</div>
+                    <div class="fs-4 fw-bold text-dark" id="metricIntegratorClients">--</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-sm-6 col-lg-3">
+            <div class="cconor-card p-3 h-100 d-flex align-items-center gap-3">
+                <div class="w-12 h-12 rounded-3 text-info bg-info bg-opacity-10 d-flex align-items-center justify-content-center fs-4 flex-shrink-0" style="width: 48px; height: 48px;">
+                    <i class="bi bi-geo-alt"></i>
+                </div>
+                <div>
+                    <div class="text-muted small text-uppercase fw-semibold" style="font-size: 0.72rem;">Plaza Principal</div>
+                    <div class="fs-5 fw-bold text-dark">Tijuana, B.C.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- BARRA DE BÚSQUEDA Y FILTROS AVANZADOS -->
+    <div class="cconor-card p-3 mb-4">
+        <div class="row g-2 align-items-center">
+            <!-- Buscador por texto -->
+            <div class="col-md-6 col-lg-5">
+                <div class="input-group">
+                    <span class="input-group-text bg-white border-end-0 text-muted">
+                        <i class="bi bi-search"></i>
+                    </span>
+                    <input type="text" class="form-control border-start-0 ps-0" id="clientSearchInput" placeholder="Buscar por Razón Social, RFC o contacto..." autocomplete="off">
+                    <button class="btn btn-outline-secondary border-start-0" type="button" id="clearClientSearchBtn" style="display: none;">
+                        <i class="bi bi-x-circle-fill"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Filtro por Tipo -->
+            <div class="col-sm-6 col-md-3 col-lg-3">
+                <select class="form-select" id="clientTypeFilter">
+                    <option value="todos" selected>Todos los Tipos</option>
+                    <option value="corporativo">Corporativo</option>
+                    <option value="integrador ti">Integrador TI</option>
+                    <option value="maquiladora">Maquiladora</option>
+                    <option value="distribuidor">Distribuidor</option>
+                </select>
+            </div>
+
+            <!-- Filtro por Estado -->
+            <div class="col-sm-6 col-md-3 col-lg-2">
+                <select class="form-select" id="clientStatusFilter">
+                    <option value="todos" selected>Todos los Estados</option>
+                    <option value="activo">Solo Activos</option>
+                    <option value="inactivo">Solo Inactivos</option>
+                </select>
+            </div>
+
+            <!-- Contador de resultados -->
+            <div class="col-lg-2 text-lg-end text-muted small mt-2 mt-lg-0">
+                Mostrando <strong id="clientsCounter" class="text-dark">0</strong> registros
+            </div>
+        </div>
+    </div>
+
+    <!-- CONTENEDOR PRINCIPAL DE TABLA CON ESTADOS DE UI (CARGA, VACÍO, DATOS) -->
+    <div class="cconor-table-container shadow-sm mb-4">
+        
+        <!-- ESTADO 1: SKELETON LOADER (CARGA) -->
+        <div id="clientsSkeletonContainer" class="p-3" style="display: none;">
+            <div class="d-flex align-items-center justify-content-between mb-3 border-bottom pb-2">
+                <span class="skeleton skeleton-title" style="width: 200px; height: 18px;"></span>
+                <span class="skeleton" style="width: 100px; height: 18px;"></span>
+            </div>
+            <!-- Filas simuladas con shimmer -->
+            {% for i in "1234" %}
+            <div class="d-flex align-items-center justify-content-between py-3 border-bottom">
+                <div class="d-flex align-items-center gap-3" style="width: 40%;">
+                    <div class="skeleton skeleton-avatar"></div>
+                    <div class="flex-grow-1">
+                        <div class="skeleton skeleton-text" style="width: 80%;"></div>
+                        <div class="skeleton skeleton-text-sm" style="width: 50%;"></div>
+                    </div>
+                </div>
+                <div class="skeleton skeleton-text" style="width: 20%;"></div>
+                <div class="skeleton skeleton-text" style="width: 15%;"></div>
+                <div class="skeleton skeleton-btn" style="width: 90px; height: 32px;"></div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- ESTADO 2: EMPTY STATE (VACÍO / SIN RESULTADOS) -->
+        <div id="clientsEmptyState" class="empty-state p-5" style="display: none;">
+            <div class="empty-state-icon">
+                <i class="bi bi-people"></i>
+            </div>
+            <h4 class="empty-state-title" id="emptyStateTitle">No se encontraron clientes</h4>
+            <p class="empty-state-desc" id="emptyStateDesc">
+                No hay empresas que coincidan con los criterios de búsqueda o filtros seleccionados.
+            </p>
+            <div class="d-flex justify-content-center gap-2">
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="resetFiltersBtn">
+                    <i class="bi bi-funnel me-1"></i> Restablecer Filtros
+                </button>
+                <button type="button" class="btn btn-cconor-primary btn-sm" id="emptyStateCreateBtn">
+                    <i class="bi bi-plus-lg me-1"></i> Registrar Primer Cliente
+                </button>
+            </div>
+        </div>
+
+        <!-- ESTADO 3: TABLA DE DATOS RENDERIZADA -->
+        <div class="table-responsive" id="clientsTableWrapper">
+            <table class="table table-hover cconor-table align-middle text-nowrap mb-0" id="clientsTable">
+                <thead>
+                    <tr>
+                        <th style="width: 45px;" class="text-center">#</th>
+                        <th>Empresa / Razón Social</th>
+                        <th>RFC Fiscal</th>
+                        <th>Contacto Principal</th>
+                        <th>Teléfono & Ciudad</th>
+                        <th>Tipo</th>
+                        <th>Estatus</th>
+                        <th class="text-end" style="width: 140px;">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="clientsTableBody">
+                    <!-- Se llena reactivamente con clientes.js -->
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+
+</div>
+
+<!-- ==========================================================================
+     MODAL: ALTA Y EDICIÓN DE CLIENTE (CONTRATO DE DATOS EXPUESTO)
+     ========================================================================== -->
+<div class="modal fade" id="clientModal" tabindex="-1" aria-labelledby="clientModalTitle" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-light">
+                <h5 class="modal-title fw-bold" id="clientModalTitle" style="color: var(--cconor-azul-marino);">
+                    <i class="bi bi-building-add text-primary me-2"></i>Alta de Nuevo Cliente B2B
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <form id="clientForm" novalidate>
+                <div class="modal-body p-4">
+                    <input type="hidden" id="clientIdInput" value="">
+                    
+                    <div class="row g-3">
+                        <!-- Razón Social -->
+                        <div class="col-12">
+                            <label for="clientBusinessNameInput" class="form-label small fw-bold text-uppercase">
+                                Razón Social o Nombre Corporativo <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" class="form-control" id="clientBusinessNameInput" required placeholder="Ej: Infraestructura y Enlaces del Noroeste S.A. de C.V.">
+                            <div class="invalid-feedback">Por favor ingresa la razón social de la empresa.</div>
+                        </div>
+
+                        <!-- RFC Mexicano -->
+                        <div class="col-md-6">
+                            <label for="clientRfcInput" class="form-label small fw-bold text-uppercase">
+                                RFC Fiscal (SAT) <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" class="form-control font-monospace text-uppercase" id="clientRfcInput" required placeholder="IEN180512AA0" maxlength="13">
+                            <div class="form-text small" style="font-size: 0.75rem;">12 caracteres para personas morales o 13 para personas físicas.</div>
+                            <div class="invalid-feedback" id="rfcFeedback">El formato de RFC no es válido (ej. AAA010101AAA).</div>
+                        </div>
+
+                        <!-- Tipo de Cliente -->
+                        <div class="col-md-6">
+                            <label for="clientTypeInput" class="form-label small fw-bold text-uppercase">
+                                Clasificación B2B <span class="text-danger">*</span>
+                            </label>
+                            <select class="form-select" id="clientTypeInput" required>
+                                <option value="Corporativo" selected>Corporativo</option>
+                                <option value="Integrador TI">Integrador TI</option>
+                                <option value="Maquiladora">Maquiladora</option>
+                                <option value="Distribuidor">Distribuidor</option>
+                            </select>
+                        </div>
+
+                        <!-- Contacto Persona -->
+                        <div class="col-md-6">
+                            <label for="clientContactInput" class="form-label small fw-bold text-uppercase">
+                                Persona de Contacto <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" class="form-control" id="clientContactInput" required placeholder="Ej: Ing. Jorge Ramos (Compras)">
+                            <div class="invalid-feedback">Ingresa el nombre de la persona responsable.</div>
+                        </div>
+
+                        <!-- Correo Electrónico -->
+                        <div class="col-md-6">
+                            <label for="clientEmailInput" class="form-label small fw-bold text-uppercase">
+                                Correo para Cotizaciones <span class="text-danger">*</span>
+                            </label>
+                            <input type="email" class="form-control" id="clientEmailInput" required placeholder="compras@empresa.com">
+                            <div class="invalid-feedback">Ingresa un correo electrónico corporativo válido.</div>
+                        </div>
+
+                        <!-- Teléfono -->
+                        <div class="col-md-6">
+                            <label for="clientPhoneInput" class="form-label small fw-bold text-uppercase">
+                                Teléfono Directo
+                            </label>
+                            <input type="tel" class="form-control" id="clientPhoneInput" placeholder="(664) 000-0000">
+                        </div>
+
+                        <!-- Ciudad / Estado -->
+                        <div class="col-md-6">
+                            <label for="clientCityInput" class="form-label small fw-bold text-uppercase">
+                                Ciudad y Estado
+                            </label>
+                            <input type="text" class="form-control" id="clientCityInput" value="Tijuana, B.C." placeholder="Tijuana, B.C.">
+                        </div>
+
+                        <!-- Domicilio Fiscal -->
+                        <div class="col-12">
+                            <label for="clientAddressInput" class="form-label small fw-bold text-uppercase">
+                                Domicilio Fiscal / Entrega
+                            </label>
+                            <input type="text" class="form-control" id="clientAddressInput" placeholder="Calle, Número, Colonia, C.P.">
+                        </div>
+
+                        <!-- Estatus -->
+                        <div class="col-md-6">
+                            <label for="clientStatusInput" class="form-label small fw-bold text-uppercase">
+                                Estatus Comercial
+                            </label>
+                            <select class="form-select" id="clientStatusInput">
+                                <option value="Activo" selected>Activo (Habilitado para cotizar)</option>
+                                <option value="Inactivo">Inactivo (Suspendido temporalmente)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-footer bg-light px-4 py-3">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-cconor-primary btn-sm d-flex align-items-center gap-2" id="saveClientSubmitBtn">
+                        <span class="spinner-border spinner-border-sm d-none" id="saveClientSpinner" role="status" aria-hidden="true"></span>
+                        <i class="bi bi-check-lg" id="saveClientIcon"></i>
+                        <span id="saveClientBtnText">Guardar Cliente</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ==========================================================================
+     MODAL: VER DETALLE COMPLETO DE CLIENTE
+     ========================================================================== -->
+<div class="modal fade" id="clientDetailModal" tabindex="-1" aria-labelledby="clientDetailTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header bg-light">
+                <h5 class="modal-title fw-bold" id="clientDetailTitle" style="color: var(--cconor-azul-marino);">
+                    <i class="bi bi-info-circle-fill text-primary me-2"></i>Ficha del Cliente
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body p-4" id="clientDetailBody">
+                <!-- Se llena dinámicamente -->
+            </div>
+            <div class="modal-footer bg-light">
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
+                <a href="#" class="btn btn-cconor-primary btn-sm" id="detailStartQuoteBtn">
+                    <i class="bi bi-calculator me-1"></i> Cotizar para este Cliente
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==========================================================================
+     MODAL: CONFIRMACIÓN DE ELIMINACIÓN / DESACTIVACIÓN
+     ========================================================================== -->
+<div class="modal fade" id="deleteClientModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg text-center p-3">
+            <div class="modal-body">
+                <div class="w-16 h-16 rounded-circle bg-danger bg-opacity-10 text-danger d-inline-flex align-items-center justify-content-center fs-2 mb-3" style="width: 64px; height: 64px;">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                </div>
+                <h5 class="fw-bold mb-2">¿Eliminar cliente?</h5>
+                <p class="text-muted small mb-3">
+                    Estás a punto de eliminar a <strong id="deleteClientName" class="text-dark">--</strong> del catálogo. Esta acción no se puede deshacer.
+                </p>
+                <input type="hidden" id="deleteClientId" value="">
+                <div class="d-flex justify-content-center gap-2">
+                    <button type="button" class="btn btn-secondary btn-sm px-3" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-danger btn-sm px-3" id="confirmDeleteClientBtn">Eliminar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/clientes.js' %}"></script>
+{% endblock %}

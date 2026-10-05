@@ -1,0 +1,214 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}CCONOR - Comparador de Productos Multi-Proveedor{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+
+    <!-- ENCABEZADO ESTILO COMPARADOR (2 PROVEEDORES AUTORIZADOS) -->
+    <div class="text-center mb-5">
+        <h1 class="display-6 fw-bold mb-2" style="color: var(--cconor-azul-marino);">
+            Encuentra el producto y distribuidor perfecto
+        </h1>
+        <p class="lead text-muted fs-6 mb-3">
+            Compara entre nuestros 2 distribuidores autorizados (SYSCOM y CT Online) antes de generar tu propuesta
+        </p>
+        
+        <!-- SELECTOR DE CATEGORÍA / FILTRO RÁPIDO -->
+        <div class="d-inline-flex flex-wrap justify-content-center gap-2 p-1 bg-white rounded-pill border shadow-sm">
+            <button class="btn btn-sm btn-cconor-primary rounded-pill px-3 filter-cat-btn active" data-cat="switches">
+                <i class="bi bi-hdd-network me-1"></i> Switches Empresariales
+            </button>
+            <button class="btn btn-sm btn-outline-secondary rounded-pill px-3 filter-cat-btn border-0" data-cat="camaras">
+                <i class="bi bi-camera-video me-1"></i> Cámaras de Seguridad
+            </button>
+            <button class="btn btn-sm btn-outline-secondary rounded-pill px-3 filter-cat-btn border-0" data-cat="cableado">
+                <i class="bi bi-diagram-3 me-1"></i> Cableado Estructurado
+            </button>
+            <button class="btn btn-sm btn-outline-secondary rounded-pill px-3 filter-cat-btn border-0" data-cat="computo">
+                <i class="bi bi-display me-1"></i> Cómputo & Monitores
+            </button>
+        </div>
+    </div>
+
+    <!-- TARJETAS DE COMPARACIÓN (2 COLUMNAS: SYSCOM vs CT ONLINE) -->
+    <div class="row g-4 mb-5" id="compareGrid">
+        
+        <!-- COLUMNA 1: SYSCOM -->
+        <div class="col-lg-6">
+            <div class="compare-card best-choice h-100">
+                <div class="best-choice-badge">
+                    <i class="bi bi-star-fill me-1"></i> Mayor Margen Comercial
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mt-2 mb-3">
+                    <span class="badge badge-provider badge-syscom">SYSCOM</span>
+                    <span class="badge bg-success bg-opacity-10 text-success fw-bold">Stock Central</span>
+                </div>
+
+                <div class="p-3 bg-light rounded-3 mb-3 d-flex align-items-center justify-content-center" style="height: 190px;">
+                    <i class="bi bi-hdd-stack-fill text-danger" style="font-size: 5.5rem;"></i>
+                </div>
+
+                <h5 class="fw-bold mb-1" style="color: var(--cconor-azul-marino);">Switch Ruijie Reyee Cloud Managed</h5>
+                <p class="font-monospace text-muted small mb-2">SKU: RG-ES224GC-P</p>
+
+                <div class="text-warning small mb-3">
+                    <i class="bi bi-star-fill"></i>
+                    <i class="bi bi-star-fill"></i>
+                    <i class="bi bi-star-fill"></i>
+                    <i class="bi bi-star-fill"></i>
+                    <i class="bi bi-star-half"></i>
+                    <span class="text-dark fw-bold ms-1">4.8</span>
+                    <span class="text-muted">(SYSCOM Almacén)</span>
+                </div>
+
+                <div class="mb-3 py-2 border-top border-bottom">
+                    <div class="small text-muted">Precio Mayoreo c/IVA:</div>
+                    <div class="compare-price" style="color: #D32F2F;">$8,890.00 <span class="fs-6 fw-normal text-muted">MXN</span></div>
+                    <div class="small text-success fw-semibold mt-1">
+                        <i class="bi bi-cash-stack me-1"></i> Margen Sugerido: +25% ($2,222 MXN)
+                    </div>
+                </div>
+
+                <ul class="list-unstyled text-start small mb-4 flex-grow-1">
+                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Puertos:</strong> 24 Puertos Gigabit PoE+ (370W)</li>
+                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Uplinks:</strong> 2x 1G SFP Combo</li>
+                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Gestión:</strong> Smart Managed en la Nube Ruijie Cloud gratuita</li>
+                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Disponibilidad:</strong> 28 piezas en bodega</li>
+                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Garantía:</strong> 3 años de reemplazo directo con SYSCOM</li>
+                </ul>
+
+                <button class="btn btn-outline-danger w-100 d-flex align-items-center justify-content-center gap-2 add-to-quote-btn"
+                        data-sku="RG-ES224GC-P" data-name="Switch Ruijie Reyee 24P PoE+ SYSCOM" data-provider="syscom" data-price="8890.00">
+                    <i class="bi bi-plus-circle"></i>
+                    <span>Agregar a Cotización</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- COLUMNA 2: CT ONLINE -->
+        <div class="col-lg-6">
+            <div class="compare-card h-100">
+                <div class="d-flex justify-content-between align-items-center mt-2 mb-3">
+                    <span class="badge badge-provider badge-ct">CT Online</span>
+                    <span class="badge bg-primary bg-opacity-10 text-primary fw-bold">Stock Inmediato</span>
+                </div>
+
+                <div class="p-3 bg-light rounded-3 mb-3 d-flex align-items-center justify-content-center" style="height: 190px;">
+                    <i class="bi bi-router-fill text-info" style="font-size: 5.5rem;"></i>
+                </div>
+
+                <h5 class="fw-bold mb-1" style="color: var(--cconor-azul-marino);">Switch TP-Link Omada Pro Managed</h5>
+                <p class="font-monospace text-muted small mb-2">SKU: TL-SG3428MP</p>
+
+                <div class="text-warning small mb-3">
+                    <i class="bi bi-star-fill"></i>
+                    <i class="bi bi-star-fill"></i>
+                    <i class="bi bi-star-fill"></i>
+                    <i class="bi bi-star-fill"></i>
+                    <i class="bi bi-star"></i>
+                    <span class="text-dark fw-bold ms-1">4.6</span>
+                    <span class="text-muted">(CT Online Almacén)</span>
+                </div>
+
+                <div class="mb-3 py-2 border-top border-bottom">
+                    <div class="small text-muted">Precio Mayoreo c/IVA:</div>
+                    <div class="compare-price" style="color: #0284C7;">$9,450.00 <span class="fs-6 fw-normal text-muted">MXN</span></div>
+                    <div class="small text-success fw-semibold mt-1">
+                        <i class="bi bi-cash-stack me-1"></i> Margen Sugerido: +20% ($1,890 MXN)
+                    </div>
+                </div>
+
+                <ul class="list-unstyled text-start small mb-4 flex-grow-1">
+                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Puertos:</strong> 24 Puertos Gigabit PoE+ (384W)</li>
+                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Uplinks:</strong> 4x 1G SFP slots dedicados</li>
+                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Gestión:</strong> L2+ con integración Omada SDN</li>
+                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Disponibilidad:</strong> 16 piezas en almacén</li>
+                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Garantía:</strong> 5 años de garantía con fabricante y CT</li>
+                </ul>
+
+                <button class="btn btn-outline-info w-100 d-flex align-items-center justify-content-center gap-2 add-to-quote-btn"
+                        data-sku="TL-SG3428MP" data-name="Switch TP-Link Omada 24P PoE+ CT" data-provider="ct" data-price="9450.00">
+                    <i class="bi bi-plus-circle"></i>
+                    <span>Agregar a Cotización</span>
+                </button>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- TABLA COMPARATIVA DETALLADA DE CARACTERÍSTICAS (2 PROVEEDORES) -->
+    <div class="cconor-card p-4">
+        <h5 class="fw-bold mb-3" style="color: var(--cconor-azul-marino);">
+            <i class="bi bi-table me-2 text-primary"></i> Matriz de Comparativa Técnica & Margen
+        </h5>
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped align-middle small mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th style="width: 34%;">Criterio de Evaluación</th>
+                        <th style="width: 33%;">SYSCOM (Ruijie)</th>
+                        <th style="width: 33%;">CT Online (TP-Link)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="fw-bold">Precio de Costo (Distribuidor)</td>
+                        <td class="text-danger fw-bold fs-6">$8,890.00 MXN</td>
+                        <td class="text-info fw-bold fs-6">$9,450.00 MXN</td>
+                    </tr>
+                    <tr>
+                        <td class="fw-bold">Margen de Ganancia Estimado</td>
+                        <td class="bg-success bg-opacity-10 text-success fw-bold">25% ($2,222) ★ Mayor Margen</td>
+                        <td>20% ($1,890)</td>
+                    </tr>
+                    <tr>
+                        <td class="fw-bold">Precio Sugerido al Cliente</td>
+                        <td class="fw-bold">$11,112.50 MXN</td>
+                        <td class="fw-bold">$11,340.00 MXN</td>
+                    </tr>
+                    <tr>
+                        <td class="fw-bold">Tiempo de Entrega Estimado</td>
+                        <td><span class="badge bg-success">Inmediato / 24 Horas hábiles</span></td>
+                        <td><span class="badge bg-primary">24 a 48 Horas hábiles</span></td>
+                    </tr>
+                    <tr>
+                        <td class="fw-bold">Nivel de Soporte Técnico</td>
+                        <td>Ingeniería y Laboratorio SYSCOM México</td>
+                        <td>Garantía Mayorista CT Internacional</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Cambio interactivo de categorías en el comparador
+    document.querySelectorAll('.filter-cat-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.filter-cat-btn').forEach(b => {
+                b.classList.remove('btn-cconor-primary', 'active');
+                b.classList.add('btn-outline-secondary', 'border-0');
+            });
+            this.classList.remove('btn-outline-secondary', 'border-0');
+            this.classList.add('btn-cconor-primary', 'active');
+        });
+    });
+
+    // Acción de agregar a la cotización
+    document.querySelectorAll('.add-to-quote-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const name = this.dataset.name;
+            const price = this.dataset.price;
+            alert(`¡"${name}" ($${price}) se preparó para tu cotización! Redirigiendo al Cotizador...`);
+            window.location.href = "{% url 'cotizador' %}";
+        });
+    });
+</script>
+{% endblock %}

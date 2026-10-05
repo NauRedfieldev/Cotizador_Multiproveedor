@@ -1,0 +1,420 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}CCONOR - Resumen & Historial de Cotizaciones{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+
+    <!-- BARRA SUPERIOR DE ACCIONES -->
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4 d-print-none">
+        <div>
+            <span class="badge bg-success bg-opacity-10 text-success fw-bold px-3 py-1 rounded-pill mb-2">
+                <i class="bi bi-check-circle-fill me-1"></i> Cotización Generada con Éxito
+            </span>
+            <h2 class="fw-bold mb-0" style="color: var(--cconor-azul-marino);">
+                Propuesta Comercial <span class="text-primary font-monospace">#COT-2026-0048</span>
+            </h2>
+        </div>
+
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{% url 'cotizador' %}" class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1">
+                <i class="bi bi-pencil-square"></i>
+                <span>Editar Partidas</span>
+            </a>
+            <button class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1" id="printQuoteBtn">
+                <i class="bi bi-printer"></i>
+                <span>Imprimir</span>
+            </button>
+            <button class="btn btn-cconor-primary btn-sm d-flex align-items-center gap-1" data-bs-toggle="modal" data-bs-target="#emailModal">
+                <i class="bi bi-envelope"></i>
+                <span>Enviar por Correo</span>
+            </button>
+            <button class="btn btn-cconor-orange btn-sm d-flex align-items-center gap-1" id="downloadPdfBtn">
+                <i class="bi bi-file-earmark-pdf-fill"></i>
+                <span>Descargar PDF Oficial</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- DOCUMENTO FORMAL DE COTIZACIÓN (VISTA PREVIA ESTILO HOJA MEMBRETADA) -->
+    <div class="cconor-card p-4 p-md-5 mb-5 shadow-sm bg-white" id="printableQuote" data-quote-folio="COT-2026-0048">
+        
+        <!-- ENCABEZADO DE LA HOJA MEMBRETADA -->
+        <div class="row align-items-center border-bottom pb-4 mb-4">
+            <div class="col-md-7">
+                <img src="{% static 'img/logo.png' %}" alt="CCONOR" style="height: 52px;" class="mb-2" onerror="this.onerror=null; this.src='https://placehold.co/200x52/7E0EFA/ffffff?text=CCONOR';">
+                <p class="text-muted small mb-0">
+                    <strong>CCONOR Soluciones Tecnológicas</strong><br>
+                    RFC: CST-180422-9K2<br>
+                    Soluciones Integrales de Redes, Cómputo e Infraestructura TI<br>
+                    Tel: +52 618-181-4359 | ventas@cconor.com
+                </p>
+            </div>
+            <div class="col-md-5 text-md-end mt-3 mt-md-0">
+                <div class="p-3 bg-light rounded border text-start d-inline-block" style="min-width: 240px;">
+                    <div class="small text-muted">Folio de Cotización:</div>
+                    <div class="fw-bold fs-5 text-primary font-monospace">COT-2026-0048</div>
+                    <div class="small text-muted mt-1">Fecha de Emisión: <strong>29/09/2026</strong></div>
+                    <div class="small text-muted">Válido hasta: <strong class="text-danger">29/10/2026 (30 días)</strong></div>
+                    <div class="small text-muted">Asesor Técnico: <strong>Ing. Odalis Leal</strong></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DATOS DEL CLIENTE -->
+        <div class="row g-3 mb-4">
+            <div class="col-md-12">
+                <div class="p-3 rounded border" style="background-color: var(--cconor-lavanda-claro); border-color: var(--cconor-gris-lavanda) !important;">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <span class="badge bg-secondary mb-1">DATOS DEL CLIENTE</span>
+                            <h6 class="fw-bold mb-1" style="color: var(--cconor-azul-marino);">Constructora e Inmobiliaria del Norte S.A. de C.V.</h6>
+                            <p class="small text-muted mb-0">
+                                <strong>RFC:</strong> CIN-140518-8A1<br>
+                                <strong>Atención:</strong> Lic. Roberto Mendoza (Depto. de TI)
+                            </p>
+                        </div>
+                        <div class="col-md-6 text-md-end mt-2 mt-md-0">
+                            <p class="small text-muted mb-0">
+                                <strong>Correo:</strong> r.mendoza@inmobiliarianorte.com.mx<br>
+                                <strong>Teléfono:</strong> (664) 123-4567<br>
+                                <strong>Proyecto:</strong> Cableado e Infraestructura Torre Alfa
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TABLA FORMAL DE PARTIDAS -->
+        <div class="table-responsive mb-4">
+            <table class="table table-bordered align-middle small">
+                <thead style="background-color: var(--cconor-azul-marino); color: white;">
+                    <tr>
+                        <th class="text-center" style="width: 45px;">#</th>
+                        <th>Código / Clave</th>
+                        <th>Descripción Detallada</th>
+                        <th class="text-center">Marca / Dist.</th>
+                        <th class="text-center" style="width: 80px;">Cant.</th>
+                        <th class="text-end" style="width: 120px;">P. Unitario</th>
+                        <th class="text-end" style="width: 130px;">Importe MXN</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="text-center fw-bold">1</td>
+                        <td class="font-monospace">PRO-CAT6-EXT</td>
+                        <td>
+                            <strong>Bobina Cable UTP Categoría 6 Exterior</strong><br>
+                            <span class="text-muted">100% Cobre sólido, chaqueta CMX con protección UV, carrete 305m color negro.</span>
+                        </td>
+                        <td class="text-center"><span class="badge badge-provider badge-syscom">SYSCOM</span></td>
+                        <td class="text-center fw-bold">4</td>
+                        <td class="text-end">$2,659.60</td>
+                        <td class="text-end fw-bold">$10,638.40</td>
+                    </tr>
+                    <tr>
+                        <td class="text-center fw-bold">2</td>
+                        <td class="font-monospace">DELL-P2422H</td>
+                        <td>
+                            <strong>Monitor Dell Profesional 23.8" Full HD</strong><br>
+                            <span class="text-muted">Panel IPS antirreflejo, resolución 1920x1080 @60Hz, HDMI, DP, VGA, 4x USB 3.2.</span>
+                        </td>
+                        <td class="text-center"><span class="badge badge-provider badge-ct">CT Online</span></td>
+                        <td class="text-center fw-bold">5</td>
+                        <td class="text-end">$4,013.50</td>
+                        <td class="text-end fw-bold">$20,067.50</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- TOTALES Y CONDICIONES FINALES -->
+        <div class="row align-items-start g-4">
+            <div class="col-md-7">
+                <div class="p-3 bg-light rounded small">
+                    <h6 class="fw-bold mb-1 text-dark">Condiciones Comerciales y de Entrega:</h6>
+                    <ul class="mb-1 ps-3 text-secondary">
+                        <li>Precios expresados en Pesos Mexicanos (MXN).</li>
+                        <li>Tiempo de entrega estimado: 2 a 4 días hábiles tras confirmación de pago.</li>
+                        <li>Garantía: Directa de fábrica con los mayoristas autorizados (SYSCOM y CT Online).</li>
+                        <li>Cuentas bancarias para depósito: BBVA Bancomer Clabe: 012028000123456789.</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="col-md-5">
+                <div class="border rounded p-3 bg-light">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">Subtotal:</span>
+                        <span class="fw-semibold">$26,470.60 MXN</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">I.V.A. (16%):</span>
+                        <span class="fw-semibold">$4,235.30 MXN</span>
+                    </div>
+                    <div class="d-flex justify-content-between pt-2 border-top fs-5 fw-bold" style="color: var(--cconor-azul-marino);">
+                        <span>Total a Pagar:</span>
+                        <span class="text-primary">$30,705.90 MXN</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- FIRMA Y PIE -->
+        <div class="row mt-5 pt-4 text-center">
+            <div class="col-md-6 offset-md-3">
+                <div class="border-top pt-2">
+                    <p class="fw-bold mb-0 text-dark">CCONOR Soluciones Tecnológicas</p>
+                    <p class="small text-muted">Área de Ingeniería y Cotizaciones Comerciales</p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- SECCIÓN: HISTORIAL DE COTIZACIONES ANTERIORES CON FILTROS DINÁMICOS -->
+    <div class="cconor-card p-4 shadow-sm d-print-none" id="historialSection">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-3 pb-3 border-bottom">
+            <div>
+                <h5 class="fw-bold mb-1" style="color: var(--cconor-azul-marino);">
+                    <i class="bi bi-clock-history me-2 text-primary"></i>Historial de Cotizaciones Emitidas
+                </h5>
+                <p class="text-muted small mb-0">Consulta propuestas vigentes, reimprime folios o envía propuestas a clientes.</p>
+            </div>
+            
+            <!-- FILTROS AVANZADOS DEL HISTORIAL -->
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <div class="input-group input-group-sm" style="max-width: 240px;">
+                    <span class="input-group-text bg-white border-end-0 text-muted"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control border-start-0 ps-0" id="historySearchInput" placeholder="Folio o cliente...">
+                </div>
+
+                <select class="form-select form-select-sm" id="historyStatusFilter" style="max-width: 150px;">
+                    <option value="todos" selected>Todos los Estados</option>
+                    <option value="pendiente">Pendientes</option>
+                    <option value="aprobada">Aprobadas</option>
+                    <option value="enviada">Enviadas</option>
+                    <option value="vencida">Vencidas</option>
+                </select>
+
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="refreshHistoryBtn" title="Actualizar">
+                    <i class="bi bi-arrow-clockwise"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- SKELETON LOADER DEL HISTORIAL -->
+        <div id="historySkeletonLoader" class="py-3" style="display: none;">
+            {% for i in "123" %}
+            <div class="d-flex align-items-center justify-content-between py-2 border-bottom">
+                <div class="skeleton" style="width: 120px; height: 16px;"></div>
+                <div class="skeleton" style="width: 90px; height: 16px;"></div>
+                <div class="skeleton" style="width: 220px; height: 16px;"></div>
+                <div class="skeleton" style="width: 80px; height: 16px;"></div>
+                <div class="skeleton" style="width: 90px; height: 16px;"></div>
+                <div class="skeleton skeleton-btn" style="width: 70px; height: 26px;"></div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- EMPTY STATE DEL HISTORIAL -->
+        <div id="historyEmptyState" class="empty-state p-4" style="display: none;">
+            <div class="empty-state-icon" style="width: 64px; height: 64px; line-height: 64px; font-size: 2rem;">
+                <i class="bi bi-journal-x"></i>
+            </div>
+            <h5 class="fw-bold mb-1" style="color: var(--cconor-azul-marino);">No se encontraron cotizaciones</h5>
+            <p class="text-muted small mb-3">No hay folios que coincidan con los filtros seleccionados.</p>
+            <a href="{% url 'cotizador' %}" class="btn btn-cconor-primary btn-sm rounded-pill px-3">
+                <i class="bi bi-plus-lg me-1"></i> Nueva Cotización
+            </a>
+        </div>
+
+        <!-- TABLA RENDERIZADA DEL HISTORIAL -->
+        <div class="table-responsive" id="historyTableWrapper">
+            <table class="table table-hover align-middle small mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Folio</th>
+                        <th>Fecha</th>
+                        <th>Cliente / Razón Social</th>
+                        <th>Partidas</th>
+                        <th>Total c/IVA</th>
+                        <th>Estatus</th>
+                        <th class="text-end" style="width: 140px;">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTableBody">
+                    <!-- Se llena dinámicamente con JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<!-- MODAL DE ENVÍO POR CORREO -->
+<div class="modal fade" id="emailModal" tabindex="-1" aria-labelledby="emailModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-light">
+                <h5 class="modal-title fw-bold" id="emailModalLabel">
+                    <i class="bi bi-envelope-at-fill me-2 text-primary"></i> Enviar Cotización por Correo
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Destinatario:</label>
+                    <input type="email" class="form-control" id="emailRecipientInput" value="r.mendoza@inmobiliarianorte.com.mx">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Asunto:</label>
+                    <input type="text" class="form-control" id="emailSubjectInput" value="Cotización CCONOR - Soluciones Tecnológicas">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Mensaje personalizado:</label>
+                    <textarea class="form-control" id="emailMessageInput" rows="4">Estimado cliente, adjuntamos la propuesta comercial formal con las opciones evaluadas para su proyecto de telecomunicaciones e infraestructura. Quedamos a sus órdenes para cualquier ajuste o confirmación de pedido.</textarea>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="attachPdfCheck" checked>
+                    <label class="form-check-label small" for="attachPdfCheck">
+                        Adjuntar automáticamente archivo PDF con formato oficial CCONOR
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer bg-light">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-cconor-primary btn-sm" id="confirmSendEmailBtn">
+                    <i class="bi bi-send-fill me-1"></i> Enviar Ahora
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- URLs generadas por Django para las acciones de la propuesta (folio dinámico). -->
+<script>
+window.CCONOR_URLS = {
+    pdf: "{% url 'descargar_pdf_cotizacion' folio='__FOLIO__' %}",
+    email: "{% url 'enviar_cotizacion_correo' folio='__FOLIO__' %}"
+};
+</script>
+<!-- Acciones de la propuesta: Imprimir, Descargar PDF oficial y Enviar por correo (v=2: URLs Django + attach_pdf) -->
+<script src="{% static 'js/cotizacion_actions.js' %}?v=2"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const historyBody = document.getElementById('historyTableBody');
+    const skeletonLoader = document.getElementById('historySkeletonLoader');
+    const emptyState = document.getElementById('historyEmptyState');
+    const tableWrapper = document.getElementById('historyTableWrapper');
+    const searchInput = document.getElementById('historySearchInput');
+    const statusFilter = document.getElementById('historyStatusFilter');
+    const refreshBtn = document.getElementById('refreshHistoryBtn');
+
+    function formatMoney(amount) {
+        return '$' + Number(amount || 0).toLocaleString('es-MX', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+    }
+
+    async function loadQuotesHistory() {
+        if (!historyBody) return;
+        skeletonLoader.style.display = 'block';
+        tableWrapper.style.display = 'none';
+        emptyState.style.display = 'none';
+
+        try {
+            const filters = {
+                search: searchInput ? searchInput.value.trim() : '',
+                status: statusFilter ? statusFilter.value : 'todos'
+            };
+
+            const res = await window.apiClient.quotes.getAll(filters);
+            const quotes = res.data || [];
+
+            skeletonLoader.style.display = 'none';
+
+            if (quotes.length === 0) {
+                emptyState.style.display = 'block';
+                tableWrapper.style.display = 'none';
+            } else {
+                emptyState.style.display = 'none';
+                tableWrapper.style.display = 'block';
+                renderQuotesTable(quotes);
+            }
+        } catch (error) {
+            skeletonLoader.style.display = 'none';
+            emptyState.style.display = 'block';
+            window.showToast('Error al consultar historial de cotizaciones.', 'danger');
+        }
+    }
+
+    function renderQuotesTable(quotes) {
+        historyBody.innerHTML = '';
+
+        quotes.forEach(q => {
+            const tr = document.createElement('tr');
+            
+            let statusBadge = '<span class="badge bg-warning text-dark">Pendiente</span>';
+            if (q.status === 'Aprobada') statusBadge = '<span class="badge bg-success">Aprobada</span>';
+            if (q.status === 'Enviada') statusBadge = '<span class="badge bg-info text-dark">Enviada</span>';
+            if (q.status === 'Vencida') statusBadge = '<span class="badge bg-secondary">Vencida</span>';
+
+            const dateStr = q.created_at ? new Date(q.created_at).toLocaleDateString('es-MX') : '29/09/2026';
+
+            tr.innerHTML = `
+                <td><span class="font-monospace fw-bold text-primary">${q.folio}</span></td>
+                <td>${dateStr}</td>
+                <td><strong>${q.client_name}</strong></td>
+                <td><span class="badge bg-light text-dark border">${q.items_count || (q.items ? q.items.length : 1)} partidas</span></td>
+                <td class="fw-bold">${formatMoney(q.total)}</td>
+                <td>${statusBadge}</td>
+                <td class="text-end">
+                    <div class="btn-group btn-group-sm">
+                        <button type="button" class="btn btn-outline-primary btn-load-quote" data-folio="${q.folio}" title="Cargar en Hoja Membretada">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="window.print()" title="Imprimir / PDF">
+                            <i class="bi bi-printer"></i>
+                        </button>
+                        <button type="button" class="btn btn-outline-danger btn-delete-quote" data-folio="${q.folio}" title="Eliminar">
+                            <i class="bi bi-trash3"></i>
+                        </button>
+                    </div>
+                </td>
+            `;
+
+            historyBody.appendChild(tr);
+        });
+
+        // Eventos
+        historyBody.querySelectorAll('.btn-load-quote').forEach(btn => {
+            btn.addEventListener('click', () => {
+                window.showToast(`Cargando cotización ${btn.dataset.folio} en vista formal...`, 'info');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+        });
+
+        historyBody.querySelectorAll('.btn-delete-quote').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                if (confirm(`¿Deseas eliminar la cotización ${btn.dataset.folio} del historial?`)) {
+                    await window.apiClient.quotes.delete(btn.dataset.folio);
+                    window.showToast(`Cotización ${btn.dataset.folio} eliminada.`, 'success');
+                    loadQuotesHistory();
+                }
+            });
+        });
+    }
+
+    if (searchInput) searchInput.addEventListener('input', () => setTimeout(loadQuotesHistory, 300));
+    if (statusFilter) statusFilter.addEventListener('change', loadQuotesHistory);
+    if (refreshBtn) refreshBtn.addEventListener('click', loadQuotesHistory);
+
+    loadQuotesHistory();
+});
+</script>
+{% endblock %}
