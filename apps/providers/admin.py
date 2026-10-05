@@ -20,7 +20,14 @@ class RawProviderProductAdmin(admin.ModelAdmin):
         "first_seen_at", "last_seen_at", "fetch_count",
     )
 
+    # Histórico crudo: solo lectura (se puede ver, pero no crear, editar ni borrar).
     def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
         return False
 
 
