@@ -1,3 +1,9 @@
 from django.contrib import admin
 
-# Register your models here.
+from .models import SinonimoRed
+
+
+@admin.register(SinonimoRed)
+class SinonimoRedAdmin(admin.ModelAdmin):
+    list_display = ["abreviatura", "expansion"]
+    search_fields = ["abreviatura", "expansion"]
