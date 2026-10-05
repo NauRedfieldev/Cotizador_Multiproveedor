@@ -10,6 +10,7 @@ erDiagram
     AUTH_USER ||--o{ QUOTE : "asesora (1:N)"
     CATEGORY ||--o{ PRODUCT : "clasifica (1:N)"
     SUPPLIER ||--o{ PRODUCT : "distribuye (1:N)"
+    PROVIDER |o--o| SUPPLIER : "se consulta por API (0..1)"
     QUOTE ||--o{ QUOTE_ITEM : "contiene (1:N)"
     PRODUCT ||--o{ QUOTE_ITEM : "se cotiza en (0:N)"
 
@@ -31,6 +32,7 @@ erDiagram
         int id PK
         varchar name UK "ej. SYSCOM, CT ONLINE"
         varchar code UK "nullable"
+        bigint provider_id FK "UK, nullable, PROTECT → providers_provider"
         varchar email
         varchar phone
         varchar website
@@ -101,6 +103,7 @@ erDiagram
 | id | serial | PK | Identificador interno |
 | name | varchar(100) | UK | Nombre comercial (ej. SYSCOM, CT ONLINE) |
 | code | varchar(20) | UK (nullable) | Clave/abreviatura interna |
+| provider_id | bigint | FK → providers_provider, UK (nullable) | Configuración de su API en `apps.providers`. Solo para distribuidores que se consultan por API. PROTECT: no se borra un `Provider` enlazado. Ver duda 7 del SDD de M2 (alternativa A) |
 | email / phone / website | varchar | | Datos de contacto opcionales |
 | is_active | bool | | Permite desactivar sin borrar |
 | created_at / updated_at | timestamptz | | Auditoría automática |
@@ -162,5 +165,11 @@ erDiagram
   `is_expired` para validar cotizaciones vencidas.
 - **Borrado seguro**: `PROTECT` en `advisor`, `category` y `supplier`
   preserva la integridad del historial comercial.
+- **Supplier ↔ Provider** (2026-10-05, alternativa A de la duda 7 del SDD de M2):
+  `Supplier.provider` enlaza, de forma opcional y uno a uno, el distribuidor con la
+  configuración de su API en `apps.providers`. Las ofertas que devuelve `search_all`
+  traen `provider_code`, y su Supplier se obtiene con
+  `Supplier.objects.aget(provider__code=oferta.provider_code)`. La dependencia va de
+  `catalog` a `providers`, nunca al revés.
 - **Tablas físicas** (convención Django `app_modelo`): `catalog_category`,
   `catalog_supplier`, `catalog_product`, `quotes_quote`, `quotes_quoteitem`.

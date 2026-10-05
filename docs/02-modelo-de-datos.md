@@ -1,4 +1,4 @@
-# 02 · Modelo de datos de `apps/providers` y preparación para M2 (SYSCOM)
+# 02 · Modelo de datos de `apps/providers` y preparación para M3 (SYSCOM)
 
 | | |
 |---|---|
@@ -176,7 +176,7 @@ venv\Scripts\python.exe -m coverage run --branch --data-file=$env:TEMP\cconor.co
 venv\Scripts\python.exe -m coverage report --data-file=$env:TEMP\cconor.coverage -m
 ```
 
-## 8. Preparación para M2: integración de la API de SYSCOM
+## 8. Preparación para M3: integración de la API de SYSCOM
 
 En el SDD de M1 el proveedor de ejemplo aparece como "Systecom". El proveedor real es **SYSCOM** (developers.syscom.mx).
 
@@ -207,9 +207,9 @@ Además:
 - Obliga a "proteger la seguridad de las credenciales de acceso y comunicar inmediatamente cualquier brecha".
 - **No dice** si se puede guardar o cachear el catálogo.
 
-El objetivo del cotizador (AGENTS.md: "motor de comparación… precios más baratos") se parece a lo que el acuerdo prohíbe. **Antes de construir M2, CCONOR debe confirmar con SYSCOM, mejor por escrito, que su uso interno está permitido**: cotizaciones propias, sin publicar precios. Esto incluye guardar el catálogo en `RawProviderProduct`.
+El objetivo del cotizador (AGENTS.md: "motor de comparación… precios más baratos") se parece a lo que el acuerdo prohíbe. **Antes de construir M3, CCONOR debe confirmar con SYSCOM, mejor por escrito, que su uso interno está permitido**: cotizaciones propias, sin publicar precios. Esto incluye guardar el catálogo en `RawProviderProduct`.
 
-### 8.3 Cómo encaja M2 con estos modelos
+### 8.3 Cómo encaja M3 con estos modelos
 
 ```
 .env  ──►  token OAuth2 (client_credentials)  ──►  ProviderToken
@@ -243,11 +243,11 @@ proveedor "syscom" (Provider) ──► GET /productos …  ◄──┘   (http
    - 429: esperar lo que indique `Retry-After`.
    - 5xx: error del proveedor.
 6. **Volumen:** `aupsert` cuesta 1 o 2 sentencias por producto. Con `limit` de hasta 1000 por página va bien. Si se descarga el catálogo completo de forma periódica, conviene valorar un upsert por lotes (aún no existe).
-7. **Pruebas de M2:**
+7. **Pruebas de M3:**
    - Sin red, con `httpx.MockTransport` y respuestas de ejemplo guardadas.
    - Con el runner de Django y las convenciones de AGENTS.md §Pruebas.
 
-### 8.4 Preguntas abiertas para el SDD de M2
+### 8.4 Preguntas abiertas para el SDD de M3
 
 | # | Pregunta | Quién decide | ¿Bloquea? |
 |---|---|---|---|
@@ -258,7 +258,7 @@ proveedor "syscom" (Provider) ──► GET /productos …  ◄──┘   (http
 | 5 | Estructura real de la respuesta: clave del id, `precios`, paginación | Primera llamada real | No |
 | 6 | ¿Las existencias van en el payload o aparte? | Equipo | No |
 | 7 | ¿Alta del proveedor por el admin o por migración de datos? | Equipo | No |
-| 8 | Los contratos del núcleo del SDD de M1 (`ProviderAdapter`, `get_credentials`, `parse_json`/`parse_price`, `search_all`, errores) **aún no están implementados**: M1a solo hizo los modelos. ¿Se implementan antes de M2 o dentro de M2? | Equipo | Sí, para seguir el SDD |
+| 8 | Los contratos del núcleo del SDD de M1 (`ProviderAdapter`, `get_credentials`, `parse_json`/`parse_price`, `search_all`, errores) **aún no están implementados**: M1a solo hizo los modelos. ¿Se implementan antes de M3 o dentro de M3? **Respondida (2026-10-04): van antes, como módulo propio M2 (contrato y orquestación), ver [13-sdd-m2-contrato-y-orquestacion.md](13-sdd-m2-contrato-y-orquestacion.md).** | Equipo | Sí, para seguir el SDD |
 
 ## 9. Trampas conocidas al trabajar con estos modelos
 

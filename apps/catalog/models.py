@@ -34,10 +34,24 @@ class Category(models.Model):
 
 
 class Supplier(models.Model):
-    """Marca o distribuidor del producto (ej. SYSCOM, CT ONLINE)."""
+    """Marca o distribuidor del producto (ej. SYSCOM, CT ONLINE).
+
+    Si el distribuidor se consulta por API, `provider` lo enlaza con su configuración en
+    apps.providers (duda 7 del SDD de M2, alternativa A). La dependencia va de catalog a
+    providers, nunca al revés.
+    """
 
     name = models.CharField("nombre", max_length=100, unique=True)
     code = models.CharField("clave", max_length=20, unique=True, null=True, blank=True)
+    provider = models.OneToOneField(
+        "providers.Provider",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="supplier",
+        verbose_name="proveedor con API",
+        help_text="Solo si este distribuidor se consulta por API (apps.providers).",
+    )
     email = models.EmailField("correo", blank=True)
     phone = models.CharField("teléfono", max_length=20, blank=True)
     website = models.URLField("sitio web", blank=True)
