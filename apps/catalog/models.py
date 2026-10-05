@@ -6,8 +6,13 @@ Contiene la clasificación (Category), el directorio de marcas/distribuidores
 
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
-from django.db import models
+from django.db import models, transaction
+from django.db.models.signals import post_delete, post_save
+from django.dispatch import receiver
+
+from .normalizer import normalizar
 
 
 class Category(models.Model):
@@ -89,3 +94,43 @@ class Product(models.Model):
 
     def __str__(self):
         return f"{self.sku} — {self.name}"
+
+
+class SinonimoRed(models.Model):
+    """Sustitución de un token completo por una expansión aprobada."""
+
+    abreviatura = models.CharField("abreviatura", max_length=40, unique=True)
+    expansion = models.CharField("expansión", max_length=120)
+
+    class Meta:
+        verbose_name = "sinónimo de red"
+        verbose_name_plural = "sinónimos de red"
+        ordering = ["abreviatura"]
+
+    def clean_fields(self, exclude=None):
+        # Antes de validar longitud/unicidad (también desde el admin).
+        exclude = set(exclude or ())
+        for campo in ("abreviatura", "expansion"):
+            if campo not in exclude and isinstance(getattr(self, campo), str):
+                setattr(self, campo, normalizar(getattr(self, campo)))
+        super().clean_fields(exclude=exclude)
+        if "abreviatura" not in exclude and " " in self.abreviatura:
+            raise ValidationError({"abreviatura": "Debe ser un único token."})
+
+    def save(self, *args, **kwargs):
+        # La restricción única de BD resuelve también escrituras concurrentes.
+        self.full_clean(validate_unique=False)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.abreviatura} → {self.expansion}"
+
+
+@receiver(post_save, sender=SinonimoRed)
+@receiver(post_delete, sender=SinonimoRed)
+def _invalidar_sinonimos(sender, using, **kwargs):
+    from .synonyms import invalidar_cache
+
+    invalidar_cache()
+    # Una lectura concurrente antes del commit podría haber recargado la copia vieja.
+    transaction.on_commit(invalidar_cache, using=using)
