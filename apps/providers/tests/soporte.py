@@ -4,6 +4,7 @@ El runner de Django no carga conftest.py, así que lo común vive aquí.
 """
 import hashlib
 import json
+import os
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone as dt_timezone
@@ -207,3 +208,43 @@ class ApiFalsa:
 
     def rutas_pedidas(self):
         return [f"{p.url.host}{p.url.path}" for p in self.peticiones]
+
+
+# --- M3: las pruebas nunca tocan la API real ni las credenciales reales (docs/16 §6.2) ---
+
+
+@contextmanager
+def sin_red():
+    """Corta cualquier petición por un transporte real de httpx y, al salir, hace fallar la prueba.
+
+    ApiFalsa usa httpx.MockTransport, que no pasa por aquí. El fallo se comprueba al salir
+    porque el núcleo convierte las excepciones en errores de resultado.
+    """
+    intentos = []
+
+    def bloquear(transporte, request):
+        intentos.append(f"{request.method} {request.url.host}")
+        raise httpx.ConnectError("Red bloqueada en las pruebas.", request=request)
+
+    async def bloquear_async(transporte, request):
+        return bloquear(transporte, request)
+
+    with (
+        mock.patch.object(httpx.HTTPTransport, "handle_request", bloquear),
+        mock.patch.object(httpx.AsyncHTTPTransport, "handle_async_request", bloquear_async),
+    ):
+        yield intentos
+    if intentos:
+        raise AssertionError(f"Una prueba intentó salir a la red: {intentos}")
+
+
+@contextmanager
+def credenciales_de_prueba(code, **valores):
+    """Oculta las variables reales del proveedor (cualquier nombre que contenga su code) y pone
+    valores falsos como PROVIDER_<CODE>_<CLAVE>. Al salir se restaura el entorno."""
+    marca = code.upper().replace("-", "_")
+    with mock.patch.dict(os.environ):
+        for nombre in [n for n in os.environ if marca in n.upper()]:
+            del os.environ[nombre]
+        os.environ.update({f"PROVIDER_{marca}_{clave}": valor for clave, valor in valores.items()})
+        yield
