@@ -46,12 +46,18 @@
 
     // --------------------------------------------------------------------------
     // DESCARGAR PDF OFICIAL
+    // Descarga REAL del PDF que genera Django (fetch + blob + <a download>).
+    // - No navega fuera de la página: la pestaña del Resumen nunca se cambia.
+    // - NUNCA llama a window.print(): eso es exclusivo del botón "Imprimir",
+    //   así que aquí no se abre el diálogo de impresión del navegador.
+    // - Si el servidor falla (404/500) o la respuesta no es un PDF, se avisa
+    //   con toast en lugar de mostrar una página de error.
     // --------------------------------------------------------------------------
     function initDownloadPdf() {
         const btn = document.getElementById('downloadPdfBtn');
         if (!btn) return;
 
-        btn.addEventListener('click', function () {
+        btn.addEventListener('click', async function () {
             const folio = getCurrentFolio();
             if (!folio) {
                 window.showToast('No se encontró el folio de la cotización.', 'danger');
@@ -59,11 +65,51 @@
             }
             const restore = setButtonLoading(btn, 'Generando PDF...');
             window.showToast('Generando y descargando PDF oficial...', 'info', 'PDF Oficial');
-            // Descarga directa: el servidor responde con Content-Disposition: attachment.
+
             // URL construida por Django (window.CCONOR_URLS, ver resumen.html); el folio es dinámico.
             const urlTemplate = (window.CCONOR_URLS && window.CCONOR_URLS.pdf) || '/cotizaciones/__FOLIO__/pdf/';
-            window.location.href = urlTemplate.replace('__FOLIO__', encodeURIComponent(folio));
-            setTimeout(restore, 2500);
+            const url = urlTemplate.replace('__FOLIO__', encodeURIComponent(folio));
+
+            try {
+                const res = await fetch(url, { credentials: 'same-origin' });
+                if (!res.ok) {
+                    window.showToast(
+                        `El servidor respondió HTTP ${res.status}; no se generó el PDF.`,
+                        'danger', 'Descarga Cancelada'
+                    );
+                    return;
+                }
+                if (!/pdf/i.test(res.headers.get('Content-Type') || '')) {
+                    window.showToast(
+                        'La respuesta del servidor no es un PDF válido.',
+                        'danger', 'Descarga Cancelada'
+                    );
+                    return;
+                }
+
+                const blob = await res.blob();
+
+                // El servidor responde Content-Disposition: attachment con el nombre
+                // del archivo basado en el folio; si no viniera, se arma con el folio actual.
+                const disposition = res.headers.get('Content-Disposition') || '';
+                const match = disposition.match(/filename="?([^";]+)"?/i);
+                const filename = (match && match[1]) || `Cotizacion_${folio}.pdf`;
+
+                const objectUrl = URL.createObjectURL(blob);
+                const anchor = document.createElement('a');
+                anchor.href = objectUrl;
+                anchor.download = filename;
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+                setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 1000);
+
+                window.showToast(`PDF "${filename}" descargado correctamente.`, 'success', 'Descarga Completa');
+            } catch (err) {
+                window.showToast('Error de red al descargar el PDF: ' + err.message, 'danger', 'Descarga Fallida');
+            } finally {
+                restore();
+            }
         });
     }
 

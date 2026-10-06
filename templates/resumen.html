@@ -302,8 +302,10 @@ window.CCONOR_URLS = {
     email: "{% url 'enviar_cotizacion_correo' folio='__FOLIO__' %}"
 };
 </script>
-<!-- Acciones de la propuesta: Imprimir, Descargar PDF oficial y Enviar por correo (v=2: URLs Django + attach_pdf) -->
-<script src="{% static 'js/cotizacion_actions.js' %}?v=2"></script>
+<!-- Acciones de la propuesta: Imprimir, Descargar PDF oficial y Enviar por correo
+     (v=3: descarga vía fetch+blob, sin diálogo de impresión; fuerza recarga del JS
+     para descartar cualquier versión cacheada del navegador) -->
+<script src="{% static 'js/cotizacion_actions.js' %}?v=3"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     const historyBody = document.getElementById('historyTableBody');
