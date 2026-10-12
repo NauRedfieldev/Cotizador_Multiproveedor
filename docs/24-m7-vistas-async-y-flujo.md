@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Código** | `apps/quotes/views.py` (`cotizar_productos` y funciones privadas), `apps/quotes/urls.py` |
-| **Pruebas** | `apps/quotes/tests/test_vistas_cotizacion.py` (V1–V12, 14 pruebas, sin red) |
+| **Pruebas** | `apps/quotes/tests/test_vistas_cotizacion.py` (V1–V14, 16 pruebas, sin red) |
 | **Se apoya en** | M2 `search_all` ([14](14-contrato-y-orquestacion.md)), M5 `aemparejar_con_fallback` ([21](21-catalogo-canonico-y-m5b.md), [22](22-m5c-fallback-y-guardas.md)), M6 `comparar_configurado` ([23](23-m6-comparacion-y-moneda.md)) |
-| **Lo pinta** | M7b: la plantilla `comparador.html`, con el contexto de la §4 |
+| **Lo pinta** | M7b: la plantilla `comparador.html`, con el contexto de la §4 (entrega detallada en [25](25-entrega-m7b-comparador-y-cotizador.md)) |
 
 ## 1. Qué resuelve
 
@@ -52,7 +52,7 @@ GET /cotizaciones/buscar/
 - **Emparejamiento después del ranking.** M5 no cambia el precio ni el orden: solo añade la identidad.
   Por eso se aplica únicamente a las ofertas visibles (3 por proveedor por defecto), lo que limita las
   consultas a la BD.
-- **ORM.** La vista no usa el ORM directamente. M5 usa ORM síncrono envuelto en
+- **ORM.** La vista solo usa ORM async para leer los nombres de proveedor y las categorías del contexto (2 consultas por petición). M5 usa ORM síncrono envuelto en
   `sync_to_async(thread_sensitive=True)` (decisión del equipo, docs/22). El render también va por
   `sync_to_async`, porque los context processors pueden leer la sesión.
 
@@ -64,7 +64,9 @@ Todas las respuestas (200, 400, 429 y 503) renderizan `comparador.html` con las 
 |---|---|---|
 | `ofertas` | `list[OfertaPresentada]` | Ordenada por `precio_comparable`, luego `provider_code` y `external_id`. Vacía en los errores |
 | `proveedores_caidos` | `list[str]` | `code` de los proveedores caídos o descartados por M6, en orden alfabético |
+| `proveedores_caidos_nombres` | `list[str]` | `Provider.name` de cada caído, en el mismo orden (para el aviso) |
 | `tipo_cambio` | `TipoCambio \| None` | `valor` (Decimal, MXN por USD), `origen` (`"manual"`) y `fecha` (captura, con zona horaria) |
+| `categorias` | `list[Category]` | Categorías activas, ordenadas por nombre, para el `<select>` del formulario (`c.pk`, `c.name`) |
 | `error` | `str` | Solo en 400, 429 y 503. Texto para el usuario, sin trazas ni datos internos |
 
 `OfertaPresentada` (dataclass congelada, en `apps/quotes/views.py`):
@@ -75,6 +77,7 @@ Todas las respuestas (200, 400, 429 y 503) renderizan `comparador.html` con las 
 | `precio_comparable` | `Decimal` en MXN, sin cuantizar. Para mostrarlo, redondear en la plantilla |
 | `es_mejor_precio` | `True` si es el precio más bajo **de su proveedor** (M6) |
 | `match` | `ResultadoMatch` de M5: `canonico`, `estado` (`AUTO_MATCH`, `REVISION_MANUAL` o `SIN_MATCH`), `metodo`, `score`, `motivo` y `candidatos` |
+| `proveedor_nombre` | `Provider.name` (o el `code` si no se encuentra). Va resuelto porque las plantillas no indexan un diccionario con una variable |
 
 Lo que la plantilla debe mostrar (docs/23): `stock` `0` y `None` son distintos (`None` = desconocido), y
 el mejor precio no promete disponibilidad. Una sugerencia `REVISION_MANUAL` no es una identidad confirmada.
@@ -122,6 +125,8 @@ salir a la red.
 | V10, V10b | Confianza por proveedor y `categoria` | `syscom` empareja por modelo; otro proveedor no; la categoría llega a M5c |
 | V11 | POST | 405 |
 | V12 | `OFERTAS_POR_PROVEEDOR=1` | Solo la mejor de cada proveedor |
+| V13 | Categorías en el contexto | Solo las activas, ordenadas, también en un 400 |
+| V14 | Nombres de proveedor | `proveedor_nombre` y `proveedores_caidos_nombres` legibles |
 
 Comandos (desde la raíz):
 

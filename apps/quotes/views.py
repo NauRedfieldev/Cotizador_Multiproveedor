@@ -26,7 +26,9 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET
 
 from apps.catalog.matching import IdentificadoresConfiables, ResultadoMatch, aemparejar_con_fallback
+from apps.catalog.models import Category
 from apps.providers.contracts import ProductQuery, ProviderOffer
+from apps.providers.models import Provider
 from apps.providers.service import search_all
 
 from .comparison import comparar_configurado, tipo_cambio_manual
@@ -122,6 +124,7 @@ class OfertaPresentada:
     precio_comparable: Decimal  # en MXN
     es_mejor_precio: bool  # dentro de su proveedor
     match: ResultadoMatch
+    proveedor_nombre: str  # Provider.name; las plantillas no indexan un dict con una variable
 
 
 class _EntradaInvalida(ValueError):
@@ -179,13 +182,16 @@ async def cotizar_productos(request):
         )
         for c in comparadas
     ))
+    nombres = await _nombres_de_proveedores()
     ofertas = sorted(
-        (OfertaPresentada(c.oferta, c.precio_comparable, c.es_mejor_precio, m)
+        (OfertaPresentada(c.oferta, c.precio_comparable, c.es_mejor_precio, m,
+                          nombres.get(c.oferta.provider_code, c.oferta.provider_code))
          for c, m in zip(comparadas, matches)),
         key=lambda o: (o.precio_comparable, o.oferta.provider_code, o.oferta.external_id),
     )
     return await _responder(
-        request, 200, ofertas=ofertas, proveedores_caidos=caidos, tipo_cambio=tipo_cambio
+        request, 200, ofertas=ofertas, proveedores_caidos=caidos, tipo_cambio=tipo_cambio,
+        nombres=nombres,
     )
 
 
@@ -231,12 +237,22 @@ async def _sin_proveedores(request, caidos, tipo_cambio):
     )
 
 
-async def _responder(request, status, *, ofertas=(), proveedores_caidos=(), tipo_cambio=None, error=None):
+async def _nombres_de_proveedores():
+    return {p.code: p.name async for p in Provider.objects.only("code", "name")}
+
+
+async def _responder(request, status, *, ofertas=(), proveedores_caidos=(), tipo_cambio=None,
+                     error=None, nombres=None):
     """Toda respuesta usa comparador.html con el mismo contrato de contexto (docs/24 §4)."""
+    if nombres is None:
+        nombres = await _nombres_de_proveedores()
     contexto = {
         "ofertas": list(ofertas),
         "proveedores_caidos": list(proveedores_caidos),
+        "proveedores_caidos_nombres": [nombres.get(code, code) for code in proveedores_caidos],
         "tipo_cambio": tipo_cambio,
+        # Para el <select> del formulario, también en 400, 429 y 503.
+        "categorias": [c async for c in Category.objects.filter(is_active=True).order_by("name")],
     }
     if error is not None:
         contexto["error"] = error

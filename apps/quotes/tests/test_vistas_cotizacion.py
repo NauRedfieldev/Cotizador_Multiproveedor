@@ -1,4 +1,4 @@
-"""Pruebas V1–V12 de la vista async de cotización en modo degradado (M7, docs/24).
+"""Pruebas V1–V14 de la vista async de cotización en modo degradado (M7, docs/24).
 
 Los proveedores son adaptadores de prueba cuyo fetch no hace HTTP; sin_red() corta cualquier
 intento de salir a la red. No se usa ninguna credencial real.
@@ -218,6 +218,23 @@ class VistaCotizacionTests(TestCase):
             respuesta = await self.async_client.post(reverse("cotizar_productos"), {"q": "camara"})
         self.assertEqual(respuesta.status_code, 405)
         self.assertEqual(llamadas, [])
+
+    async def test_v13_categorias_activas_para_el_formulario_tambien_en_errores(self):
+        await Category.objects.acreate(name="Redes")
+        await Category.objects.acreate(name="Cámaras")
+        await Category.objects.acreate(name="Descontinuada", is_active=False)
+        respuesta = await self.buscar([adaptador("alfa", mxn("1", "1.00"))], q="")
+        self.assertEqual(respuesta.status_code, 400)
+        self.assertEqual([c.name for c in respuesta.context["categorias"]], ["Cámaras", "Redes"])
+
+    async def test_v14_nombres_legibles_de_proveedor(self):
+        respuesta = await self.buscar([
+            adaptador("alfa", mxn("1", "100.00")),
+            adaptador("beta", error=TimeoutError()),
+        ])
+        self.assertEqual([o.proveedor_nombre for o in respuesta.context["ofertas"]], ["Alfa"])
+        self.assertEqual(respuesta.context["proveedores_caidos"], ["beta"])
+        self.assertEqual(respuesta.context["proveedores_caidos_nombres"], ["Beta"])
 
     @override_settings(OFERTAS_POR_PROVEEDOR=1)
     async def test_v12_solo_se_muestran_las_mejores_n_por_proveedor(self):
