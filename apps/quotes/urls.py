@@ -5,6 +5,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    path("demo/cotizaciones/<str:folio>/pdf/", views.demo_pdf_cotizacion, name="demo_pdf_cotizacion"),
     path(
         "cotizaciones/<str:folio>/pdf/",
         views.descargar_pdf_cotizacion,

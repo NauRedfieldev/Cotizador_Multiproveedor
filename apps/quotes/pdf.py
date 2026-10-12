@@ -1,23 +1,24 @@
 """Generación del PDF oficial de cotización (reportlab).
 
-ÚNICO punto de generación de los bytes del PDF: lo usan tanto la descarga
-manual (`descargar_pdf_cotizacion`) como el envío por correo
-(`enviar_cotizacion_correo`). NO duplicar esta lógica en otro módulo.
+ÚNICO renderer: borradores, emisiones y vía histórica. Descarga y correo de
+emisiones reutilizan el archivo original, no llaman otra vez al renderer.
 
-Fuente de datos: `get_quote_context(folio)` intenta primero la BD (modelo
-`quotes.Quote`, cuando exista y esté migrado) y, si no hay datos reales,
-usa datos demo con la misma forma que la pantalla de Resumen. El folio del
-documento siempre es el solicitado en la URL.
+M8 adapta snapshots a este renderer; los PDF emitidos se descargan del archivo
+original. get_quote_context es solo la vía histórica. Demo explícito, nunca
+fallback por folio inexistente o fallo de BD.
 """
 
 import io
 import re
+from copy import deepcopy
 from decimal import Decimal
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import (
     HRFlowable,
     Image,
@@ -27,6 +28,8 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+
+from .snapshot_values import amount
 
 NAVY = colors.HexColor("#111638")
 PURPLE = colors.HexColor("#7311F5")
@@ -47,14 +50,31 @@ COMPANY = {
 DEFAULT_CONDITIONS = [
     "Precios expresados en Pesos Mexicanos (MXN).",
     "Tiempo de entrega estimado: 2 a 4 días hábiles tras confirmación de pago.",
-    "Garantía: Directa de fábrica con los mayoristas autorizados (SYSCOM y CT Online).",
+    "Ejemplo de garantía: confirmar con SYSCOM y Exel del Norte.",
     "Cuentas bancarias para depósito: BBVA Bancomer Clabe: 012028000123456789.",
 ]
 
 
 def money(value):
     """Formato moneda estilo es-MX: $26,470.60 (sin el sufijo MXN)."""
-    return f"${Decimal(value):,.2f}"
+    return f"${amount(Decimal(value)):,.2f}"
+
+
+def unit_money(value):
+    """Mostrar precisión completa de unitario convertido, al menos dos decimales."""
+    text = f"{value:,.14f}".rstrip("0")
+    integer, _, fraction = text.partition(".")
+    return "$" + integer + "." + fraction.ljust(2, "0")
+
+
+def _escaped(value):
+    if isinstance(value, str):
+        return escape(value)
+    if isinstance(value, dict):
+        return {key: _escaped(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_escaped(item) for item in value]
+    return value
 
 
 def safe_filename(folio):
@@ -64,7 +84,7 @@ def safe_filename(folio):
 
 
 # --------------------------------------------------------------------------- #
-# Contexto de datos (real si hay BD, demo si no)
+# Contextos separados: histórico real y demostración explícita
 # --------------------------------------------------------------------------- #
 
 def build_demo_quote(folio):
@@ -87,14 +107,17 @@ def build_demo_quote(folio):
             "code": "DELL-P2422H",
             "name": 'Monitor Dell Profesional 23.8" Full HD',
             "description": "Panel IPS antirreflejo, resolución 1920x1080 @60Hz, HDMI, DP, VGA, 4x USB 3.2.",
-            "provider": "CT Online",
+            "provider": "Exel del Norte",
             "qty": 5,
             "unit_price": Decimal("4013.50"),
             "amount": Decimal("20067.50"),
         },
     ]
+    subtotal = sum((i["amount"] for i in items), Decimal("0"))
+    iva = amount(subtotal * Decimal("0.16"))
     return {
         "folio": folio,
+        "document_label": "DEMO — SIN VALIDEZ COMERCIAL",
         "issue_date": "29/09/2026",
         "valid_until": "29/10/2026",
         "validity_label": "30 días",
@@ -108,31 +131,21 @@ def build_demo_quote(folio):
             "project": "Cableado e Infraestructura Torre Alfa",
         },
         "items": items,
-        "subtotal": Decimal("26470.60"),
-        "iva": Decimal("4235.30"),
-        "total": Decimal("30705.90"),
+        "subtotal": subtotal,
+        "iva": iva,
+        "total": subtotal + iva,
         "iva_rate_label": "16%",
         "conditions": list(DEFAULT_CONDITIONS),
     }
 
 
-def _try_load_real_quote(folio):
-    """Intenta armar el contexto desde el modelo quotes.Quote.
+def _load_legacy_quote(folio):
+    """Datos guardados previos a M8. Los errores se propagan, jamás fabrican demo."""
+    from .models import Quote
 
-    Devuelve None si el modelo no existe, el folio no está en BD o las
-    tablas aún no están migradas. Así el PDF funciona en demo y empieza a
-    usar datos reales sin cambiar código cuando el backend esté listo.
-    """
-    try:
-        from django.apps import apps as django_apps
-
-        quote_model = django_apps.get_model("quotes", "Quote")
-    except LookupError:
-        return None
-    try:
-        quote = quote_model.objects.prefetch_related("items").get(folio=folio)
-    except Exception:
-        return None
+    quote = Quote.objects.select_related("advisor").prefetch_related("items__product__supplier").get(folio=folio)
+    if quote.revisions.exists():
+        raise ValueError("Usa obtener_documento para una cotización con revisiones M8.")
 
     advisor = getattr(quote, "advisor", None)
     advisor_name = (
@@ -159,6 +172,8 @@ def _try_load_real_quote(folio):
     notes = [line.strip() for line in (quote.notes or "").splitlines() if line.strip()]
     return {
         "folio": quote.folio,
+        "document_label": "DOCUMENTO HISTÓRICO — SIN SNAPSHOT DE ORIGEN",
+        "legacy_unknown_currency": True,
         "issue_date": quote.issue_date.strftime("%d/%m/%Y") if quote.issue_date else "",
         "valid_until": quote.expiration_date.strftime("%d/%m/%Y"),
         "validity_label": f"{quote.valid_days} días",
@@ -176,13 +191,14 @@ def _try_load_real_quote(folio):
         "iva": quote.tax,
         "total": quote.total,
         "iva_rate_label": f"{(quote.tax_rate * 100):g}%",
-        "conditions": notes or list(DEFAULT_CONDITIONS),
+        "conditions": notes + ["Datos históricos: moneda de origen y tipo de cambio no registrados. No se infiere conversión.",
+                               "Membrete actual no validado como histórico; este documento no es un original archivado."],
     }
 
 
 def get_quote_context(folio):
-    """Contexto del PDF para cualquier folio: real si hay BD, demo si no."""
-    return _try_load_real_quote(folio) or build_demo_quote(folio)
+    """Vía legacy sin inferir moneda. Consultar revisiones mediante snapshots."""
+    return _load_legacy_quote(folio)
 
 
 # --------------------------------------------------------------------------- #
@@ -230,12 +246,12 @@ def _logo_image():
         return None
 
 
-def _footer(canvas, doc, folio):
+def _footer(canvas, doc, folio, company_name):
     canvas.saveState()
     canvas.setFont("Helvetica", 7)
     canvas.setFillColor(MUTED)
     canvas.drawCentredString(
-        letter[0] / 2, 1.0 * cm, f"{COMPANY['name']}  |  {folio}  |  Página {doc.page}"
+        letter[0] / 2, 1.0 * cm, f"{company_name}  |  {folio}  |  Página {doc.page}"
     )
     canvas.restoreState()
 
@@ -243,9 +259,11 @@ def _footer(canvas, doc, folio):
 def generate_quote_pdf(quote):
     """Genera el PDF oficial de la cotización y devuelve sus bytes.
 
-    `quote` es el dict de `get_quote_context()`. Misma función para la
-    descarga manual y para adjuntarlo al correo.
+    `quote` es un contexto materializado de snapshots, histórico o demo.
+    La emisión archiva este resultado; los borradores pueden regenerarse.
     """
+    original_folio, original_company = quote["folio"], quote["company"]["name"]
+    quote = _escaped(deepcopy(quote))
     st = _styles()
     c = quote["company"]
     buffer = io.BytesIO()
@@ -256,11 +274,16 @@ def generate_quote_pdf(quote):
         rightMargin=1.5 * cm,
         topMargin=1.4 * cm,
         bottomMargin=1.8 * cm,
-        title=f"Cotización {quote['folio']} - CCONOR",
-        author=c["name"],
+        title=f"Cotización {original_folio} - CCONOR",
+        author=original_company,
     )
     story = []
     usable = letter[0] - 3.0 * cm
+    if quote.get("document_label"):
+        story.append(Paragraph(quote["document_label"], st["bold"]))
+        story.append(Spacer(1, 0.15 * cm))
+    if quote.get("revision"):
+        story.append(Paragraph(f"Revisión {quote['revision']}", st["small"]))
 
     # ---- Encabezado membretado ----
     left_header = []
@@ -358,23 +381,33 @@ def generate_quote_pdf(quote):
         Paragraph("Marca / Dist.", st["th_center"]),
         Paragraph("Cant.", st["th_center"]),
         Paragraph("P. Unitario", st["th_right"]),
-        Paragraph("Importe MXN", st["th_right"]),
+        Paragraph("Importe histórico" if quote.get("legacy_unknown_currency") else "Importe MXN", st["th_right"]),
     ]
     rows = [head]
     for i, item in enumerate(quote["items"], start=1):
+        source_label = ""
+        unit_text = money(item["unit_price"]) if not quote.get("precision_units") else unit_money(item["unit_price"])
+        if quote.get("precision_units"):
+            stock = item["stock"]
+            stock_label = "desconocido" if stock is None else "sin existencias" if stock == 0 else str(stock)
+            source_label = (f"<br/>Origen: {unit_money(item['source_unit_price'])} {item['source_currency']}"
+                            f"<br/>Stock capturado: {stock_label}")
+            if stringWidth(unit_text, st["cell_right"].fontName, st["cell_right"].fontSize) > 2.1 * cm - 12:
+                source_label += f"<br/>Unitario MXN: {unit_text}"
+                unit_text = "Ver detalle"
         rows.append(
             [
                 Paragraph(f"<b>{i}</b>", st["cell_center"]),
                 Paragraph(item["code"], st["cell_mono"]),
-                Paragraph(f"<b>{item['name']}</b><br/><font color=\"#5A5F7A\">{item['description']}</font>", st["cell"]),
+                Paragraph(f"<b>{item['name']}</b><br/><font color=\"#5A5F7A\">{item['description']}{source_label}</font>", st["cell"]),
                 Paragraph(item["provider"], st["cell_center"]),
                 Paragraph(f"<b>{item['qty']}</b>", st["cell_center"]),
-                Paragraph(money(item["unit_price"]), st["cell_right"]),
+                Paragraph(unit_text, st["cell_right"]),
                 Paragraph(f"<b>{money(item['amount'])}</b>", st["cell_right"]),
             ]
         )
     col_widths = [0.9 * cm, 2.4 * cm, usable - 11.9 * cm, 2.2 * cm, 1.2 * cm, 2.1 * cm, 2.1 * cm]
-    items_table = Table(rows, colWidths=col_widths, repeatRows=1)
+    items_table = Table(rows, colWidths=col_widths, repeatRows=1, splitInRow=1)
     items_table.setStyle(
         TableStyle(
             [
@@ -390,16 +423,21 @@ def generate_quote_pdf(quote):
     )
     story.append(items_table)
     story.append(Spacer(1, 0.4 * cm))
+    if quote.get("exchange_rate_label"):
+        story.append(Paragraph(quote["exchange_rate_label"], st["small"]))
+    if any(item.get("stock") in (0, None) for item in quote["items"]) and not quote.get("legacy_unknown_currency"):
+        story.append(Paragraph("Hay partidas sin existencias o con disponibilidad desconocida. Confirmar entrega; el precio no garantiza stock.", st["small"]))
 
     # ---- Condiciones + totales ----
     conditions = [Paragraph("<b>Condiciones Comerciales y de Entrega:</b>", st["cell_bold"])]
     for cond in quote["conditions"]:
         conditions.append(Paragraph(f"• {cond}", st["small_dark"]))
+    currency_label = "moneda no registrada" if quote.get("legacy_unknown_currency") else "MXN"
     totals = Table(
         [
-            [Paragraph("Subtotal:", st["cell"]), Paragraph(f"<b>{money(quote['subtotal'])} MXN</b>", st["cell_right"])],
-            [Paragraph(f"I.V.A. ({quote['iva_rate_label']}):", st["cell"]), Paragraph(f"<b>{money(quote['iva'])} MXN</b>", st["cell_right"])],
-            [Paragraph("<b>Total a Pagar:</b>", st["cell_bold"]), Paragraph(f"<b><font color=\"#7311F5\">{money(quote['total'])} MXN</font></b>", st["cell_right"])],
+            [Paragraph("Subtotal:", st["cell"]), Paragraph(f"<b>{money(quote['subtotal'])} {currency_label}</b>", st["cell_right"])],
+            [Paragraph(f"I.V.A. ({quote['iva_rate_label']}):", st["cell"]), Paragraph(f"<b>{money(quote['iva'])} {currency_label}</b>", st["cell_right"])],
+            [Paragraph("<b>Total estimado:</b>", st["cell_bold"]), Paragraph(f"<b><font color=\"#7311F5\">{money(quote['total'])} {currency_label}</font></b>", st["cell_right"])],
         ],
         colWidths=[3.0 * cm, 3.6 * cm],
     )
@@ -416,7 +454,7 @@ def generate_quote_pdf(quote):
             ]
         )
     )
-    bottom = Table([[conditions, totals]], colWidths=[usable - 7.0 * cm, 7.0 * cm])
+    bottom = Table([[conditions, totals]], colWidths=[usable - 7.0 * cm, 7.0 * cm], splitInRow=1)
     bottom.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (1, 0), (1, 0), "RIGHT")]))
     story.append(bottom)
 
@@ -432,7 +470,7 @@ def generate_quote_pdf(quote):
 
     doc.build(
         story,
-        onFirstPage=lambda cnv, d: _footer(cnv, d, quote["folio"]),
-        onLaterPages=lambda cnv, d: _footer(cnv, d, quote["folio"]),
+        onFirstPage=lambda cnv, d: _footer(cnv, d, original_folio, original_company),
+        onLaterPages=lambda cnv, d: _footer(cnv, d, original_folio, original_company),
     )
     return buffer.getvalue()

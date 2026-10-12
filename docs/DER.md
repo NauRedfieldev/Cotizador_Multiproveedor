@@ -1,4 +1,4 @@
-# DER — Catálogo y Cotizaciones (M1b)
+# DER — Catálogo y Cotizaciones (M1b + revisiones M8)
 
 Diagrama Entidad-Relación de las apps `catalog` y `quotes`.
 Fuente de verdad: `apps/catalog/models.py` y `apps/quotes/models.py`.
@@ -13,6 +13,9 @@ erDiagram
     PROVIDER |o--o| SUPPLIER : "se consulta por API (0..1)"
     QUOTE ||--o{ QUOTE_ITEM : "contiene (1:N)"
     PRODUCT ||--o{ QUOTE_ITEM : "se cotiza en (0:N)"
+    QUOTE ||--o{ QUOTE_REVISION : "versiona (PROTECT)"
+    QUOTE_REVISION |o--o{ QUOTE_REVISION : "origina (based_on, PROTECT)"
+    QUOTE_REVISION ||--o{ QUOTE_SNAPSHOT : "captura (PROTECT)"
 
     AUTH_USER {
         int id PK
@@ -30,7 +33,7 @@ erDiagram
 
     SUPPLIER {
         int id PK
-        varchar name UK "ej. SYSCOM, CT ONLINE"
+        varchar name UK "ej. SYSCOM, Exel del Norte"
         varchar code UK "nullable"
         bigint provider_id FK "UK, nullable, PROTECT → providers_provider"
         varchar email
@@ -78,6 +81,56 @@ erDiagram
         decimal quantity "> 0"
         decimal unit_price "snapshot del producto"
     }
+
+    QUOTE_REVISION {
+        bigint id PK
+        bigint quote_id FK "PROTECT"
+        bigint based_on_id FK "nullable, PROTECT"
+        int number "UK con quote_id"
+        uuid request_id "UK con quote_id"
+        varchar request_fingerprint "SHA-256 solicitud inicial"
+        int edit_version "control optimista"
+        varchar status "DRAFT o ISSUED"
+        smallint schema_version "1"
+        jsonb header "folio, empresa, asesor, cliente, condiciones"
+        varchar currency "MXN"
+        decimal exchange_rate "numeric(18,8), nullable"
+        varchar exchange_rate_source
+        datetime exchange_rate_date "aware, nullable"
+        decimal tax_rate "numeric(5,4)"
+        date issue_date
+        smallint valid_days
+        decimal subtotal "numeric(38,2), nullable en borrador"
+        decimal tax "numeric(38,2), nullable en borrador"
+        decimal total "numeric(38,2), nullable en borrador"
+        varchar pdf "ruta privada del original"
+        varchar pdf_sha256
+        datetime issued_at "nullable"
+        datetime created_at
+        datetime updated_at
+    }
+
+    QUOTE_SNAPSHOT {
+        bigint id PK
+        bigint revision_id FK "PROTECT"
+        int position "UK con revision_id"
+        text code
+        text name
+        text description
+        varchar provider_code
+        varchar provider_name
+        text external_id
+        text brand
+        text model
+        text mpn
+        decimal source_unit_price "numeric(18,6)"
+        varchar source_currency "USD o MXN"
+        decimal quantity "numeric(10,2)"
+        bigint stock "nullable; cero distinto de NULL"
+        bool es_mejor_precio
+        decimal amount "numeric(38,2), nullable en borrador"
+        datetime captured_at
+    }
 ```
 
 > Las propiedades calculadas (`Quote.subtotal`, `Quote.tax`, `Quote.total`,
@@ -101,7 +154,7 @@ erDiagram
 | Campo | Tipo | Clave | Descripción |
 |---|---|---|---|
 | id | serial | PK | Identificador interno |
-| name | varchar(100) | UK | Nombre comercial (ej. SYSCOM, CT ONLINE) |
+| name | varchar(100) | UK | Nombre comercial (ej. SYSCOM, Exel del Norte) |
 | code | varchar(20) | UK (nullable) | Clave/abreviatura interna |
 | provider_id | bigint | FK → providers_provider, UK (nullable) | Configuración de su API en `apps.providers`. Solo para distribuidores que se consultan por API. PROTECT: no se borra un `Provider` enlazado. Ver duda 7 del SDD de M2 (alternativa A) |
 | email / phone / website | varchar | | Datos de contacto opcionales |
@@ -150,14 +203,27 @@ erDiagram
 | quantity | numeric(10,2) | | Cantidad (> 0; decimal para metros/piezas fraccionadas) |
 | unit_price | numeric(12,2) | | Precio unitario congelado al momento de cotizar |
 
+### quotes_quoterevision / quotes_quotesnapshot — Historial M8
+
+Diccionario completo, restricciones y capacidad financiera:
+[24 · SDD M8 §2–3](24-sdd-m8-snapshot-pdf.md). Operaciones/permisos:
+[25 · Integración M8](25-m8-snapshot-pdf-integracion.md). Las tablas existentes
+permanecen intactas, sin inferir moneda/FX histórica. Los nuevos documentos usan
+snapshots explícitos, no unitarios de dos decimales de QuoteItem.
+
 ## Notas de diseño
 
-- **Snapshot en partidas**: al guardar un `QuoteItem` ligado a un producto, si
+- **Snapshot parcial legacy en partidas**: al guardar un `QuoteItem` ligado a un producto, si
   `description` o `unit_price` vienen vacíos se copian del catálogo. Así, un
-  cambio de precio posterior en `Product` nunca altera cotizaciones emitidas.
-- **Totales calculados, no persistidos**: `subtotal` se calcula con agregación
+  cambio de precio en Product no cambia el precio copiado; nombres/proveedor y
+  datos de Quote siguen siendo mutables. No garantiza historial emitido completo.
+- **Totales legacy calculados, no persistidos**: `subtotal` se calcula con agregación
   SQL (`SUM(quantity × unit_price)`), `tax = subtotal × tax_rate` y
   `total = subtotal + tax`. Se evita desnormalización e inconsistencias.
+- **Revisiones M8**: borradores capturan cabecera/partidas/FX; emisión persiste
+  importes redondeados por línea y totales, PDF privado y SHA-256. Emisiones
+  inmutables en interfaz de escritura soportada; cambios requieren nueva revisión.
+  No usar los totales legacy para documentos M8.
 - **Folio**: se genera en `Quote.save()` con formato `COT-YYYY-XXXX`
   (consecutivo que reinicia cada año). La unicidad la garantiza el constraint
   `unique`; ante colisión por concurrencia se reintenta el guardado.
@@ -172,4 +238,5 @@ erDiagram
   `Supplier.objects.aget(provider__code=oferta.provider_code)`. La dependencia va de
   `catalog` a `providers`, nunca al revés.
 - **Tablas físicas** (convención Django `app_modelo`): `catalog_category`,
-  `catalog_supplier`, `catalog_product`, `quotes_quote`, `quotes_quoteitem`.
+  `catalog_supplier`, `catalog_product`, `quotes_quote`, `quotes_quoteitem`,
+  `quotes_quoterevision`, `quotes_quotesnapshot`.

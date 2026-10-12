@@ -2,6 +2,7 @@
 .env
 venv
 __pycache__
+private_quote_files/
 .vscode/
 
 # Agents

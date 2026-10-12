@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Estado** | **Propuesta de persistencia**, aprobada como dirección (alternativa B, 2026-10-05). El núcleo de comparación M6 ya está disponible; migraciones, integración con cotizaciones y obtención de FX siguen pendientes |
+| **Estado** | **Antecedente de persistencia** (alternativa B, 2026-10-05). M6 implementa comparación; M8 implementa revisiones aditivas y PDF original. El esquema de §4.1 no se adoptó: prevalece [24 · SDD M8](24-sdd-m8-snapshot-pdf.md). Integración UI M7 y obtención de FX siguen pendientes |
 | **Origen** | Brecha I11 de [18 §5](18-pruebas-integracion-syscom-catalog-quotes.md): hoy el precio en USD se cotiza como si fueran pesos |
 | **Refina** | D2 de M3 ([16 §12](16-sdd-m3-syscom.md); [15](15-guia-m2-para-m3-syscom.md) D2), que dejó la conversión en manos de `quotes` sin diseñarla. D2 sigue igual: el adaptador pide `moneda=usd` e `iva=0` |
 | **Afecta a** | `apps/quotes` (modelos del equipo, M1b). Cambia el formato de los datos guardados, así que hay que acordarlo con el equipo antes de implementarlo |
@@ -11,9 +11,10 @@
 
 El núcleo de conversión y ranking se documenta en
 [23 · M6: comparación y moneda](23-m6-comparacion-y-moneda.md). Recibe un tipo de
-cambio explícito, admite captura manual y no escribe en los modelos. Los campos
-y la integración propuestos aquí no están implementados; las brechas de guardado
-descritas abajo permanecen.
+cambio explícito, admite captura manual y no escribe en modelos. M8 implementa
+persistencia mediante revisiones/snapshots, sin adoptar los campos propuestos aquí.
+La brecha descrita abajo permanece para el flujo legacy que no consume M8.
+Contratos de integración: [25](25-m8-snapshot-pdf-integracion.md).
 
 - `ProviderOffer.currency` dice la moneda (SYSCOM: `"USD"`). Pero `Product.unit_price`, `QuoteItem.unit_price` y `Quote` no guardan moneda.
 - `Quote.tax = subtotal × tax_rate` aplica el IVA mexicano sobre la cifra en dólares.
@@ -86,6 +87,10 @@ de origen y el tipo de cambio, sin alterar datos históricos por suposición.
 - Antes: 1 llamada real aprobada a `/tipocambio` para confirmar el formato y guardar una muestra saneada en `apps/providers/tests/muestras/`.
 
 ## 5. Siguiente paso
+
+**Actualización 2026-10-12:** el SDD y migración M8 resuelven persistencia aditiva,
+precisión y sellado. No modificar Product/QuoteItem usando §4.1. Lo pendiente es
+integración M7 y obtención/caché de FX; la lista original se conserva como antecedente.
 
 1. Acordar con el equipo el cambio en `quotes` y en `Product`.
 2. Escribir el SDD (con la numeración que toque) que resuelva lo pendiente de §4.3.
