@@ -1,10 +1,15 @@
-"""URLs de la app quotes: descarga de PDF y envío por correo."""
+"""URLs de la app quotes: búsqueda multi-proveedor, descarga de PDF y envío por correo."""
 
 from django.urls import path
 
 from . import views
 
 urlpatterns = [
+    path(
+        "cotizaciones/buscar/",
+        views.cotizar_productos,
+        name="cotizar_productos",
+    ),
     path(
         "cotizaciones/<str:folio>/pdf/",
         views.descargar_pdf_cotizacion,
