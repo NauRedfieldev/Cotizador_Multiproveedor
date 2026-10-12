@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"></head>
+<body style="margin: 0; padding: 0; background-color: #F8F7FE; font-family: Arial, Helvetica, sans-serif;">
+    <div style="max-width: 620px; margin: 0 auto; padding: 24px;">
+        <div style="background-color: #111638; padding: 20px 28px; border-radius: 12px 12px 0 0;">
+            <span style="color: #FFFFFF; font-size: 20px; font-weight: bold; letter-spacing: 1px;">CCONOR</span>
+            <span style="color: #B264EF; font-size: 11px; display: block; letter-spacing: 2px;">SOLUCIONES TECNOLÓGICAS</span>
+        </div>
+        <div style="background-color: #FFFFFF; padding: 28px; border: 1px solid #EAE7F3; border-top: none; border-radius: 0 0 12px 12px;">
+            <p style="color: #111638; font-size: 15px; margin-top: 0;">{{ message|linebreaksbr }}</p>
+
+            <table style="width: 100%; border-collapse: collapse; margin: 18px 0; background-color: #F8F7FE; border: 1px solid #EAE7F3;">
+                <tr>
+                    <td style="padding: 12px 16px; font-size: 13px; color: #5A5F7A;">Folio de Cotización:</td>
+                    <td style="padding: 12px 16px; font-size: 13px; font-weight: bold; color: #7311F5; font-family: Courier, monospace;" align="right">{{ quote.folio }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 12px 16px; font-size: 13px; color: #5A5F7A; border-top: 1px solid #EAE7F3;">Vigencia:</td>
+                    <td style="padding: 12px 16px; font-size: 13px; color: #111638; border-top: 1px solid #EAE7F3;" align="right">Hasta el {{ quote.valid_until }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 12px 16px; font-size: 13px; color: #5A5F7A; border-top: 1px solid #EAE7F3;">Total (IVA incluido):</td>
+                    <td style="padding: 12px 16px; font-size: 15px; font-weight: bold; color: #111638; border-top: 1px solid #EAE7F3;" align="right">{{ quote.total_fmt }} MXN</td>
+                </tr>
+            </table>
+
+            <p style="color: #5A5F7A; font-size: 12px;">
+                Adjuntamos el documento PDF oficial con el desglose completo de partidas,
+                condiciones comerciales y tiempos de entrega.
+            </p>
+
+            <p style="color: #5A5F7A; font-size: 12px; margin-bottom: 0;">
+                Atentamente,<br>
+                <strong style="color: #111638;">{{ quote.company.advisor }}</strong><br>
+                {{ quote.company.name }}<br>
+                Tel: {{ quote.company.phone }} &nbsp;|&nbsp; {{ quote.company.email }}
+            </p>
+        </div>
+        <p style="text-align: center; color: #8A8FA8; font-size: 10px; margin-top: 14px;">
+            © 2026 {{ quote.company.name }}. Todos los derechos reservados.
+        </p>
+    </div>
+</body>
+</html>

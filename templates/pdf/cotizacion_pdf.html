@@ -1,0 +1,223 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Cotización {{ quote.folio }} - CCONOR</title>
+<style>
+    @page {
+        size: letter;
+        margin: 1.4cm 1.5cm 1.8cm 1.5cm;
+    }
+    * { font-family: Helvetica, Arial, sans-serif; }
+    body { color: #111638; font-size: 9.5pt; line-height: 1.35; }
+
+    .text-muted { color: #5A5F7A; }
+    .small { font-size: 8pt; }
+    .mono { font-family: Courier, monospace; }
+    .fw-bold { font-weight: bold; }
+    .text-primary { color: #7311F5; }
+    .text-danger { color: #C62828; }
+
+    /* ---------- Encabezado ---------- */
+    .header-table { width: 100%; border-collapse: collapse; border-bottom: 2.5pt solid #7311F5; padding-bottom: 10pt; }
+    .header-table td { vertical-align: top; }
+    .folio-box {
+        background-color: #F8F7FE;
+        border: 1pt solid #EAE7F3;
+        border-left: 3pt solid #7311F5;
+        padding: 8pt 10pt;
+        width: 220pt;
+    }
+    .folio-number { font-size: 13pt; font-weight: bold; color: #7311F5; font-family: Courier, monospace; }
+
+    /* ---------- Cliente ---------- */
+    .section-label {
+        background-color: #111638;
+        color: #FFFFFF;
+        font-size: 7.5pt;
+        font-weight: bold;
+        letter-spacing: 1pt;
+        padding: 2.5pt 8pt;
+    }
+    .client-box { background-color: #F8F7FE; border: 1pt solid #EAE7F3; padding: 10pt 12pt; margin-top: 14pt; }
+    .client-table { width: 100%; border-collapse: collapse; }
+    .client-table td { vertical-align: top; font-size: 8.5pt; }
+
+    /* ---------- Tabla de partidas ---------- */
+    .items-table { width: 100%; border-collapse: collapse; margin-top: 14pt; }
+    .items-table th {
+        background-color: #111638;
+        color: #FFFFFF;
+        font-size: 8pt;
+        text-transform: uppercase;
+        letter-spacing: 0.5pt;
+        padding: 6pt 6pt;
+        border: 0.5pt solid #111638;
+        text-align: left;
+    }
+    .items-table td {
+        border: 0.5pt solid #D9D4E8;
+        padding: 6pt 6pt;
+        font-size: 8.5pt;
+        vertical-align: top;
+    }
+    .items-table tr.alt td { background-color: #F8F7FE; }
+    .center { text-align: center; }
+    .right { text-align: right; }
+    .badge {
+        font-size: 7pt; font-weight: bold; padding: 1.5pt 6pt;
+        border-radius: 8pt;
+    }
+    .badge-syscom { background-color: #FFF3EB; color: #D32F2F; border: 0.5pt solid #FFD0BA; }
+    .badge-ct { background-color: #EBF8FF; color: #0284C7; border: 0.5pt solid #BAE6FD; }
+
+    /* ---------- Totales y condiciones ---------- */
+    .bottom-table { width: 100%; border-collapse: collapse; margin-top: 14pt; }
+    .bottom-table > tr > td, .bottom-table td { vertical-align: top; }
+    .conditions-box { background-color: #F8F7FE; border: 1pt solid #EAE7F3; padding: 9pt 11pt; font-size: 8pt; color: #4B5563; }
+    .totals-box { border: 1pt solid #EAE7F3; background-color: #F8F7FE; padding: 10pt 12pt; width: 230pt; }
+    .totals-table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+    .totals-table td { padding: 2.5pt 0; }
+    .totals-final { border-top: 1pt solid #CFCBDA; font-size: 12pt; font-weight: bold; color: #7311F5; }
+
+    /* ---------- Firma ---------- */
+    .signature { margin-top: 42pt; text-align: center; }
+    .signature-line { border-top: 1pt solid #111638; width: 260pt; margin: 0 auto; padding-top: 4pt; }
+
+    .footer-note { margin-top: 22pt; text-align: center; font-size: 7.5pt; color: #8A8FA8; border-top: 0.5pt solid #EAE7F3; padding-top: 6pt; }
+</style>
+</head>
+<body>
+
+    <!-- ENCABEZADO MEMBRETADO -->
+    <table class="header-table">
+        <tr>
+            <td style="width: 55%;">
+                <img src="{% static 'img/logo.png' %}" alt="CCONOR" style="height: 42pt; margin-bottom: 5pt;">
+                <div class="small text-muted">
+                    <strong>{{ quote.company.name }}</strong><br>
+                    RFC: {{ quote.company.rfc }}<br>
+                    {{ quote.company.tagline }}<br>
+                    Tel: {{ quote.company.phone }} &nbsp;|&nbsp; {{ quote.company.email }}
+                </div>
+            </td>
+            <td style="width: 45%;" align="right">
+                <div class="folio-box">
+                    <div class="small text-muted">Folio de Cotización:</div>
+                    <div class="folio-number">{{ quote.folio }}</div>
+                    <div class="small text-muted" style="margin-top: 4pt;">
+                        Fecha de Emisión: <strong>{{ quote.issue_date }}</strong><br>
+                        Válido hasta: <strong class="text-danger">{{ quote.valid_until }} ({{ quote.validity_label }})</strong><br>
+                        Asesor Técnico: <strong>{{ quote.company.advisor }}</strong>
+                    </div>
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <!-- DATOS DEL CLIENTE -->
+    <div class="client-box">
+        <table class="client-table">
+            <tr>
+                <td style="width: 55%;">
+                    <span class="section-label">DATOS DEL CLIENTE</span>
+                    <div style="margin-top: 5pt;" class="fw-bold">{{ quote.client.business_name }}</div>
+                    <div class="small text-muted" style="margin-top: 2pt;">
+                        <strong>RFC:</strong> <span class="mono">{{ quote.client.rfc }}</span><br>
+                        <strong>Atención:</strong> {{ quote.client.contact }}
+                    </div>
+                </td>
+                <td style="width: 45%;" align="right">
+                    <div class="small text-muted" style="margin-top: 14pt;">
+                        <strong>Correo:</strong> {{ quote.client.email }}<br>
+                        <strong>Teléfono:</strong> {{ quote.client.phone }}<br>
+                        <strong>Proyecto:</strong> {{ quote.client.project }}
+                    </div>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- TABLA DE PARTIDAS -->
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th class="center" style="width: 22pt;">#</th>
+                <th style="width: 78pt;">Código / Clave</th>
+                <th>Descripción Detallada</th>
+                <th class="center" style="width: 62pt;">Marca / Dist.</th>
+                <th class="center" style="width: 34pt;">Cant.</th>
+                <th class="right" style="width: 66pt;">P. Unitario</th>
+                <th class="right" style="width: 72pt;">Importe MXN</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in quote.items %}
+            <tr{% if forloop.counter|divisibleby:2 %} class="alt"{% endif %}>
+                <td class="center fw-bold">{{ forloop.counter }}</td>
+                <td class="mono">{{ item.code }}</td>
+                <td>
+                    <strong>{{ item.name }}</strong><br>
+                    <span class="text-muted small">{{ item.description }}</span>
+                </td>
+                <td class="center">
+                    <span class="badge {% if item.provider == 'SYSCOM' %}badge-syscom{% else %}badge-ct{% endif %}">{{ item.provider }}</span>
+                </td>
+                <td class="center fw-bold">{{ item.qty }}</td>
+                <td class="right">{{ item.unit_price_fmt }}</td>
+                <td class="right fw-bold">{{ item.amount_fmt }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- TOTALES Y CONDICIONES -->
+    <table class="bottom-table">
+        <tr>
+            <td style="width: 55%; padding-right: 12pt;">
+                <div class="conditions-box">
+                    <strong style="color: #111638;">Condiciones Comerciales y de Entrega:</strong>
+                    <ul style="margin: 4pt 0 0 0; padding-left: 12pt;">
+                        {% for condition in quote.conditions %}
+                        <li>{{ condition }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </td>
+            <td style="width: 45%;" align="right">
+                <div class="totals-box">
+                    <table class="totals-table">
+                        <tr>
+                            <td class="text-muted">Subtotal:</td>
+                            <td class="right fw-bold">{{ quote.subtotal_fmt }} MXN</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">I.V.A. (16%):</td>
+                            <td class="right fw-bold">{{ quote.iva_fmt }} MXN</td>
+                        </tr>
+                        <tr class="totals-final">
+                            <td style="padding-top: 5pt;">Total a Pagar:</td>
+                            <td class="right" style="padding-top: 5pt;">{{ quote.total_fmt }} MXN</td>
+                        </tr>
+                    </table>
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <!-- FIRMA -->
+    <div class="signature">
+        <div class="signature-line">
+            <strong>{{ quote.company.name }}</strong><br>
+            <span class="small text-muted">Área de Ingeniería y Cotizaciones Comerciales</span>
+        </div>
+    </div>
+
+    <div class="footer-note">
+        {{ quote.company.name }} &nbsp;|&nbsp; {{ quote.company.phone }} &nbsp;|&nbsp; {{ quote.company.email }}
+        &nbsp;|&nbsp; Documento generado electrónicamente el {{ quote.issue_date }}
+    </div>
+
+</body>
+</html>

@@ -1,0 +1,371 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}CCONOR - Cotizador de Productos y Componentes{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+
+    <!-- ENCABEZADO PRINCIPAL (REFERENCIA FIEL AL DISEÑO) -->
+    <div class="mb-4">
+        <h2 class="fw-bold d-flex align-items-center gap-2 mb-2" style="color: var(--cconor-azul-marino);">
+            <i class="bi bi-caret-right-fill" style="color: var(--cconor-naranja);"></i>
+            <span>Cotizador</span>
+        </h2>
+        <p class="text-muted mb-1 fs-6">
+            Aquí podrás realizar tus propias cotizaciones y descargarlas en formato PDF o enviarlas por correo electrónico.
+        </p>
+        <p class="small text-secondary mb-3">
+            <strong class="text-dark">1.</strong> Utiliza el buscador para encontrar los productos que necesitas. Puedes buscar por código, clave o descripción.
+        </p>
+    </div>
+
+    <!-- SELECCIÓN RÁPIDA DE CLIENTE Y METADATOS -->
+    <div class="cconor-card p-3 mb-4">
+        <div class="row g-3 align-items-center">
+            <div class="col-md-4">
+                <label for="clientSelect" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-person-badge me-1"></i> Cliente / Empresa
+                </label>
+                <div class="input-group input-group-sm">
+                    <select class="form-select" id="clientSelect">
+                        <option value="1" selected>Constructora e Inmobiliaria del Norte S.A. de C.V.</option>
+                        <option value="2">Tecnologías y Enlaces Fronterizos S. de R.L.</option>
+                        <option value="3">Maquiladora Médica Internacional S.A.</option>
+                        <option value="nuevo">+ Registrar Nuevo Cliente...</option>
+                    </select>
+                    <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#newClientModal" title="Nuevo Cliente">
+                        <i class="bi bi-plus-lg"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <label for="quoteFolio" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-hash me-1"></i> Folio Cotización
+                </label>
+                <input type="text" class="form-control form-control-sm bg-light fw-bold text-primary" id="quoteFolio" value="COT-2026-0048" readonly>
+            </div>
+            <div class="col-md-3">
+                <label for="quoteValidity" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-calendar-event me-1"></i> Vigencia
+                </label>
+                <select class="form-select form-select-sm" id="quoteValidity">
+                    <option value="15">15 Días Naturales</option>
+                    <option value="30" selected>30 Días Naturales (Fin de mes)</option>
+                    <option value="7">7 Días (Equipos con alta rotación)</option>
+                </select>
+            </div>
+            <div class="col-md-2 text-md-end pt-3 pt-md-0">
+                <a href="{% url 'comparador' %}" class="btn btn-outline-primary btn-sm w-100 d-flex align-items-center justify-content-center gap-1">
+                    <i class="bi bi-arrow-left-right"></i>
+                    <span>Ver Comparador</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- BUSCADOR PRINCIPAL DE PRODUCTOS -->
+    <div class="cconor-card p-3 p-md-4 mb-4">
+        <label for="productSearchInput" class="form-label fw-bold mb-2" style="color: var(--cconor-azul-marino);">
+            Código, Clave o Descripción:
+        </label>
+        <div class="row g-2">
+            <div class="col-md-7">
+                <div class="input-group search-input-group">
+                    <span class="input-group-text bg-transparent border-0 text-muted"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" id="productSearchInput" placeholder="Ej: Bobina UTP Syscom, Cámara IP Hikvision, Monitor Dell CT, Servidor HPE..." autocomplete="off">
+                    <button class="btn btn-sm btn-light border-0" type="button" id="clearSearchBtn" style="display: none;">
+                        <i class="bi bi-x-circle-fill text-muted"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select py-2 border-2" id="providerFilter" style="border-color: var(--cconor-gris-lavanda);">
+                    <option value="todos" selected>Todos los Distribuidores</option>
+                    <option value="syscom">SYSCOM</option>
+                    <option value="ct">CT Online</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-cconor-primary w-100 py-2 d-flex align-items-center justify-content-center gap-2" id="searchProductBtn">
+                    <i class="bi bi-search"></i>
+                    <span>Buscar</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- RESULTADOS DE BÚSQUEDA RÁPIDA (DROPDOWN O LISTA COLAPSABLE CON SKELETON Y COMPARADOR) -->
+        <div id="searchResultsBox" class="mt-3 border rounded-3 p-3 bg-light shadow-sm" style="display: none;">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="small fw-bold text-secondary text-uppercase" id="resultsLabel">Resultados encontrados</span>
+                <span class="badge bg-primary rounded-pill" id="resultsCountBadge">0 productos</span>
+            </div>
+
+            <!-- SKELETON LOADER DE BÚSQUEDA -->
+            <div id="searchSkeletonLoader" style="display: none;" class="py-2">
+                <div class="p-3 bg-white rounded-3 mb-2 border d-flex justify-content-between align-items-center">
+                    <div style="width: 65%;">
+                        <div class="skeleton skeleton-title" style="width: 70%; height: 16px;"></div>
+                        <div class="skeleton skeleton-text" style="width: 90%; height: 12px;"></div>
+                    </div>
+                    <div class="text-end" style="width: 25%;">
+                        <div class="skeleton skeleton-text" style="width: 60%; height: 16px; margin-left: auto;"></div>
+                        <div class="skeleton skeleton-btn" style="width: 80px; height: 28px; margin-left: auto;"></div>
+                    </div>
+                </div>
+                <div class="p-3 bg-white rounded-3 border d-flex justify-content-between align-items-center">
+                    <div style="width: 65%;">
+                        <div class="skeleton skeleton-title" style="width: 50%; height: 16px;"></div>
+                        <div class="skeleton skeleton-text" style="width: 80%; height: 12px;"></div>
+                    </div>
+                    <div class="text-end" style="width: 25%;">
+                        <div class="skeleton skeleton-text" style="width: 60%; height: 16px; margin-left: auto;"></div>
+                        <div class="skeleton skeleton-btn" style="width: 80px; height: 28px; margin-left: auto;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- EMPTY STATE DE BÚSQUEDA -->
+            <div id="searchEmptyState" class="text-center py-4 bg-white rounded-3 border" style="display: none;">
+                <div class="text-muted fs-2 mb-1"><i class="bi bi-search"></i></div>
+                <h6 class="fw-bold text-dark mb-1">Sin coincidencias</h6>
+                <p class="text-muted small mb-0">No encontramos productos en los catálogos con ese criterio. Prueba con otra palabra clave o selecciona "Todos los Distribuidores".</p>
+            </div>
+
+            <!-- LISTA DINÁMICA DE PRODUCTOS -->
+            <div class="list-group" id="resultsList">
+                <!-- Se llena dinámicamente con JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- TABLA DE PRODUCTOS EN LA COTIZACIÓN -->
+    <div class="cconor-table-container mb-4 shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover cconor-table align-middle text-nowrap" id="quoteItemsTable">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;" class="text-center">#</th>
+                        <th>Código / SKU</th>
+                        <th>Clave</th>
+                        <th>Descripción</th>
+                        <th>Proveedor</th>
+                        <th class="text-end">Precio Mayoreo c/IVA</th>
+                        <th class="text-center" style="width: 110px;">Margen %</th>
+                        <th class="text-center" style="width: 110px;">Cantidad</th>
+                        <th class="text-end">Total c/IVA</th>
+                        <th class="text-center" style="width: 50px;"><i class="bi bi-trash3-fill text-warning"></i></th>
+                    </tr>
+                </thead>
+                <tbody id="quoteItemsBody">
+                    <!-- FILA DE EMPTY STATE DE LA TABLA (SE MUESTRA CUANDO NO HAY PARTIDAS) -->
+                    <tr id="quoteTableEmptyState" style="display: none;">
+                        <td colspan="10" class="text-center py-5">
+                            <div class="empty-state border-0 p-4">
+                                <div class="empty-state-icon" style="width: 68px; height: 68px; line-height: 68px; font-size: 2.2rem;">
+                                    <i class="bi bi-cart-x"></i>
+                                </div>
+                                <h5 class="fw-bold mb-1" style="color: var(--cconor-azul-marino);">Tu cotización está vacía</h5>
+                                <p class="text-muted small mb-3">Busca productos en el catálogo superior para armar tu propuesta comercial.</p>
+                                <button type="button" class="btn btn-outline-primary btn-sm rounded-pill px-3" onclick="document.getElementById('productSearchInput').focus()">
+                                    <i class="bi bi-search me-1"></i> Buscar Productos
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    <!-- Fila de Ejemplo 1 (SYSCOM) -->
+                    <tr data-sku="SYS-PRO-CAT6" data-price="2180.00" data-provider="syscom">
+                        <td class="text-center fw-bold text-secondary">2</td>
+                        <td><span class="font-monospace fw-semibold text-dark">PRO-CAT6-EXT</span></td>
+                        <td><span class="badge bg-light text-dark border">CAB-UTP305</span></td>
+                        <td class="text-wrap" style="max-width: 320px;">
+                            <strong>Bobina de Cable UTP Cat6</strong> Exterior CMX 100% Cobre, color negro 305m
+                        </td>
+                        <td><span class="badge badge-provider badge-syscom">SYSCOM</span></td>
+                        <td class="text-end fw-semibold item-unit-price">$2,180.00</td>
+                        <td class="text-center">
+                            <input type="number" class="form-control form-control-sm text-center item-margin-input mx-auto" style="width: 70px;" value="22" min="0" max="100">
+                        </td>
+                        <td class="text-center">
+                            <input type="number" class="item-qty-input item-qty" value="4" min="1" max="999">
+                        </td>
+                        <td class="text-end fw-bold text-primary item-row-total">$10,638.40</td>
+                        <td class="text-center">
+                            <button type="button" class="btn-remove-row" title="Eliminar partida">
+                                <i class="bi bi-trash3"></i>
+                            </button>
+                        </td>
+                    </tr>
+
+                    <!-- Fila de Ejemplo 3 (CT Online) -->
+                    <tr data-sku="CT-DELL-P2422H" data-price="3490.00" data-provider="ct">
+                        <td class="text-center fw-bold text-secondary">3</td>
+                        <td><span class="font-monospace fw-semibold text-dark">DELL-P2422H</span></td>
+                        <td><span class="badge bg-light text-dark border">MON-24IPS</span></td>
+                        <td class="text-wrap" style="max-width: 320px;">
+                            <strong>Monitor Dell Pro 23.8"</strong> Full HD IPS, HDMI/DP/VGA, base ergonómica regulable
+                        </td>
+                        <td><span class="badge badge-provider badge-ct">CT Online</span></td>
+                        <td class="text-end fw-semibold item-unit-price">$3,490.00</td>
+                        <td class="text-center">
+                            <input type="number" class="form-control form-control-sm text-center item-margin-input mx-auto" style="width: 70px;" value="15" min="0" max="100">
+                        </td>
+                        <td class="text-center">
+                            <input type="number" class="item-qty-input item-qty" value="5" min="1" max="999">
+                        </td>
+                        <td class="text-end fw-bold text-primary item-row-total">$20,067.50</td>
+                        <td class="text-center">
+                            <button type="button" class="btn-remove-row" title="Eliminar partida">
+                                <i class="bi bi-trash3"></i>
+                            </button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- LEYENDA OBLIGATORIA DESTACADA -->
+    <div class="quote-notice">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+        Este documento es una cotización, no es un pedido ni sirve para apartar mercancía.
+    </div>
+
+    <!-- PANEL INFERIOR DE TOTALES Y BOTONES DE ACCIÓN -->
+    <div class="row g-4 align-items-start mb-4">
+        <!-- ACCIONES RÁPIDAS -->
+        <div class="col-lg-6">
+            <div class="cconor-card p-3 mb-3">
+                <h6 class="fw-bold mb-3" style="color: var(--cconor-azul-marino);">
+                    <i class="bi bi-tools me-1 text-primary"></i> Acciones Comerciales
+                </h6>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="{% url 'resumen' %}" class="btn btn-cconor-orange d-flex align-items-center gap-2">
+                        <i class="bi bi-file-earmark-pdf"></i>
+                        <span>Generar PDF de Cotización</span>
+                    </a>
+                    <button class="btn btn-cconor-primary d-flex align-items-center gap-2" id="saveQuoteBtn">
+                        <i class="bi bi-floppy"></i>
+                        <span>Guardar Cotización</span>
+                    </button>
+                    <button class="btn btn-outline-secondary d-flex align-items-center gap-1" id="clearTableBtn">
+                        <i class="bi bi-trash"></i>
+                        <span>Limpiar</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="alert alert-info py-2 px-3 small border-0 shadow-sm d-flex align-items-center gap-2">
+                <i class="bi bi-info-circle-fill fs-5 text-primary"></i>
+                <div>
+                    <strong>Margen dinámico:</strong> Puedes ajustar el % de ganancia por partida para adaptar la propuesta a tu cliente antes de exportar el PDF.
+                </div>
+            </div>
+        </div>
+
+        <!-- RESUMEN DE TOTALES -->
+        <div class="col-lg-6">
+            <div class="summary-panel">
+                <h6 class="fw-bold text-uppercase mb-3 pb-2 border-bottom" style="color: var(--cconor-azul-marino);">
+                    <i class="bi bi-receipt me-1 text-success"></i> Resumen Económico
+                </h6>
+                <div class="summary-row">
+                    <span class="text-muted">Costo Base Mayoristas:</span>
+                    <span class="fw-semibold" id="costBaseDisplay">$54,530.00 MXN</span>
+                </div>
+                <div class="summary-row">
+                    <span class="text-muted">Margen Comercial Neto:</span>
+                    <span class="fw-semibold text-success" id="marginDisplay">+$9,805.90 MXN</span>
+                </div>
+                <div class="summary-row">
+                    <span class="text-muted">Subtotal antes de IVA:</span>
+                    <span class="fw-semibold" id="subtotalDisplay">$55,461.55 MXN</span>
+                </div>
+                <div class="summary-row">
+                    <span class="text-muted">IVA Trasladado (16%):</span>
+                    <span class="fw-semibold" id="ivaDisplay">$8,874.35 MXN</span>
+                </div>
+                <div class="summary-row summary-total">
+                    <span>Total con IVA:</span>
+                    <span class="text-primary" id="totalFinalDisplay">$64,335.90 MXN</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SECCIÓN DE TÉRMINOS Y CONDICIONES & MÉTODOS DE PAGO (COMO EN EL WIREFRAME) -->
+    <div class="quote-conditions-box">
+        <div class="row g-4">
+            <div class="col-md-6">
+                <h6><i class="bi bi-file-earmark-check me-1 text-primary"></i> Términos y Condiciones-</h6>
+                <ul>
+                    <li>Precios expresados en Pesos Mexicanos (MXN) más el 16% de IVA salvo indicación contraria.</li>
+                    <li>Precios sujetos a cambios sin previo aviso derivados de paridad cambiaria USD/MXN.</li>
+                    <li>Precios vigentes únicamente dentro del mes o periodo de vigencia de la cotización.</li>
+                    <li>Cotización no contempla cargo por entrega a domicilio o viáticos de instalación externa.</li>
+                    <li>Existencias sujetas a disponibilidad al momento de confirmar la orden de compra.</li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <h6><i class="bi bi-credit-card me-1 text-success"></i> Métodos de Pago-</h6>
+                <ul>
+                    <li>Transferencia interbancaria SPEI / Depósito en firme (cuentas en BBVA y Banorte).</li>
+                    <li>Efectivo pesos y dólares a tipo de cambio oficial del día.</li>
+                    <li>Tarjetas de crédito VISA, Mastercard y American Express.</li>
+                    <li>Tarjeta de débito empresarial y personal.</li>
+                    <li>Openpay / Stripe B2B (link de pago seguro para pagar en línea desde oficina).</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- MODAL PARA REGISTRO RÁPIDO DE CLIENTE -->
+<div class="modal fade" id="newClientModal" tabindex="-1" aria-labelledby="newClientModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-light">
+                <h5 class="modal-title fw-bold" id="newClientModalLabel">
+                    <i class="bi bi-person-plus-fill me-1 text-primary"></i> Alta de Nuevo Cliente
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body">
+                <form id="newClientForm">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Razón Social o Nombre Completo *</label>
+                        <input type="text" class="form-control" required placeholder="Ej: Redes y Telecomunicaciones del Pacífico S.A.">
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">RFC *</label>
+                            <input type="text" class="form-control font-monospace" placeholder="XAXX010101000" maxlength="13">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">Teléfono</label>
+                            <input type="tel" class="form-control" placeholder="(664) 000-0000">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Correo de Envío de Cotizaciones *</label>
+                        <input type="email" class="form-control" required placeholder="compras@empresa.com">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Ciudad / Ubicación</label>
+                        <input type="text" class="form-control" placeholder="Ciudad / Estado">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer bg-light">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-cconor-primary btn-sm" id="saveClientBtn">Registrar Cliente</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/cotizador.js' %}"></script>
+{% endblock %}

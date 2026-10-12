@@ -1,0 +1,183 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}CCONOR Soluciones Tecnológicas - Inicio{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/home.css' %}">
+{% endblock %}
+
+{% block content %}
+<!-- ==========================================================================
+     HERO PRINCIPAL
+     ========================================================================== -->
+<section class="home-hero">
+    <div class="container">
+        <div class="row align-items-center g-4">
+
+            <!-- COLUMNA IZQUIERDA -->
+            <div class="col-lg-6">
+                <p class="hero-eyebrow">Distribución de equipo tecnológico</p>
+                <h1 class="hero-title">
+                    ¡TECNOLOGÍA QUE<br>
+                    CONECTA<br>
+                    <span class="accent">OPORTUNIDADES!</span>
+                </h1>
+                <p class="hero-subtitle">
+                    Soluciones tecnológicas para tus proyectos,<br>
+                    en un solo lugar.
+                </p>
+                <div class="hero-actions">
+                    <a href="{% url 'cotizador' %}" class="btn-hero-primary">
+                        <i class="bi bi-tag-fill"></i>
+                        COTIZAR PRODUCTOS
+                        <i class="bi bi-arrow-right"></i>
+                    </a>
+                    <a href="{% url 'comparador' %}" class="btn-hero-outline">
+                        <i class="bi bi-book"></i>
+                        EXPLORAR CATÁLOGO
+                        <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+
+            <!-- COLUMNA DERECHA: COMPOSICIÓN DE PRODUCTOS -->
+            <div class="col-lg-6">
+                <div class="hero-media">
+                    <div class="hero-products-image">
+                        <img src="{% static 'img/hero-hardware-transparent.png' %}" alt="Servidores, laptops, switches, routers y CCTV CCONOR">
+                    </div>
+                    <div class="trust-badge">
+                        <i class="bi bi-shield-fill-check"></i>
+                        <span>EQUIPOS ORIGINALES<br>Y DISTRIBUIDORES<br>AUTORIZADOS</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</section>
+
+<!-- ==========================================================================
+     BARRA DE BENEFICIOS
+     ========================================================================== -->
+<div class="benefits-wrap">
+    <div class="benefits-bar">
+        <div class="row g-2 align-items-center">
+            <div class="col-lg-3 col-md-6">
+                <div class="benefit-item">
+                    <span class="benefit-icon"><i class="bi bi-truck"></i></span>
+                    <div>
+                        <div class="benefit-title">Precios actualizados</div>
+                        <div class="benefit-sub">Consulta en tiempo real</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6">
+                <div class="benefit-item">
+                    <span class="benefit-icon"><i class="bi bi-box-seam"></i></span>
+                    <div>
+                        <div class="benefit-title">Más de 13,000 productos</div>
+                        <div class="benefit-sub">en catálogo</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6">
+                <div class="benefit-item">
+                    <span class="benefit-icon"><i class="bi bi-award"></i></span>
+                    <div>
+                        <div class="benefit-title">Distribuidores autorizados</div>
+                        <div class="benefit-sub">Marcas líderes del mercado</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6">
+                <div class="benefit-item">
+                    <span class="benefit-icon"><i class="bi bi-lightning-charge-fill"></i></span>
+                    <div>
+                        <div class="benefit-title">Cotización inmediata</div>
+                        <div class="benefit-sub">Sin compromiso</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==========================================================================
+     SECCIÓN CATÁLOGO + CATEGORÍAS
+     ========================================================================== -->
+<section class="catalog-section">
+    <div class="container">
+        <div class="text-center mb-4">
+            <h2 class="catalog-title">Más de <span class="accent">13,000 productos</span> en catálogo...</h2>
+            <p class="catalog-subtitle">
+                Consulta en tiempo real existencias y precios con nuestros dos principales distribuidores autorizados.
+            </p>
+        </div>
+
+        <div class="row g-4 mt-1">
+            <!-- 1. SEGURIDAD, CCTV & REDES -->
+            <div class="col-lg-3 col-md-6">
+                <div class="cat-card">
+                    <div class="cat-card-head">
+                        <span class="cat-icon red"><i class="bi bi-shield-fill"></i></span>
+                        <h3 class="cat-name red">SEGURIDAD, CCTV &amp; REDES</h3>
+                    </div>
+                    <p class="cat-desc">Cámaras, grabadores, control de acceso y más.</p>
+                    <div class="cat-foot">
+                        <a href="{% url 'cotizador' %}?proveedor=syscom" class="cat-arrow red" title="Cotizar seguridad y CCTV">
+                            <i class="bi bi-chevron-right"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <!-- 2. CÓMPUTO, SERVIDORES & PARTES -->
+            <div class="col-lg-3 col-md-6">
+                <div class="cat-card">
+                    <div class="cat-card-head">
+                        <span class="cat-icon blue"><i class="bi bi-laptop-fill"></i></span>
+                        <h3 class="cat-name blue">CÓMPUTO, SERVIDORES &amp; PARTES</h3>
+                    </div>
+                    <p class="cat-desc">Laptops, desktops, servidores, componentes y accesorios.</p>
+                    <div class="cat-foot">
+                        <a href="{% url 'cotizador' %}?proveedor=ct" class="cat-arrow blue" title="Cotizar cómputo y servidores">
+                            <i class="bi bi-chevron-right"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <!-- 3. REDES & COMUNICACIÓN -->
+            <div class="col-lg-3 col-md-6">
+                <div class="cat-card">
+                    <div class="cat-card-head">
+                        <span class="cat-icon cyan"><i class="bi bi-wifi"></i></span>
+                        <h3 class="cat-name cyan">REDES &amp; COMUNICACIÓN</h3>
+                    </div>
+                    <p class="cat-desc">Routers, switches, access points, cableado y más.</p>
+                    <div class="cat-foot">
+                        <a href="{% url 'cotizador' %}" class="cat-arrow cyan" title="Cotizar redes y comunicación">
+                            <i class="bi bi-chevron-right"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <!-- 4. ALMACENAMIENTO & RESPALDO -->
+            <div class="col-lg-3 col-md-6">
+                <div class="cat-card">
+                    <div class="cat-card-head">
+                        <span class="cat-icon purple"><i class="bi bi-database-fill"></i></span>
+                        <h3 class="cat-name purple">ALMACENAMIENTO &amp; RESPALDO</h3>
+                    </div>
+                    <p class="cat-desc">Discos duros, NAS, memorias y soluciones de backup.</p>
+                    <div class="cat-foot">
+                        <a href="{% url 'cotizador' %}" class="cat-arrow purple" title="Cotizar almacenamiento">
+                            <i class="bi bi-chevron-right"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
