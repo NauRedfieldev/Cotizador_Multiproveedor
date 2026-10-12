@@ -1,0 +1,142 @@
+{
+  "cantidad": 3,
+  "pagina": 1,
+  "paginas": 1,
+  "productos": [
+    {
+      "producto_id": "900001",
+      "modelo": "CAM-IP-2MP-A1",
+      "total_existencia": 25,
+      "titulo": "Cámara bala IP 2 MP de muestra / Lente 2.8 mm / PoE",
+      "caracteristicas": ["Característica de muestra 1", "Característica de muestra 2"],
+      "marca": "MARCA DE MUESTRA",
+      "parte_titulo": "Cámara bala IP",
+      "garantia": "1 año",
+      "sat_key": "46171610",
+      "sat_description": "Cámaras de seguridad",
+      "img_portada": "https://ejemplo.invalid/img/900001.jpg",
+      "link_privado": "https://ejemplo.invalid/privado/900001",
+      "categorias": [
+        {"id": "1", "nombre": "Videovigilancia", "nivel": 1},
+        {"id": "2", "nombre": "Cámaras IP", "nivel": 2},
+        {"id": "3", "nombre": "Bala", "nivel": 3}
+      ],
+      "categorias_producto_todas": [
+        [
+          {"id": "1", "nombre": "Videovigilancia", "nivel": 1},
+          {"id": "2", "nombre": "Cámaras IP", "nivel": 2},
+          {"id": "3", "nombre": "Bala", "nivel": 3}
+        ]
+      ],
+      "pvol": "0.40",
+      "marca_logo": "https://ejemplo.invalid/logos/marca-de-muestra.png",
+      "link": "https://ejemplo.invalid/producto/900001",
+      "imagen_360": [],
+      "iconos": [],
+      "peso": "0.5",
+      "unidad_de_medida": {"codigo_unidad": "H87", "nombre": "Pieza", "clave_unidad_sat": "H87"},
+      "alto": "8",
+      "largo": "18",
+      "ancho": "8",
+      "precios": {
+        "precio_1": "120.00",
+        "precio_especial": "100.00",
+        "precio_descuento": "85.50",
+        "volumen": {"5": "84.90", "15": "84.10", "50": "83.30"},
+        "precio_map": "90.00",
+        "precio_lista": "120.00"
+      },
+      "existencia": {"nuevo": 20, "asterisco": {"a": 2, "b": 1, "c": 1, "d": 1}, "detalle": []}
+    },
+    {
+      "producto_id": "900002",
+      "modelo": "DOMO-IP-4MP-B2",
+      "total_existencia": 7,
+      "titulo": "Cámara domo IP 4 MP de muestra / IR 30 m",
+      "caracteristicas": ["Característica de muestra 1"],
+      "marca": "MARCA DE MUESTRA",
+      "parte_titulo": "Cámara domo IP",
+      "garantia": "2 años",
+      "sat_key": "46171610",
+      "sat_description": "Cámaras de seguridad",
+      "img_portada": "https://ejemplo.invalid/img/900002.jpg",
+      "link_privado": "https://ejemplo.invalid/privado/900002",
+      "categorias": [
+        {"id": "1", "nombre": "Videovigilancia", "nivel": 1},
+        {"id": "2", "nombre": "Cámaras IP", "nivel": 2},
+        {"id": "4", "nombre": "Domo", "nivel": 3}
+      ],
+      "categorias_producto_todas": [
+        [
+          {"id": "1", "nombre": "Videovigilancia", "nivel": 1},
+          {"id": "2", "nombre": "Cámaras IP", "nivel": 2},
+          {"id": "4", "nombre": "Domo", "nivel": 3}
+        ]
+      ],
+      "pvol": "0.60",
+      "marca_logo": "https://ejemplo.invalid/logos/marca-de-muestra.png",
+      "link": "https://ejemplo.invalid/producto/900002",
+      "imagen_360": [],
+      "iconos": {"sup_izq": "https://ejemplo.invalid/iconos/a.png", "sup_der": "", "inf_der": ""},
+      "peso": "0.7",
+      "unidad_de_medida": {"codigo_unidad": "H87", "nombre": "Pieza", "clave_unidad_sat": "H87"},
+      "alto": "10",
+      "largo": "12",
+      "ancho": "12",
+      "precios": {
+        "precio_1": "210.00",
+        "precio_especial": "180.00",
+        "precio_descuento": "150.25",
+        "precio_map": "160.00",
+        "precio_lista": "210.00"
+      },
+      "existencia": {"nuevo": 7, "asterisco": {"a": 0, "b": 0, "c": 0, "d": 0}, "detalle": []}
+    },
+    {
+      "producto_id": "900003",
+      "modelo": "FUENTE-12V-C3",
+      "total_existencia": 0,
+      "titulo": "Fuente de alimentación 12 Vcc de muestra",
+      "caracteristicas": [],
+      "marca": "OTRA MARCA DE MUESTRA",
+      "parte_titulo": "Fuente de alimentación",
+      "garantia": "1 año",
+      "sat_key": "39121004",
+      "sat_description": "Fuentes de alimentación",
+      "img_portada": "https://ejemplo.invalid/img/900003.jpg",
+      "link_privado": "https://ejemplo.invalid/privado/900003",
+      "categorias": [
+        {"id": "5", "nombre": "Energía", "nivel": 1},
+        {"id": "6", "nombre": "Fuentes", "nivel": 2},
+        {"id": "7", "nombre": "12 Vcc", "nivel": 3}
+      ],
+      "categorias_producto_todas": [
+        [
+          {"id": "5", "nombre": "Energía", "nivel": 1},
+          {"id": "6", "nombre": "Fuentes", "nivel": 2},
+          {"id": "7", "nombre": "12 Vcc", "nivel": 3}
+        ]
+      ],
+      "pvol": "0.20",
+      "marca_logo": "https://ejemplo.invalid/logos/otra-marca.png",
+      "link": "https://ejemplo.invalid/producto/900003",
+      "imagen_360": [],
+      "iconos": [],
+      "peso": "0.3",
+      "unidad_de_medida": {"codigo_unidad": "H87", "nombre": "Pieza", "clave_unidad_sat": "H87"},
+      "alto": "5",
+      "largo": "10",
+      "ancho": "6",
+      "precios": {
+        "precio_1": "12.00",
+        "precio_especial": "10.00",
+        "precio_descuento": "8.75",
+        "volumen": {"10": "8.60", "30": "8.45"},
+        "precio_map": "9.10",
+        "precio_lista": "12.00"
+      },
+      "existencia": {"nuevo": 0, "asterisco": {"a": 0, "b": 0, "c": 0, "d": 0}, "detalle": []}
+    }
+  ],
+  "todo": false
+}

@@ -2,5 +2,5 @@
 
 Cada adaptador vive en su propio módulo (adapters/<code>.py), se decora con @register y se
 importa aquí, para que quede registrado cuando ProvidersConfig.ready() importe este paquete.
-El primero llegará con M3 (SYSCOM): `from . import syscom  # noqa: F401`.
 """
+from . import syscom  # noqa: F401  (M3, docs/16-sdd-m3-syscom.md)

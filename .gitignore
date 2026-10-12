@@ -1,6 +1,19 @@
+#Project
 .env
 venv
 __pycache__
 .vscode/
+
+# Agents
 AGENTS.md
-db.sqlite3
+CLAUDE.md
+MEMORY.md
+
+#Commands/Agents
+.opencode
+.claude
+.agents
+skills-lock.json
+
+#Docs
+12-sdd-m1-providers-core.md

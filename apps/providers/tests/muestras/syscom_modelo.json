@@ -1,0 +1,53 @@
+{
+  "producto_id": "900001",
+  "modelo": "CAM-IP-2MP-A1",
+  "total_existencia": 25,
+  "titulo": "Cámara bala IP 2 MP de muestra / Lente 2.8 mm / PoE",
+  "caracteristicas": ["Característica de muestra 1", "Característica de muestra 2"],
+  "marca": "MARCA DE MUESTRA",
+  "parte_titulo": "Cámara bala IP",
+  "garantia": "1 año",
+  "sat_key": "46171610",
+  "sat_description": "Cámaras de seguridad",
+  "img_portada": "https://ejemplo.invalid/img/900001.jpg",
+  "link_privado": "https://ejemplo.invalid/privado/900001",
+  "categorias": [
+    {"id": "1", "nombre": "Videovigilancia", "nivel": 1},
+    {"id": "2", "nombre": "Cámaras IP", "nivel": 2},
+    {"id": "3", "nombre": "Bala", "nivel": 3}
+  ],
+  "categorias_producto_todas": [
+    [
+      {"id": "1", "nombre": "Videovigilancia", "nivel": 1},
+      {"id": "2", "nombre": "Cámaras IP", "nivel": 2},
+      {"id": "3", "nombre": "Bala", "nivel": 3}
+    ]
+  ],
+  "pvol": "0.40",
+  "marca_logo": "https://ejemplo.invalid/logos/marca-de-muestra.png",
+  "link": "https://ejemplo.invalid/producto/900001",
+  "imagen_360": [],
+  "iconos": {"sup_izq": "https://ejemplo.invalid/iconos/a.png", "sup_der": "", "inf_der": ""},
+  "peso": "0.5",
+  "unidad_de_medida": {"codigo_unidad": "H87", "nombre": "Pieza", "clave_unidad_sat": "H87"},
+  "alto": "8",
+  "largo": "18",
+  "ancho": "8",
+  "precios": {
+    "precio_1": "120.00",
+    "precio_especial": "100.00",
+    "precio_descuento": "85.50",
+    "volumen": {"5": "84.90", "15": "84.10", "50": "83.30"},
+    "precio_map": "90.00",
+    "precio_lista": "120.00"
+  },
+  "existencia": {"nuevo": 20, "asterisco": {"a": 2, "b": 1, "c": 1, "d": 1}, "detalle": []},
+  "descripcion": "<p>Descripción HTML de muestra.</p>",
+  "imagenes": [
+    {"imagen": "https://ejemplo.invalid/img/900001-1.jpg", "orden": "1"},
+    {"imagen": "https://ejemplo.invalid/img/900001-2.jpg", "orden": "2"}
+  ],
+  "recursos": [
+    {"recurso": "Ficha técnica", "path": "https://ejemplo.invalid/recursos/900001.pdf"}
+  ]
+}
