@@ -12,7 +12,7 @@ from django.db import models, transaction
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
-from .normalizer import normalizar
+from .normalizer import normalizar, normalizar_clave
 
 
 class Category(models.Model):
@@ -108,6 +108,78 @@ class Product(models.Model):
 
     def __str__(self):
         return f"{self.sku} — {self.name}"
+
+
+class ProductoCanonico(models.Model):
+    """Identidad independiente del distribuidor y del precio.
+
+    Los identificadores originales se conservan. Las claves normalizadas no
+    son únicas: una colisión o un duplicado debe resolverse, no sobreescribirse.
+    MPN y SKU de fabricante solo se cargan cuando su procedencia está confirmada.
+    Las operaciones bulk/update omiten save(); no usarlas para editar identidad
+    sin recalcular y validar explícitamente los campos derivados.
+    """
+
+    marca = models.CharField("marca", max_length=80)
+    marca_norm = models.CharField(max_length=80, db_index=True, editable=False)
+    modelo = models.CharField("modelo original", max_length=120, blank=True)
+    modelo_norm = models.CharField(max_length=120, db_index=True, editable=False, blank=True)
+    mpn = models.CharField("MPN confirmado", max_length=120, blank=True)
+    mpn_norm = models.CharField(max_length=120, db_index=True, editable=False, blank=True)
+    sku_fabricante = models.CharField("SKU de fabricante confirmado", max_length=120, blank=True)
+    sku_norm = models.CharField(max_length=120, db_index=True, editable=False, blank=True)
+    descripcion = models.TextField("descripción")
+    descripcion_norm = models.TextField(editable=False)
+    categoria = models.ForeignKey(
+        Category, on_delete=models.PROTECT, related_name="productos_canonicos",
+        verbose_name="categoría",
+    )
+    created_at = models.DateTimeField("creado", auto_now_add=True)
+    updated_at = models.DateTimeField("actualizado", auto_now=True)
+
+    class Meta:
+        verbose_name = "producto canónico"
+        verbose_name_plural = "productos canónicos"
+        ordering = ["marca_norm", "id"]
+
+    def clean_fields(self, exclude=None):
+        exclude = set(exclude or ())
+        for original, derivado, funcion in (
+            ("marca", "marca_norm", normalizar),
+            ("modelo", "modelo_norm", normalizar_clave),
+            ("mpn", "mpn_norm", normalizar_clave),
+            ("sku_fabricante", "sku_norm", normalizar_clave),
+            ("descripcion", "descripcion_norm", normalizar),
+        ):
+            valor = getattr(self, original)
+            if original not in exclude and not isinstance(valor, str):
+                raise ValidationError({original: "Debe ser texto; usa cadena vacía si es opcional."})
+            if original not in exclude and isinstance(valor, str):
+                setattr(self, derivado, funcion(valor))
+                if valor and not getattr(self, derivado):
+                    raise ValidationError({original: "Debe contener información normalizable."})
+        super().clean_fields(exclude=exclude)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        # Un guardado parcial debe actualizar también sus columnas derivadas.
+        if kwargs.get("update_fields") is not None:
+            campos = set(kwargs["update_fields"])
+            if not campos:
+                return
+            for original, derivado in (
+                ("marca", "marca_norm"), ("modelo", "modelo_norm"),
+                ("mpn", "mpn_norm"), ("sku_fabricante", "sku_norm"),
+                ("descripcion", "descripcion_norm"),
+            ):
+                if original in campos:
+                    campos.add(derivado)
+            campos.add("updated_at")
+            kwargs["update_fields"] = campos
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.marca} — {self.mpn or self.modelo or self.descripcion}"
 
 
 class SinonimoRed(models.Model):
