@@ -12,7 +12,7 @@ class ConstantsTests(SimpleTestCase):
     def test_choices_estables(self):
         self.assertEqual(EstadoMatch.values, ["AUTO_MATCH", "REVISION_MANUAL", "SIN_MATCH"])
         self.assertEqual(MetodoMatch.values, [
-            "DETERMINISTICO_MPN", "DETERMINISTICO_SKU", "DETERMINISTICO_MODELO",
+            "DETERMINISTICO_MPN", "DETERMINISTICO_SKU", "DETERMINISTICO_MODELO", "FUZZY",
         ])
 
     def test_umbrales_provisionales(self):
