@@ -11,6 +11,10 @@ No crea `ProductoProveedor`, vincula el canónico con `Product`, persiste asocia
 crea identidades desde ofertas ni conecta el matching a las pantallas. Tampoco implementa
 RapidFuzz, guardas M5c, conversión de moneda o un adaptador Exel.
 
+El fallback opcional añadido posteriormente se documenta en
+[M5c: sugerencias y guardas](22-m5c-fallback-y-guardas.md). Las operaciones M5b
+descritas aquí conservan su comportamiento determinístico.
+
 ## Modelo y carga
 
 Migración: `catalog/0004_producto_canonico`. La carga inicial es manual mediante el
@@ -172,4 +176,5 @@ catálogo de desarrollo.
 2. Definir persistencia y auditoría de asociaciones (`ProductoProveedor`) y enlace
    con `Product`, sin modificar las cotizaciones existentes accidentalmente.
 3. Confirmar identificadores y búsqueda de Exel cuando haya acceso.
-4. Conectar el matching con el flujo de ofertas y, en otra tarea, construir M5c.
+4. Conectar el matching con el flujo de ofertas. M5c ya está disponible mediante
+   operaciones opcionales separadas; falta calibración real antes de automatizar fuzzy.

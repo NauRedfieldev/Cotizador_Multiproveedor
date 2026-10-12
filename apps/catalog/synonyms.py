@@ -10,6 +10,7 @@ utilice debe normalizar/validar los datos e invalidar explícitamente la caché
 después del commit. Para uso async, llamar a await aexpandir(texto_norm).
 """
 
+from collections.abc import Mapping
 from threading import Lock
 from time import monotonic
 
@@ -52,8 +53,17 @@ def expandir(texto_norm: str) -> str:
     partes = texto_norm.split()
     if not partes:
         return ""
-    sinonimos = _obtener_sinonimos()
-    return " ".join(sinonimos.get(token, token) for token in partes)
+    return expandir_con_diccionario(texto_norm, _obtener_sinonimos())
+
+
+def obtener_sinonimos() -> dict[str, str]:
+    """Copia de una instantánea para comparar varios textos con las mismas reglas."""
+    return _obtener_sinonimos().copy()
+
+
+def expandir_con_diccionario(texto_norm: str, sinonimos: Mapping[str, str]) -> str:
+    """Expansión pura de tokens; el diccionario procede de BD o fixtures de prueba."""
+    return " ".join(sinonimos.get(token, token) for token in texto_norm.split())
 
 
 async def aexpandir(texto_norm: str) -> str:

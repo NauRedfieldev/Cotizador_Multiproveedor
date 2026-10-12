@@ -13,6 +13,7 @@ class MetodoMatch(models.TextChoices):
     DETERMINISTICO_MPN = "DETERMINISTICO_MPN", "MPN exacto"
     DETERMINISTICO_SKU = "DETERMINISTICO_SKU", "SKU de fabricante exacto"
     DETERMINISTICO_MODELO = "DETERMINISTICO_MODELO", "Marca y modelo exactos"
+    FUZZY = "FUZZY", "Similitud textual con guardas"
 
 
 # PROVISIONALES: deben calibrarse con pares reales antes de validar el matching.
