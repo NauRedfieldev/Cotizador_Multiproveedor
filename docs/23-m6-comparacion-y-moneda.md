@@ -213,5 +213,10 @@ La prueba I11 de caracterización sigue pasando: el flujo de referencia que guar
 USD como pesos aún no utiliza M6. **Publicar este módulo no corrige por sí solo
 la creación de cotizaciones ni la precisión de los campos almacenados.**
 
-Después: integración M7, obtención/caché de FX, migraciones acordadas y congelación
-de precio/moneda/tipo en snapshot M8. PDF e impuestos quedan separados.
+**Actualización M8 (2026-10-12):** persistencia aditiva y PDF por revisión en
+[24 · SDD M8](24-sdd-m8-snapshot-pdf.md) y
+[25 · Integración M8](25-m8-snapshot-pdf-integracion.md). Modelos legacy de dos
+decimales/I11 intactos; M7 debe consumir servicios nuevos. M8 acepta seis decimales
+de precio y ocho de FX y rechaza exceso significativo: M6 puede comparar una
+oferta que no quepa en M8. No redondearla silenciosamente para guardarla.
+Obtención/caché de FX e impuestos avanzados siguen pendientes.

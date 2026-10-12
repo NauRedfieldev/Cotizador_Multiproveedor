@@ -138,6 +138,9 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 # M6: límite por proveedor; comparar_configurado valida que sea positivo.
 OFERTAS_POR_PROVEEDOR = env.int('OFERTAS_POR_PROVEEDOR', default=3)
 
+# M8: volumen privado, NO publicar mediante MEDIA_URL ni static().
+QUOTE_PDF_ROOT = Path(env('QUOTE_PDF_ROOT', default=str(BASE_DIR / 'private_quote_files')))
+
 
 # Email
 
