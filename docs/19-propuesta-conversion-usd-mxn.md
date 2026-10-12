@@ -2,12 +2,18 @@
 
 | | |
 |---|---|
-| **Estado** | **Propuesta** aprobada como dirección (alternativa B, 2026-10-05). Se implementará en un plan aparte, con su SDD. Todavía no hay código |
+| **Estado** | **Propuesta de persistencia**, aprobada como dirección (alternativa B, 2026-10-05). El núcleo de comparación M6 ya está disponible; migraciones, integración con cotizaciones y obtención de FX siguen pendientes |
 | **Origen** | Brecha I11 de [18 §5](18-pruebas-integracion-syscom-catalog-quotes.md): hoy el precio en USD se cotiza como si fueran pesos |
 | **Refina** | D2 de M3 ([16 §12](16-sdd-m3-syscom.md); [15](15-guia-m2-para-m3-syscom.md) D2), que dejó la conversión en manos de `quotes` sin diseñarla. D2 sigue igual: el adaptador pide `moneda=usd` e `iva=0` |
 | **Afecta a** | `apps/quotes` (modelos del equipo, M1b). Cambia el formato de los datos guardados, así que hay que acordarlo con el equipo antes de implementarlo |
 
 ## 1. El problema
+
+El núcleo de conversión y ranking se documenta en
+[23 · M6: comparación y moneda](23-m6-comparacion-y-moneda.md). Recibe un tipo de
+cambio explícito, admite captura manual y no escribe en los modelos. Los campos
+y la integración propuestos aquí no están implementados; las brechas de guardado
+descritas abajo permanecen.
 
 - `ProviderOffer.currency` dice la moneda (SYSCOM: `"USD"`). Pero `Product.unit_price`, `QuoteItem.unit_price` y `Quote` no guardan moneda.
 - `Quote.tax = subtotal × tax_rate` aplica el IVA mexicano sobre la cifra en dólares.
@@ -49,6 +55,13 @@ Según la documentación pública de developers.syscom.mx, consultada el 2026-10
 `Product` tendría que guardar también su moneda (`currency`), porque hoy `unit_price` no la dice. Hay que acordarlo con el equipo, igual que la decisión pendiente sobre qué guarda `Supplier`.
 
 ### 4.2 Regla de cálculo
+
+**Refinamiento aprobado para M6:** no redondear el unitario convertido antes de
+ordenar ni de multiplicar por cantidad. La regla original siguiente queda como
+antecedente; para la integración futura prevalece el redondeo del importe de
+partida una vez, descrito en [23](23-m6-comparacion-y-moneda.md). La precisión de
+los campos propuestos en §4.1 deberá revisarse para conservar los seis decimales
+de origen y el tipo de cambio, sin alterar datos históricos por suposición.
 
 - Si `source_currency == quote.currency`: `unit_price = source_unit_price`.
 - Si no: `unit_price = _money(source_unit_price × exchange_rate)`, con `ROUND_HALF_UP` como el resto de `quotes`.

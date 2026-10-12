@@ -135,6 +135,9 @@ STATIC_URL = 'static/'
 
 STATICFILES_DIRS = [BASE_DIR / 'static']
 
+# M6: límite por proveedor; comparar_configurado valida que sea positivo.
+OFERTAS_POR_PROVEEDOR = env.int('OFERTAS_POR_PROVEEDOR', default=3)
+
 
 # Email
 
