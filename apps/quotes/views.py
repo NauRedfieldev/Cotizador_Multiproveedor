@@ -1,19 +1,34 @@
-"""Vistas de cotizaciones: descarga de PDF oficial y envío por correo.
+"""Vistas de cotizaciones: descarga de PDF oficial, envío por correo y comparador M7b.
 
 Emisiones: ambas leen el mismo original archivado. El único renderer está en pdf.
+El comparador consulta proveedores reales, compara en MXN y no escribe en BD.
 """
 
+import asyncio
 import json
 import logging
+from dataclasses import dataclass
+from decimal import Decimal
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.mail import EmailMultiAlternatives
 from django.core.validators import validate_email
+from django.db import DatabaseError
 from django.http import HttpResponse, JsonResponse
+from django.shortcuts import render
 from django.template.loader import render_to_string
+from django.utils import timezone
 
+from apps.catalog.constants import EstadoMatch
+from apps.catalog.matching import ResultadoMatch, emparejar_con_fallback
+from apps.catalog.models import Category, ProductoCanonico
+from apps.providers.contracts import ProductQuery, ProviderOffer
+from apps.providers.models import Provider
+from apps.providers.service import search_all
+
+from .comparison import comparar_configurado, tipo_cambio_manual
 from .models import Quote, QuoteRevision
 from .pdf import build_demo_quote, generate_quote_pdf, money, safe_filename
 from .snapshots import ArchivedPDFError, RevisionConflict, obtener_documento
@@ -139,3 +154,115 @@ def demo_pdf_cotizacion(request, folio):
     response["Content-Disposition"] = f'attachment; filename="DEMO_{safe_filename(folio)}"'
     response["Cache-Control"] = "no-store"
     return response
+
+
+# ==============================================================================
+# M7b: comparador de proveedores renderizado 100% por Django Templates.
+# ==============================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class OfertaEnPantalla:
+    """Fila plana que la plantilla comparador.html recorre en el contexto."""
+
+    oferta: ProviderOffer
+    proveedor_nombre: str
+    precio_comparable: Decimal
+    match: ResultadoMatch
+
+
+# SIN_MATCH compartido: frozen y sin candidatos, seguro de reutilizar.
+_SIN_MATCH = ResultadoMatch(None, EstadoMatch.SIN_MATCH, None, None, "SIN_MATCH")
+
+
+def _match_de_oferta(oferta, categoria_pk, catalogo_disponible):
+    """M5b + M5c por oferta; sin catálogo canónico migrado degrada a SIN_MATCH."""
+    if not catalogo_disponible:
+        return _SIN_MATCH
+    return emparejar_con_fallback(oferta, categoria_id=categoria_pk)
+
+
+def cotizar_productos(request):
+    """GET /comparador/ → busca en los proveedores activos y compara en MXN.
+
+    Contrato de contexto M7b: ofertas (de más barata a más cara en pesos),
+    error, proveedores_caidos_nombres, tipo_cambio y categorías. Sin
+    escrituras, sin datos demo y sin CSRF (el formulario es GET).
+    """
+    q = request.GET.get("q", "").strip()
+    sku = request.GET.get("sku", "").strip()
+    categoria_txt = request.GET.get("categoria", "").strip()
+    tipo_cambio_txt = request.GET.get("tipo_cambio", "").strip()
+
+    contexto = {
+        "categorias": Category.objects.filter(is_active=True),
+        "ofertas": [],
+        "error": None,
+        "proveedores_caidos_nombres": [],
+        "tipo_cambio": None,
+    }
+
+    if not q and not sku:
+        return render(request, "comparador.html", contexto)
+
+    try:
+        consulta = ProductQuery(term=q, sku=sku or None)
+    except ValueError as exc:
+        contexto["error"] = f"La búsqueda no es válida: {exc}"
+        return render(request, "comparador.html", contexto)
+
+    if categoria_txt and not categoria_txt.isdigit():
+        contexto["error"] = "La categoría seleccionada no es válida."
+        return render(request, "comparador.html", contexto)
+    categoria_pk = int(categoria_txt) if categoria_txt else None
+
+    tipo_cambio = None
+    if tipo_cambio_txt:
+        try:
+            tipo_cambio = tipo_cambio_manual(tipo_cambio_txt, fecha=timezone.now())
+        except (TypeError, ValueError):
+            contexto["error"] = "El tipo de cambio debe ser un decimal positivo con punto (ej. 17.50)."
+            return render(request, "comparador.html", contexto)
+    contexto["tipo_cambio"] = tipo_cambio
+
+    try:
+        resultados = asyncio.run(search_all(consulta))
+    except Exception:  # search_all absorbe ProviderError; esto es fallo del proceso.
+        logger.exception("Fallo inesperado consultando proveedores")
+        contexto["error"] = "No fue posible consultar a los proveedores en este momento."
+        return render(request, "comparador.html", contexto)
+
+    try:
+        comparacion = comparar_configurado(resultados, tipo_cambio=tipo_cambio)
+    except ValueError as exc:
+        # M6 no arma ranking parcial: USD sin tipo de cambio u otra moneda inválida.
+        contexto["error"] = str(exc)
+        return render(request, "comparador.html", contexto)
+
+    nombres = {p.code: p.name for p in Provider.objects.all()}
+    contexto["proveedores_caidos_nombres"] = [
+        nombres.get(codigo, codigo) for codigo in comparacion.errores
+    ]
+
+    try:
+        catalogo_disponible = ProductoCanonico.objects.exists()
+    except DatabaseError:
+        # catalog/0004 aún sin aplicar en esta BD (ProgrammingError en PG,
+        # OperationalError en SQLite): matching degradado a SIN_MATCH.
+        logger.warning("ProductoCanonico no disponible; matching deshabilitado.")
+        catalogo_disponible = False
+
+    filas = sorted(
+        (fila for grupo in comparacion.por_proveedor.values() for fila in grupo),
+        key=lambda fila: (fila.precio_comparable, fila.oferta.external_id),
+    )
+    contexto["ofertas"] = [
+        OfertaEnPantalla(
+            oferta=fila.oferta,
+            proveedor_nombre=nombres.get(fila.oferta.provider_code, fila.oferta.provider_code),
+            precio_comparable=fila.precio_comparable,
+            match=_match_de_oferta(fila.oferta, categoria_pk, catalogo_disponible),
+        )
+        for fila in filas
+    ]
+    return render(request, "comparador.html", contexto)

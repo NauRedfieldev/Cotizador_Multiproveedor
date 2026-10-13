@@ -1,214 +1,140 @@
 {% extends 'base.html' %}
-{% load static %}
 
-{% block title %}CCONOR - Comparador de Productos Multi-Proveedor{% endblock %}
+{% block title %}CCONOR - Comparador de Proveedores{% endblock %}
 
 {% block content %}
-<div class="container py-4">
+<div class="container py-3">
 
-    <!-- ENCABEZADO ESTILO COMPARADOR (2 PROVEEDORES AUTORIZADOS) -->
-    <div class="text-center mb-5">
-        <h1 class="display-6 fw-bold mb-2" style="color: var(--cconor-azul-marino);">
-            Encuentra el producto y distribuidor perfecto
-        </h1>
-        <p class="lead text-muted fs-6 mb-3">
-            Compara entre nuestros 2 distribuidores autorizados (SYSCOM y CT Online) antes de generar tu propuesta
+    <!-- ENCABEZADO PRINCIPAL -->
+    <div class="mb-4">
+        <h2 class="fw-bold d-flex align-items-center gap-2 mb-2" style="color: var(--cconor-azul-marino);">
+            <i class="bi bi-caret-right-fill" style="color: var(--cconor-naranja);"></i>
+            <span>Comparador de Proveedores</span>
+        </h2>
+        <p class="text-muted mb-0 fs-6">
+            Busca por descripción o modelo exacto y compara las ofertas vigentes de nuestros distribuidores en pesos mexicanos.
         </p>
-        
-        <!-- SELECTOR DE CATEGORÍA / FILTRO RÁPIDO -->
-        <div class="d-inline-flex flex-wrap justify-content-center gap-2 p-1 bg-white rounded-pill border shadow-sm">
-            <button class="btn btn-sm btn-cconor-primary rounded-pill px-3 filter-cat-btn active" data-cat="switches">
-                <i class="bi bi-hdd-network me-1"></i> Switches Empresariales
-            </button>
-            <button class="btn btn-sm btn-outline-secondary rounded-pill px-3 filter-cat-btn border-0" data-cat="camaras">
-                <i class="bi bi-camera-video me-1"></i> Cámaras de Seguridad
-            </button>
-            <button class="btn btn-sm btn-outline-secondary rounded-pill px-3 filter-cat-btn border-0" data-cat="cableado">
-                <i class="bi bi-diagram-3 me-1"></i> Cableado Estructurado
-            </button>
-            <button class="btn btn-sm btn-outline-secondary rounded-pill px-3 filter-cat-btn border-0" data-cat="computo">
-                <i class="bi bi-display me-1"></i> Cómputo & Monitores
-            </button>
-        </div>
     </div>
 
-    <!-- TARJETAS DE COMPARACIÓN (2 COLUMNAS: SYSCOM vs CT ONLINE) -->
-    <div class="row g-4 mb-5" id="compareGrid">
-        
-        <!-- COLUMNA 1: SYSCOM -->
-        <div class="col-lg-6">
-            <div class="compare-card best-choice h-100">
-                <div class="best-choice-badge">
-                    <i class="bi bi-star-fill me-1"></i> Mayor Margen Comercial
-                </div>
-
-                <div class="d-flex justify-content-between align-items-center mt-2 mb-3">
-                    <span class="badge badge-provider badge-syscom">SYSCOM</span>
-                    <span class="badge bg-success bg-opacity-10 text-success fw-bold">Stock Central</span>
-                </div>
-
-                <div class="p-3 bg-light rounded-3 mb-3 d-flex align-items-center justify-content-center" style="height: 190px;">
-                    <i class="bi bi-hdd-stack-fill text-danger" style="font-size: 5.5rem;"></i>
-                </div>
-
-                <h5 class="fw-bold mb-1" style="color: var(--cconor-azul-marino);">Switch Ruijie Reyee Cloud Managed</h5>
-                <p class="font-monospace text-muted small mb-2">SKU: RG-ES224GC-P</p>
-
-                <div class="text-warning small mb-3">
-                    <i class="bi bi-star-fill"></i>
-                    <i class="bi bi-star-fill"></i>
-                    <i class="bi bi-star-fill"></i>
-                    <i class="bi bi-star-fill"></i>
-                    <i class="bi bi-star-half"></i>
-                    <span class="text-dark fw-bold ms-1">4.8</span>
-                    <span class="text-muted">(SYSCOM Almacén)</span>
-                </div>
-
-                <div class="mb-3 py-2 border-top border-bottom">
-                    <div class="small text-muted">Precio Mayoreo c/IVA:</div>
-                    <div class="compare-price" style="color: #D32F2F;">$8,890.00 <span class="fs-6 fw-normal text-muted">MXN</span></div>
-                    <div class="small text-success fw-semibold mt-1">
-                        <i class="bi bi-cash-stack me-1"></i> Margen Sugerido: +25% ($2,222 MXN)
-                    </div>
-                </div>
-
-                <ul class="list-unstyled text-start small mb-4 flex-grow-1">
-                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Puertos:</strong> 24 Puertos Gigabit PoE+ (370W)</li>
-                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Uplinks:</strong> 2x 1G SFP Combo</li>
-                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Gestión:</strong> Smart Managed en la Nube Ruijie Cloud gratuita</li>
-                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Disponibilidad:</strong> 28 piezas en bodega</li>
-                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Garantía:</strong> 3 años de reemplazo directo con SYSCOM</li>
-                </ul>
-
-                <button class="btn btn-outline-danger w-100 d-flex align-items-center justify-content-center gap-2 add-to-quote-btn"
-                        data-sku="RG-ES224GC-P" data-name="Switch Ruijie Reyee 24P PoE+ SYSCOM" data-provider="syscom" data-price="8890.00">
-                    <i class="bi bi-plus-circle"></i>
-                    <span>Agregar a Cotización</span>
+    <!-- FORMULARIO DE BÚSQUEDA (M7b: GET, sin CSRF, sin api.js) -->
+    <form method="get" action="{% url 'cotizar_productos' %}" class="cconor-card p-3 mb-4">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label for="q" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-search me-1"></i> Búsqueda libre
+                </label>
+                <input type="search" class="form-control form-control-sm" id="q" name="q"
+                       value="{{ request.GET.q }}" placeholder="Ej: switch poe 24 puertos">
+            </div>
+            <div class="col-md-3">
+                <label for="sku" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-upc-scan me-1"></i> Modelo exacto (SKU)
+                </label>
+                <input type="text" class="form-control form-control-sm font-monospace" id="sku" name="sku"
+                       value="{{ request.GET.sku }}" placeholder="Ej: 2CD2043G2-I">
+            </div>
+            <div class="col-md-2">
+                <label for="categoria" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-tags me-1"></i> Categoría
+                </label>
+                <select class="form-select form-select-sm" id="categoria" name="categoria">
+                    <option value="">Todas</option>
+                    {% for c in categorias %}
+                    <option value="{{ c.pk }}" {% if request.GET.categoria == c.pk|stringformat:'s' %}selected{% endif %}>{{ c }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="tipo_cambio" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-currency-dollar me-1"></i> Tipo de cambio (USD)
+                </label>
+                <input type="text" class="form-control form-control-sm" id="tipo_cambio" name="tipo_cambio"
+                       value="{{ request.GET.tipo_cambio }}" inputmode="decimal"
+                       pattern="[0-9]+(\.[0-9]+)?" placeholder="17.50">
+            </div>
+            <div class="col-md-1 d-grid">
+                <button type="submit" class="btn btn-cconor-primary btn-sm">
+                    <i class="bi bi-search"></i> Buscar
                 </button>
             </div>
         </div>
+    </form>
 
-        <!-- COLUMNA 2: CT ONLINE -->
-        <div class="col-lg-6">
-            <div class="compare-card h-100">
-                <div class="d-flex justify-content-between align-items-center mt-2 mb-3">
-                    <span class="badge badge-provider badge-ct">CT Online</span>
-                    <span class="badge bg-primary bg-opacity-10 text-primary fw-bold">Stock Inmediato</span>
+    <!-- ESTADOS: ERROR / PROVEEDORES CAÍDOS -->
+    {% if error %}
+    <div class="alert alert-danger d-flex align-items-start gap-2" role="alert">
+        <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+        <div>{{ error }}</div>
+    </div>
+    {% elif proveedores_caidos_nombres %}
+    <div class="alert alert-warning d-flex align-items-start gap-2" role="alert">
+        <i class="bi bi-cloud-slash-fill mt-1"></i>
+        <div>No respondieron: {{ proveedores_caidos_nombres|join:", " }}. Se muestran los demás proveedores.</div>
+    </div>
+    {% endif %}
+
+    <!-- CONTEXTO FX APLICADO A LA BÚSQUEDA -->
+    {% if tipo_cambio %}
+    <p class="small text-secondary mb-3">
+        <i class="bi bi-arrow-repeat me-1"></i>Tipo de cambio: {{ tipo_cambio.valor }} MXN/USD ({{ tipo_cambio.origen }}, {{ tipo_cambio.fecha|date:'d/m/Y H:i' }} UTC)
+    </p>
+    {% endif %}
+
+    <!-- OFERTAS: el contexto las trae ordenadas de más barata a más cara en pesos -->
+    {% for o in ofertas %}
+    <div class="cconor-card p-3 mb-3">
+        <div class="row g-3 align-items-center">
+            <div class="col-md-5">
+                <h6 class="fw-bold mb-1">{{ o.oferta.name }}</h6>
+                <div class="d-flex flex-wrap align-items-center gap-2 small text-muted">
+                    <span class="badge text-bg-light border">
+                        <i class="bi bi-shop me-1"></i>{{ o.proveedor_nombre }}
+                    </span>
+                    {% if o.oferta.brand %}<span><i class="bi bi-bookmark me-1"></i>{{ o.oferta.brand }}</span>{% endif %}
+                    {% if o.oferta.model %}<span class="font-monospace"><i class="bi bi-cpu me-1"></i>{{ o.oferta.model }}</span>{% endif %}
                 </div>
-
-                <div class="p-3 bg-light rounded-3 mb-3 d-flex align-items-center justify-content-center" style="height: 190px;">
-                    <i class="bi bi-router-fill text-info" style="font-size: 5.5rem;"></i>
-                </div>
-
-                <h5 class="fw-bold mb-1" style="color: var(--cconor-azul-marino);">Switch TP-Link Omada Pro Managed</h5>
-                <p class="font-monospace text-muted small mb-2">SKU: TL-SG3428MP</p>
-
-                <div class="text-warning small mb-3">
-                    <i class="bi bi-star-fill"></i>
-                    <i class="bi bi-star-fill"></i>
-                    <i class="bi bi-star-fill"></i>
-                    <i class="bi bi-star-fill"></i>
-                    <i class="bi bi-star"></i>
-                    <span class="text-dark fw-bold ms-1">4.6</span>
-                    <span class="text-muted">(CT Online Almacén)</span>
-                </div>
-
-                <div class="mb-3 py-2 border-top border-bottom">
-                    <div class="small text-muted">Precio Mayoreo c/IVA:</div>
-                    <div class="compare-price" style="color: #0284C7;">$9,450.00 <span class="fs-6 fw-normal text-muted">MXN</span></div>
-                    <div class="small text-success fw-semibold mt-1">
-                        <i class="bi bi-cash-stack me-1"></i> Margen Sugerido: +20% ($1,890 MXN)
-                    </div>
-                </div>
-
-                <ul class="list-unstyled text-start small mb-4 flex-grow-1">
-                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Puertos:</strong> 24 Puertos Gigabit PoE+ (384W)</li>
-                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Uplinks:</strong> 4x 1G SFP slots dedicados</li>
-                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Gestión:</strong> L2+ con integración Omada SDN</li>
-                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Disponibilidad:</strong> 16 piezas en almacén</li>
-                    <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> <strong>Garantía:</strong> 5 años de garantía con fabricante y CT</li>
-                </ul>
-
-                <button class="btn btn-outline-info w-100 d-flex align-items-center justify-content-center gap-2 add-to-quote-btn"
-                        data-sku="TL-SG3428MP" data-name="Switch TP-Link Omada 24P PoE+ CT" data-provider="ct" data-price="9450.00">
-                    <i class="bi bi-plus-circle"></i>
-                    <span>Agregar a Cotización</span>
-                </button>
+            </div>
+            <div class="col-md-3 text-md-center">
+                <div class="fs-5 fw-bold" style="color: var(--cconor-azul-marino);">${{ o.precio_comparable|floatformat:2 }} MXN</div>
+                <div class="small text-muted">Precio original de referencia: {{ o.oferta.price }} {{ o.oferta.currency }}</div>
+            </div>
+            <div class="col-md-2 small">
+                {% if o.oferta.stock is None %}
+                <span class="text-secondary"><i class="bi bi-question-circle me-1"></i>Disponibilidad no informada</span>
+                {% elif o.oferta.stock == 0 %}
+                <span class="text-danger"><i class="bi bi-x-octagon me-1"></i>Sin existencias</span>
+                {% else %}
+                <span class="text-success"><i class="bi bi-check-circle me-1"></i>{{ o.oferta.stock }} disponibles</span>
+                {% endif %}
+            </div>
+            <div class="col-md-2 text-md-end">
+                {% if o.oferta.model %}
+                <a class="btn btn-cconor-primary btn-sm d-inline-flex align-items-center gap-1"
+                   href="{% url 'cotizador' %}?sku={{ o.oferta.model|urlencode }}&tipo_cambio={{ request.GET.tipo_cambio|urlencode }}"
+                   title="Agregar a cotización">
+                    <i class="bi bi-cart-plus"></i> Agregar a cotización
+                </a>
+                {% endif %}
             </div>
         </div>
-
-    </div>
-
-    <!-- TABLA COMPARATIVA DETALLADA DE CARACTERÍSTICAS (2 PROVEEDORES) -->
-    <div class="cconor-card p-4">
-        <h5 class="fw-bold mb-3" style="color: var(--cconor-azul-marino);">
-            <i class="bi bi-table me-2 text-primary"></i> Matriz de Comparativa Técnica & Margen
-        </h5>
-        <div class="table-responsive">
-            <table class="table table-bordered table-striped align-middle small mb-0">
-                <thead class="table-dark">
-                    <tr>
-                        <th style="width: 34%;">Criterio de Evaluación</th>
-                        <th style="width: 33%;">SYSCOM (Ruijie)</th>
-                        <th style="width: 33%;">CT Online (TP-Link)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td class="fw-bold">Precio de Costo (Distribuidor)</td>
-                        <td class="text-danger fw-bold fs-6">$8,890.00 MXN</td>
-                        <td class="text-info fw-bold fs-6">$9,450.00 MXN</td>
-                    </tr>
-                    <tr>
-                        <td class="fw-bold">Margen de Ganancia Estimado</td>
-                        <td class="bg-success bg-opacity-10 text-success fw-bold">25% ($2,222) ★ Mayor Margen</td>
-                        <td>20% ($1,890)</td>
-                    </tr>
-                    <tr>
-                        <td class="fw-bold">Precio Sugerido al Cliente</td>
-                        <td class="fw-bold">$11,112.50 MXN</td>
-                        <td class="fw-bold">$11,340.00 MXN</td>
-                    </tr>
-                    <tr>
-                        <td class="fw-bold">Tiempo de Entrega Estimado</td>
-                        <td><span class="badge bg-success">Inmediato / 24 Horas hábiles</span></td>
-                        <td><span class="badge bg-primary">24 a 48 Horas hábiles</span></td>
-                    </tr>
-                    <tr>
-                        <td class="fw-bold">Nivel de Soporte Técnico</td>
-                        <td>Ingeniería y Laboratorio SYSCOM México</td>
-                        <td>Garantía Mayorista CT Internacional</td>
-                    </tr>
-                </tbody>
-            </table>
+        {% if o.match.estado == 'AUTO_MATCH' %}
+        <div class="small mt-2 pt-2 border-top d-flex align-items-center gap-1" style="color: #198754;">
+            <i class="bi bi-patch-check-fill"></i> Identificado: {{ o.match.canonico.descripcion }}
         </div>
+        {% elif o.match.estado == 'REVISION_MANUAL' %}
+        <div class="small mt-2 pt-2 border-top d-flex align-items-center gap-1" style="color: var(--cconor-naranja);">
+            <i class="bi bi-patch-question-fill"></i> Posible coincidencia: requiere revisión
+        </div>
+        {% endif %}
     </div>
+    {% empty %}
+    {% if request.GET.q or request.GET.sku %}
+    <div class="cconor-card p-4 text-center">
+        <i class="bi bi-box-seam fs-1 text-muted"></i>
+        <p class="mb-0 mt-2 text-muted">No se encontraron productos.</p>
+    </div>
+    {% endif %}
+    {% endfor %}
 
 </div>
-{% endblock %}
-
-{% block extra_js %}
-<script>
-    // Cambio interactivo de categorías en el comparador
-    document.querySelectorAll('.filter-cat-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            document.querySelectorAll('.filter-cat-btn').forEach(b => {
-                b.classList.remove('btn-cconor-primary', 'active');
-                b.classList.add('btn-outline-secondary', 'border-0');
-            });
-            this.classList.remove('btn-outline-secondary', 'border-0');
-            this.classList.add('btn-cconor-primary', 'active');
-        });
-    });
-
-    // Acción de agregar a la cotización
-    document.querySelectorAll('.add-to-quote-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            const name = this.dataset.name;
-            const price = this.dataset.price;
-            alert(`¡"${name}" ($${price}) se preparó para tu cotización! Redirigiendo al Cotizador...`);
-            window.location.href = "{% url 'cotizador' %}";
-        });
-    });
-</script>
 {% endblock %}

@@ -18,3 +18,7 @@ skills-lock.json
 
 #Docs
 12-sdd-m1-providers-core.md
+
+# Local DB / backups (nunca se suben)
+*.sqlite3
+*.bak*

@@ -118,17 +118,22 @@
     }
 }
 
+/* Mismo morado que .btn-cconor-primary ("Nuevo Cliente"): gradiente
+   --cconor-gradient-primary (#7311F5 → #B264EF) declarado en custom.css.
+   Solo cambia el color de fondo y su glow hover; texto, iconos, forma,
+   tamaño y padding los define el bloque común .btn-hero-primary de arriba. */
 .btn-hero-primary {
-    background: var(--primary);
+    background: var(--cconor-gradient-primary);
     color: #FFFFFF !important;
     border: none;
-    box-shadow: 0 8px 20px rgba(20, 110, 245, 0.25);
+    box-shadow: 0 8px 20px rgba(115, 17, 245, 0.25);
 }
 
 .btn-hero-primary:hover {
-    background: var(--primary-hover);
+    background: var(--cconor-gradient-primary);
     color: #FFFFFF !important;
     transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(115, 17, 245, 0.45);
 }
 
 .btn-hero-outline {
