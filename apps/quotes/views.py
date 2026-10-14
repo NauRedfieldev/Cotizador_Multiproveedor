@@ -4,11 +4,12 @@ Emisiones: ambas leen el mismo original archivado. El único renderer está en p
 El comparador consulta proveedores reales, compara en MXN y no escribe en BD.
 """
 
-import asyncio
 import json
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
+
+from asgiref.sync import async_to_sync
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
@@ -162,13 +163,14 @@ def demo_pdf_cotizacion(request, folio):
 
 
 @dataclass(frozen=True, slots=True)
-class OfertaEnPantalla:
-    """Fila plana que la plantilla comparador.html recorre en el contexto."""
+class OfertaPresentada:
+    """Fila del contrato M7 que comparador.html recorre en el contexto."""
 
     oferta: ProviderOffer
-    proveedor_nombre: str
     precio_comparable: Decimal
+    es_mejor_precio: bool
     match: ResultadoMatch
+    proveedor_nombre: str
 
 
 # SIN_MATCH compartido: frozen y sin candidatos, seguro de reutilizar.
@@ -182,39 +184,71 @@ def _match_de_oferta(oferta, categoria_pk, catalogo_disponible):
     return emparejar_con_fallback(oferta, categoria_id=categoria_pk)
 
 
+def _contexto_comparador():
+    """Las seis claves del contrato, también en error y en la página en blanco."""
+    return {
+        "ofertas": [],
+        "proveedores_caidos": [],
+        "proveedores_caidos_nombres": [],
+        "tipo_cambio": None,
+        "categorias": Category.objects.filter(is_active=True).order_by("name"),
+        "error": None,
+    }
+
+
+def _responder(request, contexto, status=200):
+    return render(request, "comparador.html", contexto, status=status)
+
+
+def _asignar_caidos(contexto, codigos, nombres):
+    codigos = list(codigos)
+    contexto["proveedores_caidos"] = codigos
+    contexto["proveedores_caidos_nombres"] = [nombres.get(codigo, codigo) for codigo in codigos]
+
+
+def _status_de_comparacion(exc):
+    """400 si falta el tipo de cambio o la moneda no es comparable; si no, 503."""
+    texto = str(exc).lower()
+    if "tipo de cambio" in texto or "moneda" in texto:
+        return 400
+    return 503
+
+
 def cotizar_productos(request):
     """GET /comparador/ → busca en los proveedores activos y compara en MXN.
 
-    Contrato de contexto M7b: ofertas (de más barata a más cara en pesos),
-    error, proveedores_caidos_nombres, tipo_cambio y categorías. Sin
-    escrituras, sin datos demo y sin CSRF (el formulario es GET).
+    Siempre entrega las seis claves del contexto. 400 si la consulta no es
+    válida; 503 si no hay proveedores activos o caen todos. Sin escrituras,
+    sin datos demo y sin CSRF (el formulario es GET).
     """
     q = request.GET.get("q", "").strip()
     sku = request.GET.get("sku", "").strip()
     categoria_txt = request.GET.get("categoria", "").strip()
     tipo_cambio_txt = request.GET.get("tipo_cambio", "").strip()
-
-    contexto = {
-        "categorias": Category.objects.filter(is_active=True),
-        "ofertas": [],
-        "error": None,
-        "proveedores_caidos_nombres": [],
-        "tipo_cambio": None,
-    }
+    contexto = _contexto_comparador()
 
     if not q and not sku:
-        return render(request, "comparador.html", contexto)
+        return _responder(request, contexto)
 
     try:
         consulta = ProductQuery(term=q, sku=sku or None)
     except ValueError as exc:
         contexto["error"] = f"La búsqueda no es válida: {exc}"
-        return render(request, "comparador.html", contexto)
+        return _responder(request, contexto, 400)
 
-    if categoria_txt and not categoria_txt.isdigit():
-        contexto["error"] = "La categoría seleccionada no es válida."
-        return render(request, "comparador.html", contexto)
-    categoria_pk = int(categoria_txt) if categoria_txt else None
+    categoria_pk = None
+    if categoria_txt:
+        if not categoria_txt.isdigit():
+            contexto["error"] = "La categoría seleccionada no es válida."
+            return _responder(request, contexto, 400)
+        categoria_pk = int(categoria_txt)
+        if (
+            categoria_pk < 1
+            or categoria_pk > 2147483647
+            or not contexto["categorias"].filter(pk=categoria_pk).exists()
+        ):
+            contexto["error"] = "La categoría seleccionada no es válida."
+            return _responder(request, contexto, 400)
 
     tipo_cambio = None
     if tipo_cambio_txt:
@@ -222,27 +256,36 @@ def cotizar_productos(request):
             tipo_cambio = tipo_cambio_manual(tipo_cambio_txt, fecha=timezone.now())
         except (TypeError, ValueError):
             contexto["error"] = "El tipo de cambio debe ser un decimal positivo con punto (ej. 17.50)."
-            return render(request, "comparador.html", contexto)
+            return _responder(request, contexto, 400)
     contexto["tipo_cambio"] = tipo_cambio
 
     try:
-        resultados = asyncio.run(search_all(consulta))
+        # async_to_sync cierra la conexión del ORM async; asyncio.run la dejaba abierta.
+        resultados = async_to_sync(search_all)(consulta)
     except Exception:  # search_all absorbe ProviderError; esto es fallo del proceso.
         logger.exception("Fallo inesperado consultando proveedores")
         contexto["error"] = "No fue posible consultar a los proveedores en este momento."
-        return render(request, "comparador.html", contexto)
+        return _responder(request, contexto, 503)
+
+    if not resultados:
+        contexto["error"] = "No hay proveedores activos para consultar."
+        return _responder(request, contexto, 503)
+
+    nombres = {p.code: p.name for p in Provider.objects.all()}
+    if all(not resultado.ok for resultado in resultados):
+        _asignar_caidos(contexto, [r.provider_code for r in resultados], nombres)
+        contexto["error"] = "Ningún proveedor pudo responder en este momento."
+        return _responder(request, contexto, 503)
 
     try:
         comparacion = comparar_configurado(resultados, tipo_cambio=tipo_cambio)
     except ValueError as exc:
         # M6 no arma ranking parcial: USD sin tipo de cambio u otra moneda inválida.
+        _asignar_caidos(contexto, [r.provider_code for r in resultados if not r.ok], nombres)
         contexto["error"] = str(exc)
-        return render(request, "comparador.html", contexto)
+        return _responder(request, contexto, _status_de_comparacion(exc))
 
-    nombres = {p.code: p.name for p in Provider.objects.all()}
-    contexto["proveedores_caidos_nombres"] = [
-        nombres.get(codigo, codigo) for codigo in comparacion.errores
-    ]
+    _asignar_caidos(contexto, comparacion.errores, nombres)
 
     try:
         catalogo_disponible = ProductoCanonico.objects.exists()
@@ -257,12 +300,13 @@ def cotizar_productos(request):
         key=lambda fila: (fila.precio_comparable, fila.oferta.external_id),
     )
     contexto["ofertas"] = [
-        OfertaEnPantalla(
+        OfertaPresentada(
             oferta=fila.oferta,
-            proveedor_nombre=nombres.get(fila.oferta.provider_code, fila.oferta.provider_code),
             precio_comparable=fila.precio_comparable,
+            es_mejor_precio=fila.es_mejor_precio,
             match=_match_de_oferta(fila.oferta, categoria_pk, catalogo_disponible),
+            proveedor_nombre=nombres.get(fila.oferta.provider_code, fila.oferta.provider_code),
         )
         for fila in filas
     ]
-    return render(request, "comparador.html", contexto)
+    return _responder(request, contexto)

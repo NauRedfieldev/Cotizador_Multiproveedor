@@ -82,7 +82,7 @@
 
     <!-- OFERTAS: el contexto las trae ordenadas de más barata a más cara en pesos -->
     {% for o in ofertas %}
-    <div class="cconor-card p-3 mb-3">
+    <div class="cconor-card p-3 mb-3{% if o.es_mejor_precio %} border border-success{% endif %}">
         <div class="row g-3 align-items-center">
             <div class="col-md-5">
                 <h6 class="fw-bold mb-1">{{ o.oferta.name }}</h6>
@@ -96,6 +96,9 @@
             </div>
             <div class="col-md-3 text-md-center">
                 <div class="fs-5 fw-bold" style="color: var(--cconor-azul-marino);">${{ o.precio_comparable|floatformat:2 }} MXN</div>
+                {% if o.es_mejor_precio %}
+                <span class="badge text-bg-success">Mejor precio</span>
+                {% endif %}
                 <div class="small text-muted">Precio original de referencia: {{ o.oferta.price }} {{ o.oferta.currency }}</div>
             </div>
             <div class="col-md-2 small">
@@ -128,11 +131,13 @@
         {% endif %}
     </div>
     {% empty %}
+    {% if not error %}
     {% if request.GET.q or request.GET.sku %}
     <div class="cconor-card p-4 text-center">
         <i class="bi bi-box-seam fs-1 text-muted"></i>
         <p class="mb-0 mt-2 text-muted">No se encontraron productos.</p>
     </div>
+    {% endif %}
     {% endif %}
     {% endfor %}
 
