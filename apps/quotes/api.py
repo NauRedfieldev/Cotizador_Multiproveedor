@@ -15,6 +15,7 @@ from functools import wraps
 from uuid import UUID
 
 from asgiref.sync import sync_to_async
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied, ValidationError
 from django.core.validators import validate_email
@@ -27,7 +28,6 @@ from apps.providers.contracts import ProviderOffer
 
 from .comparison import TipoCambio
 from .models import Quote, QuoteRevision, rfc_validator
-from .pdf import COMPANY
 from .snapshots import (
     ArchivedPDFError, PartidaCapturada, RevisionConflict, acrear_revision, aemitir_revision,
     aguardar_borrador, authorize, crear_borrador,
@@ -164,14 +164,13 @@ async def _guardar_ofertas(session, contexto):
 # ==============================================================================
 # Cotizaciones (M8, docs/25 M8 §2–§5). Las vistas solo validan la frontera HTTP y llaman a
 # los servicios: no escriben revisiones ni partidas y no envuelven la emisión en atomic.
-# Margen, precio de venta, empresa y condiciones los decide M8 (docs/28).
+# Margen y precio de venta los decide M8 con CCONOR; mientras tanto la emisión está bloqueada
+# (COTIZACIONES_EMISION_HABILITADA). La empresa sale de settings.CCONOR_EMPRESA (docs/28 §12).
 # ==============================================================================
 
-# Provisional hasta que M8 lo decida: las claves que acepta la cabecera de M8 (el asesor lo
-# pone el servicio desde el propietario de la Quote).
-EMPRESA = {clave: COMPANY[clave] for clave in ("name", "rfc", "tagline", "phone", "email")}
-_CAMPOS_CLIENTE = {"client_name", "client_rfc", "client_email", "valid_days", "notes", "items"}
-_CAMPOS_ALTA = _CAMPOS_CLIENTE | {"request_id"}
+_CAMPOS_CLIENTE = {"client_name", "client_rfc", "client_email", "valid_days", "conditions", "items"}
+# notes es una nota interna de la Quote: solo en el alta y nunca va al PDF.
+_CAMPOS_ALTA = _CAMPOS_CLIENTE | {"request_id", "notes"}
 _CAMPOS_EDICION = _CAMPOS_CLIENTE | {"edit_version"}
 _CAMPOS_PARTIDA = {"provider", "external_id", "quantity", "description"}
 _INTENTOS_FOLIO = 3
@@ -183,6 +182,14 @@ class _EntradaInvalida(ValueError):
 
 class _OfertaNoDisponible(ValueError):
     """409: el precio no está en la sesión (o mezcla tipos de cambio); hay que volver a buscar."""
+
+
+class _EmpresaSinConfigurar(Exception):
+    """503: faltan los datos de la empresa en el servidor; nunca se sustituyen por ejemplos."""
+
+
+class _EmisionDeshabilitada(Exception):
+    """403: no hay política de precios de venta; emitir daría un documento a costo."""
 
 
 def _api(metodo):
@@ -219,6 +226,12 @@ def _respuesta_de_error(exc):
         status, mensaje = 404, "Cotización o revisión no encontrada."
     elif isinstance(exc, ArchivedPDFError):
         status, mensaje = 503, "PDF original no disponible o dañado; requiere recuperación."
+    elif isinstance(exc, _EmpresaSinConfigurar):
+        status, mensaje = 503, "Datos de la empresa sin configurar en el servidor; avisa al administrador."
+    elif isinstance(exc, _EmisionDeshabilitada):
+        status, mensaje = 403, (
+            "La emisión comercial está deshabilitada hasta definir la política de precios (M8/CCONOR)."
+        )
     else:
         logger.error("M7a: fallo inesperado en la API de cotizaciones.", exc_info=exc)
         status, mensaje = 500, "No se pudo completar la operación."
@@ -228,12 +241,13 @@ def _respuesta_de_error(exc):
 @_api("POST")
 async def crear_cotizacion(request):
     """POST /api/v1/quotes/ → Quote + primer borrador (M8 crear_borrador). Idempotente por request_id."""
+    empresa = _empresa()
     datos = _leer_json(request, _CAMPOS_ALTA)
     request_id = _uuid(datos.get("request_id"))
     cliente = _cliente(datos)
     partidas, tipo_cambio = _partidas(datos.get("items"), await request.session.aget(CLAVE_OFERTAS, {}))
     revision = await sync_to_async(_crear_cotizacion, thread_sensitive=True)(
-        await request.auser(), cliente, partidas, tipo_cambio, request_id,
+        await request.auser(), empresa, cliente, partidas, tipo_cambio, request_id,
     )
     return JsonResponse({"success": True, "data": revision}, status=201)
 
@@ -268,6 +282,8 @@ async def guardar_revision(request, folio, numero):
 @_api("POST")
 async def emitir(request, folio, numero):
     """POST …/revisiones/<n>/emitir/ → emisión con PDF original (M8 emitir_revision)."""
+    if not settings.COTIZACIONES_EMISION_HABILITADA:
+        raise _EmisionDeshabilitada()
     datos = _leer_json(request, {"edit_version"})
     actual = await QuoteRevision.objects.aget(quote__folio=folio, number=numero)
     revision = await aemitir_revision(
@@ -331,14 +347,24 @@ def _cliente(datos):
     correo = _texto_requerido(datos.get("client_email", ""), "client_email", 254)
     if correo:
         validate_email(correo)
-    notas = _texto_requerido(datos.get("notes", ""), "notes", 6000)
+    condiciones = datos.get("conditions")
+    # Obligatoria aunque vaya vacía: M8 no añade condiciones por defecto y aquí tampoco.
+    if not isinstance(condiciones, list) or not all(isinstance(c, str) for c in condiciones):
+        raise _EntradaInvalida("conditions debe ser una lista de textos para el cliente (puede ir vacía).")
     return {
         "client_name": nombre, "client_rfc": rfc, "client_email": correo,
         "valid_days": _entero(datos.get("valid_days", 15), "valid_days"),
-        "notes": notas,
-        # Provisional hasta que M8 lo decida: cada línea de las notas es una condición.
-        "conditions": [linea.strip() for linea in notas.splitlines() if linea.strip()],
+        "notes": _texto_requerido(datos.get("notes", ""), "notes", 6000),
+        "conditions": condiciones,
     }
+
+
+def _empresa():
+    """Datos de la empresa validados por CCONOR, del servidor; sin nombre no se crea nada."""
+    empresa = dict(settings.CCONOR_EMPRESA)
+    if not empresa.get("name", "").strip():
+        raise _EmpresaSinConfigurar()
+    return empresa
 
 
 def _partidas(items, ofertas):
@@ -388,23 +414,27 @@ def _partidas(items, ofertas):
 
 # --- Operaciones síncronas (fuera del event loop, thread_sensitive) ----------------------
 
-def _crear_cotizacion(usuario, cliente, partidas, tipo_cambio, request_id):
+def _crear_cotizacion(usuario, empresa, cliente, partidas, tipo_cambio, request_id):
     # Dos altas simultáneas pueden calcular el mismo folio (Quote._generate_folio): se reintenta.
     for _ in range(_INTENTOS_FOLIO - 1):
         try:
-            return _alta(usuario, cliente, partidas, tipo_cambio, request_id)
+            return _alta(usuario, empresa, cliente, partidas, tipo_cambio, request_id)
         except IntegrityError:
             pass
-    return _alta(usuario, cliente, partidas, tipo_cambio, request_id)
+    return _alta(usuario, empresa, cliente, partidas, tipo_cambio, request_id)
 
 
-def _alta(usuario, cliente, partidas, tipo_cambio, request_id):
+def _alta(usuario, empresa, cliente, partidas, tipo_cambio, request_id):
     with transaction.atomic():
         # Serializa las altas del mismo usuario: un reintento simultáneo con el mismo
         # request_id encuentra la revisión de la primera en lugar de crear otra Quote.
         get_user_model().objects.select_for_update().filter(pk=usuario.pk).exists()
-        previa = QuoteRevision.objects.filter(request_id=request_id, quote__advisor=usuario).first()
+        previa = (QuoteRevision.objects.filter(request_id=request_id, quote__advisor=usuario)
+                  .select_related("quote").first())
         if previa is not None:
+            # notes no está en la huella de M8 (no va al PDF): se compara aquí.
+            if previa.quote.notes != cliente["notes"]:
+                raise RevisionConflict("request_id ya fue utilizado con datos diferentes.")
             quote_id = previa.quote_id
         else:
             quote = Quote(
@@ -419,7 +449,7 @@ def _alta(usuario, cliente, partidas, tipo_cambio, request_id):
         # Cliente y vigencia van explícitos (no los de la Quote) para que entren en la
         # huella: un reintento con otros datos es un conflicto, no se ignoran.
         revision = crear_borrador(
-            quote_id, partidas, actor=usuario, company=EMPRESA,
+            quote_id, partidas, actor=usuario, company=empresa,
             conditions=cliente["conditions"], tipo_cambio=tipo_cambio, request_id=request_id,
             client={"business_name": cliente["client_name"], "rfc": cliente["client_rfc"],
                     "email": cliente["client_email"]},

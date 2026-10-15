@@ -1,6 +1,6 @@
-"""Pruebas C1–C16 de la API de cotizaciones de M7a sobre M8 (docs/28), sin red.
+"""Pruebas C1–C21 de la API de cotizaciones de M7a sobre M8 (docs/28), sin red.
 
-Datos sintéticos y PDF en un directorio temporal, como test_snapshots. Las ofertas se ponen
+Datos sintéticos (también la empresa: nunca los de pdf.COMPANY) y PDF en un directorio temporal, como test_snapshots. Las ofertas se ponen
 directamente en la sesión, salvo en C1, que recorre búsqueda → alta con el flujo real.
 """
 import json
@@ -23,6 +23,9 @@ from apps.quotes.snapshots import ArchivedPDFError
 from apps.quotes.tests.test_vistas_cotizacion import adaptador, crear_asesor, usd
 
 TIPO = {"valor": "17.50", "origen": "manual", "fecha": "2026-10-15T18:00:00+00:00"}
+EMPRESA_QA = {"name": "Empresa sintética (QA)", "rfc": "", "tagline": "Datos sintéticos de prueba",
+              "phone": "", "email": ""}
+CONDICIONES = ["Entrega en sitio.", "Pago contra entrega."]
 
 
 def oferta_guardada(provider, external_id, precio, moneda="USD", tipo=TIPO):
@@ -41,11 +44,22 @@ def cuerpo_alta(**cambios):
         "client_rfc": "CSI980415AA2",
         "client_email": "compras@cliente.example.com",
         "valid_days": 15,
-        "notes": "Entrega en sitio.\n\nPago contra entrega.",
+        "conditions": list(CONDICIONES),
+        "notes": "Nota interna: no se publica.",
         "items": [{"provider": "alfa", "external_id": "7", "quantity": "2"}],
     }
     datos.update(cambios)
     return datos
+
+
+def cuerpo_edicion(edit_version=1, **cambios):
+    """Reemplazo completo: lo mismo que el alta, sin request_id ni notes (nota interna del alta)."""
+    datos = {k: v for k, v in cuerpo_alta(**cambios).items() if k not in ("request_id", "notes")}
+    return {**datos, "edit_version": edit_version}
+
+
+# La emisión se habilita aquí para probar su flujo; C18 prueba el bloqueo con el valor real.
+@override_settings(CCONOR_EMPRESA=EMPRESA_QA, COTIZACIONES_EMISION_HABILITADA=True)
 
 
 @tag("django_db")
@@ -97,8 +111,11 @@ class ApiCotizacionesTests(TestCase):
         self.assertEqual((quote.advisor_id, quote.client_name, quote.client_rfc, quote.valid_days),
                          (self.asesor.pk, "Cliente sintético S.A. de C.V.", "CSI980415AA2", 15))
         self.assertEqual((revision.exchange_rate, revision.exchange_rate_source), (Decimal("17.50"), "manual"))
-        self.assertEqual(revision.header["conditions"], ["Entrega en sitio.", "Pago contra entrega."])
-        self.assertEqual(revision.header["company"]["name"], api.EMPRESA["name"])
+        # Condiciones tal cual llegaron; la nota interna se queda en la Quote y no entra en la cabecera.
+        self.assertEqual(revision.header["conditions"], CONDICIONES)
+        self.assertEqual(quote.notes, "Nota interna: no se publica.")
+        self.assertNotIn("Nota interna", json.dumps(revision.header, ensure_ascii=False))
+        self.assertEqual(revision.header["company"]["name"], "Empresa sintética (QA)")
         partida = await revision.snapshots.aget()
         self.assertEqual(
             (partida.provider_code, partida.provider_name, partida.external_id, partida.source_unit_price,
@@ -157,7 +174,8 @@ class ApiCotizacionesTests(TestCase):
         self.assertEqual(c1["data"], c2["data"])
         self.assertEqual(await Quote.objects.acount(), 1)
 
-        for cambio in ({"valid_days": 30}, {"client_name": "Otro cliente"}, {"notes": "Otra condición."}):
+        for cambio in ({"valid_days": 30}, {"client_name": "Otro cliente"}, {"conditions": ["Otra."]},
+                       {"notes": "Otra nota interna."}):
             with self.subTest(cambio=cambio):
                 otra, _ = await self.enviar("post", reverse("api_crear_cotizacion"), {**datos, **cambio})
                 self.assertEqual(otra.status_code, 409)
@@ -178,6 +196,10 @@ class ApiCotizacionesTests(TestCase):
             {"items": [{"provider": "alfa", "external_id": "7", "quantity": "dos"}]},
             {"items": [{"provider": "alfa", "external_id": "7", "quantity": "1.234"}]},
             {"items": [{"provider": "alfa", "external_id": "7", "quantity": "0"}]},
+            {"conditions": "Entrega en sitio."},
+            {"conditions": [1]},
+            {"conditions": ["  "]},
+            {"conditions": None},
         ]
         for cambios in invalidos:
             with self.subTest(cambios=cambios):
@@ -239,13 +261,20 @@ class ApiCotizacionesTests(TestCase):
     async def test_c9_edicion_completa_con_version_optimista(self):
         _, alta = await self.alta()
         folio = alta["data"]["folio"]
-        edicion = {k: v for k, v in cuerpo_alta(client_name="Cliente renombrado", valid_days=30).items()
-                   if k != "request_id"}
+        edicion = cuerpo_edicion(client_name="Cliente renombrado", valid_days=30, conditions=[])
+        del edicion["edit_version"]  # cada envío pone la suya; sin ella debe dar 400
         respuesta, cuerpo = await self.enviar("put", self.url_revision(folio, 1), {**edicion, "edit_version": 1})
         self.assertEqual(respuesta.status_code, 200)
         self.assertEqual(cuerpo["data"]["edit_version"], 2)
         revision = await QuoteRevision.objects.aget(quote__folio=folio, number=1)
         self.assertEqual((revision.header["client"]["business_name"], revision.valid_days), ("Cliente renombrado", 30))
+        self.assertEqual(revision.header["conditions"], [])  # lista vacía explícita, sin valores por defecto
+        self.assertEqual(revision.header["company"]["name"], "Empresa sintética (QA)")
+
+        # notes es del alta: en la edición se rechaza en lugar de ignorarla.
+        con_notas, _ = await self.enviar("put", self.url_revision(folio, 1),
+                                         {**edicion, "edit_version": 2, "notes": "x"})
+        self.assertEqual(con_notas.status_code, 400)
 
         obsoleta, cuerpo = await self.enviar("put", self.url_revision(folio, 1), {**edicion, "edit_version": 1})
         self.assertEqual(obsoleta.status_code, 409)
@@ -269,8 +298,7 @@ class ApiCotizacionesTests(TestCase):
         self.assertEqual((otra_vez.status_code, cuerpo["data"]), (200, datos))
         self.assertEqual(len(list(self.pdfs.rglob("*.pdf"))), 1)
 
-        edicion = {k: v for k, v in cuerpo_alta().items() if k != "request_id"}
-        emitida, _ = await self.enviar("put", self.url_revision(folio, 1), {**edicion, "edit_version": 1})
+        emitida, _ = await self.enviar("put", self.url_revision(folio, 1), cuerpo_edicion())
         self.assertEqual(emitida.status_code, 409)
 
     async def test_c11_nueva_revision_desde_una_emision(self):
@@ -330,6 +358,48 @@ class ApiCotizacionesTests(TestCase):
         self.assertEqual(await Quote.objects.acount(), 2)
 
 
+    async def test_c17_sin_empresa_configurada_no_se_crea_nada(self):
+        for empresa in ({**EMPRESA_QA, "name": ""}, {**EMPRESA_QA, "name": "   "}):
+            with self.subTest(empresa=empresa), override_settings(CCONOR_EMPRESA=empresa):
+                respuesta, cuerpo = await self.alta()
+                self.assertEqual(respuesta.status_code, 503)
+                self.assertIn("empresa sin configurar", cuerpo["error"])
+        self.assertEqual(await Quote.objects.acount(), 0)
+
+    async def test_c18_la_emision_esta_bloqueada_sin_politica_de_precios(self):
+        _, alta = await self.alta()
+        folio = alta["data"]["folio"]
+        with override_settings(COTIZACIONES_EMISION_HABILITADA=False):
+            respuesta, cuerpo = await self.enviar("post", self.url_revision(folio, 1, "emitir"), {"edit_version": 1})
+        self.assertEqual(respuesta.status_code, 403)
+        self.assertIn("política de precios", cuerpo["error"])
+        self.assertEqual((await QuoteRevision.objects.aget(quote__folio=folio)).status, "DRAFT")
+        self.assertEqual(list(self.pdfs.rglob("*.pdf")), [])
+
+    async def test_c19_condiciones_obligatorias_aunque_vacias(self):
+        sin_condiciones = {k: v for k, v in cuerpo_alta().items() if k != "conditions"}
+        respuesta, _ = await self.enviar("post", reverse("api_crear_cotizacion"), sin_condiciones)
+        self.assertEqual(respuesta.status_code, 400)
+        respuesta, cuerpo = await self.alta(conditions=[])
+        self.assertEqual(respuesta.status_code, 201)
+        revision = await QuoteRevision.objects.aget(quote__folio=cuerpo["data"]["folio"])
+        self.assertEqual(revision.header["conditions"], [])
+
+    async def test_c20_la_edicion_conserva_la_empresa_capturada(self):
+        _, alta = await self.alta()
+        folio = alta["data"]["folio"]
+        with override_settings(CCONOR_EMPRESA={**EMPRESA_QA, "name": "Otra empresa"}):
+            respuesta, _ = await self.enviar("put", self.url_revision(folio, 1), cuerpo_edicion())
+        self.assertEqual(respuesta.status_code, 200)
+        revision = await QuoteRevision.objects.aget(quote__folio=folio)
+        self.assertEqual(revision.header["company"]["name"], "Empresa sintética (QA)")
+
+    async def test_c21_el_detalle_no_expone_la_nota_interna(self):
+        _, alta = await self.alta()
+        respuesta = await self.async_client.get(reverse("api_detalle_cotizacion", args=[alta["data"]["folio"]]))
+        self.assertNotIn("Nota interna", respuesta.content.decode())
+        self.assertEqual(json.loads(respuesta.content)["data"]["actual"]["conditions"], CONDICIONES)
+
 
 @tag("django_db", "concurrencia")
 class AltaConcurrenteTests(TransactionTestCase):
@@ -349,7 +419,7 @@ class AltaConcurrenteTests(TransactionTestCase):
 
         async def alta():
             return await sync_to_async(api._crear_cotizacion, thread_sensitive=True)(
-                asesor, cliente, partidas, tipo, request_id,
+                asesor, EMPRESA_QA, cliente, partidas, tipo, request_id,
             )
 
         # Sin bloqueo, los dos hilos pasarían la búsqueda de request_id antes de que el otro
