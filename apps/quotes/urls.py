@@ -2,7 +2,7 @@
 
 from django.urls import path
 
-from . import views
+from . import api, views
 
 urlpatterns = [
     # M7: comparador de proveedores. 'comparador' va primero porque resolve() da el
@@ -10,6 +10,8 @@ urlpatterns = [
     # 'cotizar_productos' es el action del formulario (reverse encuentra la segunda).
     path("comparador/", views.cotizar_productos, name="comparador"),
     path("comparador/", views.cotizar_productos, name="cotizar_productos"),
+    # M7a: misma búsqueda en JSON para el cotizador (docs/28).
+    path("api/v1/products/search/", api.buscar_productos, name="api_buscar_productos"),
     path("demo/cotizaciones/<str:folio>/pdf/", views.demo_pdf_cotizacion, name="demo_pdf_cotizacion"),
     path(
         "cotizaciones/<str:folio>/pdf/",
