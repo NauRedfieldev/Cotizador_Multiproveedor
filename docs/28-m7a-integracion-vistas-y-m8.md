@@ -91,6 +91,7 @@ Cada búsqueda con resultados guarda sus ofertas en `request.session["m7a_oferta
 - `django.contrib.auth`: `LoginView` en `/login/` y `LogoutView` en `/logout/` (**solo POST**).
   `LOGIN_URL = 'login'`, `LOGIN_REDIRECT_URL = 'inicio'`, `LOGOUT_REDIRECT_URL = 'login'`. Antes, el
   `login_required` de las vistas de PDF y correo de M8 llevaba a `/accounts/login/`, que no existía.
+- Menú de `base.html`: "ENTRAR" sin sesión y "SALIR (nombre)" con sesión (formulario POST con CSRF a `/logout/`).
 - Plantilla mínima `templates/registration/login.html` (extiende `base.html`). Los usuarios se crean en el
   admin; no hay registro ni recuperación de contraseña.
 - Con sesión: comparador (también por el acuerdo de SYSCOM, docs/02 §8.2: precios de distribuidor solo
@@ -181,7 +182,7 @@ M8: aquel responde `{error}` sin `success` y con mensajes propios de documentos.
 
 | Archivo | Casos |
 |---|---|
-| `test_vistas_cotizacion.py` | 4 del equipo (blanco, 400, 503, seis claves) · V1–V16: degradado, 503, orden, USD, 400 sin consultar (categoría inexistente o inactiva incluida), rate limit, M6 por proveedor, confianza, categoría a M5, 405, fallo del proceso (V8b), blanco sin contar (V15), menú activo (V16) · P1–P6: login |
+| `test_vistas_cotizacion.py` | 4 del equipo (blanco, 400, 503, seis claves) · V1–V16: degradado, 503, orden, USD, 400 sin consultar (categoría inexistente o inactiva incluida), rate limit, M6 por proveedor, confianza, categoría a M5, 405, fallo del proceso (V8b), blanco sin contar (V15), menú activo (V16) · P1–P7: login y menú de sesión |
 | `test_api_busqueda.py` | A1–A11: contrato §B2, `AUTO_MATCH` con canónico, 400/429/503, límite compartido, ofertas en sesión, 401 |
 | `test_api_cotizaciones.py` | C1–C16: flujo búsqueda → alta, precio y margen rechazados, 409 de oferta y de tipos de cambio, idempotencia, validación, 401/CSRF, permisos, edición con versión, emisión idempotente, nueva revisión, 405, 500 y 503, reintento de folio y **C16 de concurrencia** (`TransactionTestCase` con hilos) · C17–C21 (§12): empresa sin configurar, emisión bloqueada, condiciones obligatorias aunque vacías, la edición conserva la empresa, el detalle no expone la nota interna |
 
@@ -233,8 +234,9 @@ El cotizador sigue con `USE_MOCKS = true`. Para conectarlo:
    `total` en la respuesta).
 8. **CSRF:** `api.js` ya manda `X-CSRFToken` desde la cookie; `/cotizador/` ya la entrega. Un 403 de CSRF
    llega en HTML.
-9. **Menú:** falta un enlace a "Iniciar sesión" y un botón "Cerrar sesión" en `base.html`. El logout es por
-   POST: `<form method="post" action="{% url 'logout' %}">{% csrf_token %}<button>Cerrar sesión</button></form>`.
+9. **Menú:** ya lo añadió M7a en `base.html` (último elemento): sin sesión, "ENTRAR" enlaza a `/login/`; con
+   sesión, "SALIR (nombre)" es un formulario POST con `{% csrf_token %}` hacia `/logout/`. Usa las clases del
+   menú; frontend puede restilizarlo, pero el logout debe seguir siendo POST con CSRF.
 10. `USE_MOCKS` es global: para conectar solo la búsqueda y el guardado, conviene un interruptor por servicio.
 
 ## 11. Pendientes
