@@ -5,7 +5,7 @@
 | **Código** | `apps/quotes/views.py` (`cotizar_productos` y funciones privadas), `apps/quotes/urls.py` |
 | **Pruebas** | `apps/quotes/tests/test_vistas_cotizacion.py` (V1–V14, 16 pruebas, sin red) |
 | **Se apoya en** | M2 `search_all` ([14](14-contrato-y-orquestacion.md)), M5 `aemparejar_con_fallback` ([21](21-catalogo-canonico-y-m5b.md), [22](22-m5c-fallback-y-guardas.md)), M6 `comparar_configurado` ([23](23-m6-comparacion-y-moneda.md)) |
-| **Lo pinta** | M7b: la plantilla `comparador.html`, con el contexto de la §4 (entrega detallada en [25](25-entrega-m7b-comparador-y-cotizador.md)) |
+| **Lo pinta** | M7b: la plantilla `comparador.html`, con el contexto de la §4 (entrega detallada en [27](27-entrega-m7b-comparador-y-cotizador.md)) |
 
 ## 1. Qué resuelve
 

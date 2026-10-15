@@ -4,8 +4,8 @@
 |---|---|
 | **Para** | Quien hace las plantillas y el JavaScript (M7b) |
 | **Tareas** | A. Comparador · B. Cotizador · C. Retirar la pestaña Clientes |
-| **Backend que las alimenta** | Vista `cotizar_productos` (M7, [24](24-m7-vistas-async-y-flujo.md)); M8 (guardar cotizaciones) aún sin diseñar |
-| **Refina** | La §4 de docs/24: el mismo contrato, contado desde el lado del frontend |
+| **Backend que las alimenta** | Vista `cotizar_productos` (M7, [26](26-m7-vistas-async-y-flujo.md)); M8 (guardar cotizaciones) aún sin diseñar |
+| **Refina** | La §4 de docs/26: el mismo contrato, contado desde el lado del frontend |
 
 El objetivo es dejar las páginas **listas antes de que llegue el backend que les falta** ("prehechas"):
 cada pieza sabe qué datos recibirá y en qué forma, así que conectarla será cambiar un interruptor y no
@@ -348,5 +348,5 @@ Vienen de M5, M6 (docs/22 y docs/23) y del acuerdo de uso de SYSCOM (docs/02 §8
 | Endpoint JSON `GET /api/v1/products/search/` (§B2) | Backend (M7) |
 | Guardar cotizaciones: endpoint, margen por partida y congelación del tipo de cambio (§B4) | Backend (M8) |
 | `/comparador/` sin contexto: el select de categorías sale vacío en la primera carga | Backend y equipo |
-| Sesión: SYSCOM recomienda mostrar sus precios solo a usuarios con sesión | Equipo (docs/24 §9) |
-| Tipo de cambio automático en lugar de la captura manual | Backend (docs/24 §9) |
+| Sesión: SYSCOM recomienda mostrar sus precios solo a usuarios con sesión | Equipo (docs/26 §9) |
+| Tipo de cambio automático en lugar de la captura manual | Backend (docs/26 §9) |
