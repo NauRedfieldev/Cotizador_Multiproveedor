@@ -5,6 +5,8 @@ El dinero viaja como texto y nunca pasa por float. Las ofertas devueltas se guar
 sesión: al guardar una cotización (M8) el precio y la moneda salen de ahí, no del navegador.
 """
 
+from functools import wraps
+
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
@@ -17,7 +19,20 @@ CLAVE_OFERTAS = "m7a_ofertas"
 MAX_OFERTAS_EN_SESION = 200
 
 
+def sesion_requerida(vista):
+    """Como login_required, pero una API responde 401 en JSON en lugar de redirigir al login."""
+
+    @wraps(vista)
+    async def envoltura(request, *args, **kwargs):
+        if not (await request.auser()).is_authenticated:
+            return JsonResponse({"success": False, "error": "Inicia sesión para continuar."}, status=401)
+        return await vista(request, *args, **kwargs)
+
+    return envoltura
+
+
 @require_GET
+@sesion_requerida
 async def buscar_productos(request):
     """GET /api/v1/products/search/?q=&sku=&categoria=&tipo_cambio= → JSON.
 

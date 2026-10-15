@@ -152,6 +152,11 @@ OFERTAS_POR_PROVEEDOR = env.int('OFERTAS_POR_PROVEEDOR', default=3)
 # M8: volumen privado, NO publicar mediante MEDIA_URL ni static().
 QUOTE_PDF_ROOT = Path(env('QUOTE_PDF_ROOT', default=str(BASE_DIR / 'private_quote_files')))
 
+# M7a: login con las vistas de django.contrib.auth (docs/28). Los usuarios se dan de alta en el admin.
+LOGIN_URL = 'login'
+LOGIN_REDIRECT_URL = 'inicio'
+LOGOUT_REDIRECT_URL = 'login'
+
 
 # Email
 

@@ -194,6 +194,7 @@ class _EntradaInvalida(ValueError):
 
 
 @require_GET
+@login_required
 async def cotizar_productos(request):
     """GET /comparador/?q=&sku=&categoria=&tipo_cambio= → comparador.html."""
     status, contexto = await buscar(request)

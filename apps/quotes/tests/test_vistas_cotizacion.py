@@ -7,6 +7,7 @@ degradado con adaptadores de prueba cuyo fetch no hace HTTP.
 from decimal import Decimal
 from unittest import mock
 
+from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import TestCase, override_settings, tag
 from django.urls import reverse
@@ -27,6 +28,11 @@ from apps.quotes.views import LIMITE_COTIZACIONES
 
 PLANTILLA = "comparador.html"
 
+
+def crear_asesor(username="asesor", password=None, **campos):
+    """Usuario sintético. Sin password no se calcula ningún hash (force_login no lo necesita)."""
+    return get_user_model().objects.create_user(username, password=password, **campos)
+
 CLAVES = (
     "ofertas",
     "proveedores_caidos",
@@ -43,6 +49,7 @@ class CotizarProductosTests(TestCase):
         exigir_bd_de_pruebas()
         self.enterContext(sin_red())
         cache.clear()  # el rate limit es por IP y la LocMemCache dura toda la suite
+        self.client.force_login(crear_asesor())
         self.url = reverse("cotizar_productos")
         Category.objects.create(name="Alfas", is_active=True)
         Category.objects.create(name="Zetas", is_active=True)
@@ -156,6 +163,7 @@ class VistaCotizacionTests(TestCase):
         cache.clear()
         crear_proveedor("alfa")
         crear_proveedor("beta")
+        self.async_client.force_login(crear_asesor())
 
     async def buscar(self, adaptadores, **parametros):
         parametros.setdefault("q", "camara ip")
@@ -378,3 +386,60 @@ class VistaCotizacionTests(TestCase):
         respuesta = await self.buscar([adaptador("alfa", mxn("1", "1.00"))])
         self.assertEqual(respuesta.resolver_match.url_name, "comparador")
         self.assertEqual(reverse("cotizar_productos"), reverse("comparador"))
+
+
+@tag("django_db")
+class ProteccionTests(TestCase):
+    """P1–P6: login real de M7a (docs/28). Las páginas con precios exigen sesión."""
+
+    def setUp(self):
+        cache.clear()
+        self.asesor = crear_asesor(password="clave-de-prueba")
+
+    def test_p1_paginas_con_datos_redirigen_al_login_sin_consultar(self):
+        llamadas = []
+        with adaptadores_registrados(adaptador("alfa", mxn("1", "1.00"), llamadas=llamadas)), sin_red():
+            for nombre in ("comparador", "cotizador", "resumen"):
+                with self.subTest(pagina=nombre):
+                    url = reverse(nombre)
+                    respuesta = self.client.get(url, {"q": "camara"} if nombre == "comparador" else {})
+                    self.assertRedirects(
+                        respuesta, f"{reverse('login')}?next={url}%3Fq%3Dcamara" if nombre == "comparador"
+                        else f"{reverse('login')}?next={url}",
+                        fetch_redirect_response=False,
+                    )
+        self.assertEqual(llamadas, [])
+        self.assertIsNone(cache.get("cotizar:127.0.0.1"))
+
+    def test_p2_inicio_y_login_son_publicos(self):
+        self.assertEqual(self.client.get(reverse("inicio")).status_code, 200)
+        respuesta = self.client.get(reverse("login"))
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTemplateUsed(respuesta, "registration/login.html")
+
+    def test_p3_login_y_logout(self):
+        respuesta = self.client.post(reverse("login"), {
+            "username": "asesor", "password": "clave-de-prueba", "next": reverse("comparador"),
+        })
+        self.assertRedirects(respuesta, reverse("comparador"))
+        self.assertEqual(self.client.get(reverse("comparador")).status_code, 200)
+
+        self.assertEqual(self.client.get(reverse("logout")).status_code, 405)  # solo POST
+        self.assertRedirects(self.client.post(reverse("logout")), reverse("login"))
+        self.assertEqual(self.client.get(reverse("comparador")).status_code, 302)
+
+    def test_p4_credenciales_incorrectas(self):
+        respuesta = self.client.post(reverse("login"), {"username": "asesor", "password": "otra"})
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Usuario o contraseña incorrectos.")
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_p5_el_cotizador_entrega_la_cookie_csrf(self):
+        self.client.force_login(self.asesor)
+        respuesta = self.client.get(reverse("cotizador"))
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertIn("csrftoken", respuesta.cookies)
+
+    def test_p6_un_usuario_inactivo_no_tiene_sesion(self):
+        self.client.force_login(crear_asesor("baja", is_active=False))
+        self.assertEqual(self.client.get(reverse("comparador")).status_code, 302)

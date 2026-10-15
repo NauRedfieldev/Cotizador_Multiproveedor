@@ -15,7 +15,7 @@ from apps.catalog.models import Category, ProductoCanonico
 from apps.providers.models import Provider
 from apps.providers.tests.soporte import adaptadores_registrados, crear_proveedor, sin_red
 from apps.quotes import api
-from apps.quotes.tests.test_vistas_cotizacion import adaptador, mxn, usd
+from apps.quotes.tests.test_vistas_cotizacion import adaptador, crear_asesor, mxn, usd
 from apps.quotes.views import LIMITE_COTIZACIONES
 
 
@@ -27,6 +27,7 @@ class ApiBusquedaTests(TestCase):
         crear_proveedor("alfa")
         crear_proveedor("beta")
         self.url = reverse("api_buscar_productos")
+        self.async_client.force_login(crear_asesor())
 
     async def buscar(self, adaptadores, **parametros):
         parametros.setdefault("q", "camara ip")
@@ -174,3 +175,12 @@ class ApiBusquedaTests(TestCase):
     async def test_a10_solo_get(self):
         respuesta = await self.async_client.post(self.url, {"q": "camara"})
         self.assertEqual(respuesta.status_code, 405)
+
+    async def test_a11_sin_sesion_da_401_json_sin_consultar_ni_contar(self):
+        await self.async_client.alogout()
+        llamadas = []
+        respuesta, cuerpo = await self.buscar([adaptador("alfa", mxn("1", "1.00"), llamadas=llamadas)])
+        self.assertEqual(respuesta.status_code, 401)
+        self.assertEqual(cuerpo, {"success": False, "error": "Inicia sesión para continuar."})
+        self.assertEqual(llamadas, [])
+        self.assertIsNone(await cache.aget("cotizar:127.0.0.1"))
