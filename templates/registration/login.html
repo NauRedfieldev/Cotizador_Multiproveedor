@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+
+{% block title %}CCONOR - Iniciar sesión{% endblock %}
+
+{% block content %}
+<!-- M7a: formulario mínimo de LoginView (docs/28). El diseño final lo da frontend. -->
+<div class="container py-5" style="max-width: 420px;">
+    <h2 class="fw-bold mb-3" style="color: var(--cconor-azul-marino);">Iniciar sesión</h2>
+
+    {% if form.errors %}
+    <div class="alert alert-danger" role="alert">Usuario o contraseña incorrectos.</div>
+    {% elif next and user.is_authenticated %}
+    <div class="alert alert-warning" role="alert">Tu usuario no tiene acceso a esta página.</div>
+    {% elif next %}
+    <div class="alert alert-info" role="alert">Inicia sesión para continuar.</div>
+    {% endif %}
+
+    <form method="post" action="{% url 'login' %}" class="cconor-card p-3">
+        {% csrf_token %}
+        <div class="mb-3">
+            <label for="{{ form.username.id_for_label }}" class="form-label">Usuario</label>
+            <input type="text" class="form-control" name="{{ form.username.html_name }}"
+                   id="{{ form.username.id_for_label }}" value="{{ form.username.value|default:'' }}"
+                   autocomplete="username" autofocus required>
+        </div>
+        <div class="mb-3">
+            <label for="{{ form.password.id_for_label }}" class="form-label">Contraseña</label>
+            <input type="password" class="form-control" name="{{ form.password.html_name }}"
+                   id="{{ form.password.id_for_label }}" autocomplete="current-password" required>
+        </div>
+        <input type="hidden" name="next" value="{{ next }}">
+        <button type="submit" class="btn btn-cconor-primary w-100">Entrar</button>
+    </form>
+</div>
+{% endblock %}

@@ -152,6 +152,21 @@ OFERTAS_POR_PROVEEDOR = env.int('OFERTAS_POR_PROVEEDOR', default=3)
 # M8: volumen privado, NO publicar mediante MEDIA_URL ni static().
 QUOTE_PDF_ROOT = Path(env('QUOTE_PDF_ROOT', default=str(BASE_DIR / 'private_quote_files')))
 
+# M7a: datos de la empresa en las cotizaciones (docs/28 §12). Los valores los valida CCONOR;
+# sin CCONOR_EMPRESA_NAME no se crean cotizaciones (503) y nunca se usan datos de ejemplo.
+CCONOR_EMPRESA = {
+    campo: env(f'CCONOR_EMPRESA_{campo.upper()}', default='')
+    for campo in ('name', 'rfc', 'tagline', 'phone', 'email')
+}
+# M7a: la emisión comercial queda bloqueada hasta que M8 y CCONOR definan la política de
+# precios de venta (margen); hoy un documento emitido saldría a precio de costo.
+COTIZACIONES_EMISION_HABILITADA = env.bool('COTIZACIONES_EMISION_HABILITADA', default=False)
+
+# M7a: login con las vistas de django.contrib.auth (docs/28). Los usuarios se dan de alta en el admin.
+LOGIN_URL = 'login'
+LOGIN_REDIRECT_URL = 'inicio'
+LOGOUT_REDIRECT_URL = 'login'
+
 
 # Email
 

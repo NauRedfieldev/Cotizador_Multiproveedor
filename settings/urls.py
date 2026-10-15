@@ -15,6 +15,8 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
+from django.contrib.auth import views as auth_views
+from django.contrib.auth.decorators import login_required
 from django.urls import include, path
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.generic import TemplateView
@@ -24,11 +26,16 @@ urlpatterns = [
     # Vistas de presentación (templates/): solo renderizan HTML estático.
     # El backend conectará modelos y datos reales más adelante.
     path('', TemplateView.as_view(template_name='inicio.html'), name='inicio'),
-    path('cotizador/', TemplateView.as_view(template_name='cotizador.html'), name='cotizador'),
+    # M7a: login real (LOGIN_URL). Logout solo por POST, como exige Django.
+    path('login/', auth_views.LoginView.as_view(), name='login'),
+    path('logout/', auth_views.LogoutView.as_view(), name='logout'),
+    # Con sesión: SYSCOM pide mostrar sus precios de distribuidor solo a usuarios con
+    # sesión (docs/02 §8.2). ensure_csrf_cookie: el cotizador guarda por POST con fetch.
+    path('cotizador/', login_required(ensure_csrf_cookie(TemplateView.as_view(template_name='cotizador.html'))), name='cotizador'),
     # /comparador/ ahora lo resuelve apps.quotes.urls (vista cotizar_productos, M7b).
     # ensure_csrf_cookie: el modal de envío por correo hace POST por fetch
     # y el JS lee el token CSRF desde la cookie.
-    path('resumen/', ensure_csrf_cookie(TemplateView.as_view(template_name='resumen.html')), name='resumen'),
+    path('resumen/', login_required(ensure_csrf_cookie(TemplateView.as_view(template_name='resumen.html'))), name='resumen'),
     # App quotes: descarga de PDF oficial y envío de cotización por correo.
     path('', include('apps.quotes.urls')),
 ]

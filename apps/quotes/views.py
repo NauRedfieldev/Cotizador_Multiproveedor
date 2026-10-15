@@ -1,30 +1,32 @@
-"""Vistas de cotizaciones: descarga de PDF oficial, envío por correo y comparador M7b.
+"""Vistas de cotizaciones: descarga de PDF oficial, envío por correo y comparador M7.
 
 Emisiones: ambas leen el mismo original archivado. El único renderer está en pdf.
-El comparador consulta proveedores reales, compara en MXN y no escribe en BD.
+El comparador (async) consulta proveedores reales, compara en MXN y no escribe en BD.
 """
 
+import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 
-from asgiref.sync import async_to_sync
+from asgiref.sync import sync_to_async
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.mail import EmailMultiAlternatives
 from django.core.validators import validate_email
-from django.db import DatabaseError
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.template.loader import render_to_string
 from django.utils import timezone
+from django.views.decorators.http import require_GET
 
-from apps.catalog.constants import EstadoMatch
-from apps.catalog.matching import ResultadoMatch, emparejar_con_fallback
-from apps.catalog.models import Category, ProductoCanonico
+from apps.catalog.matching import IdentificadoresConfiables, ResultadoMatch, aemparejar_con_fallback
+from apps.catalog.models import Category
 from apps.providers.contracts import ProductQuery, ProviderOffer
 from apps.providers.models import Provider
 from apps.providers.service import search_all
@@ -158,155 +160,162 @@ def demo_pdf_cotizacion(request, folio):
 
 
 # ==============================================================================
-# M7b: comparador de proveedores renderizado 100% por Django Templates.
+# M7: comparador de proveedores en modo degradado (docs/26 y docs/28). La vista es
+# async: los proveedores se consultan en paralelo sin ocupar el hilo de las vistas
+# síncronas. comparador.html (M7b) solo pinta el contexto.
 # ==============================================================================
+
+PLANTILLA_COMPARADOR = "comparador.html"
+# Por IP y ventana. Con la LocMemCache por defecto el contador es por proceso (docs/26 §6).
+LIMITE_COTIZACIONES = 10
+VENTANA_SEGUNDOS = 60
+# Declaración del consumidor de M5 (docs/21): SYSCOM manda el número de parte del
+# fabricante en model y mpn, verificado con la API real (docs/16 D11). Un proveedor
+# que no esté aquí no autoriza ninguna clave.
+CONFIANZA_POR_PROVEEDOR = {
+    "syscom": IdentificadoresConfiables(mpn_confirmado=True, modelo_confirmado=True),
+}
+_ENTERO_POSITIVO = re.compile(r"[0-9]{1,10}")
 
 
 @dataclass(frozen=True, slots=True)
 class OfertaPresentada:
-    """Fila del contrato M7 que comparador.html recorre en el contexto."""
+    """Lo que recibe la plantilla por cada oferta: el ranking de M6 y la identidad de M5."""
 
     oferta: ProviderOffer
-    precio_comparable: Decimal
-    es_mejor_precio: bool
+    precio_comparable: Decimal  # en MXN
+    es_mejor_precio: bool  # dentro de su proveedor
     match: ResultadoMatch
-    proveedor_nombre: str
+    proveedor_nombre: str  # Provider.name; las plantillas no indexan un dict con una variable
 
 
-# SIN_MATCH compartido: frozen y sin candidatos, seguro de reutilizar.
-_SIN_MATCH = ResultadoMatch(None, EstadoMatch.SIN_MATCH, None, None, "SIN_MATCH")
+class _EntradaInvalida(ValueError):
+    """Error de los parámetros; su mensaje se muestra tal cual al usuario."""
 
 
-def _match_de_oferta(oferta, categoria_pk, catalogo_disponible):
-    """M5b + M5c por oferta; sin catálogo canónico migrado degrada a SIN_MATCH."""
-    if not catalogo_disponible:
-        return _SIN_MATCH
-    return emparejar_con_fallback(oferta, categoria_id=categoria_pk)
+@require_GET
+@login_required
+async def cotizar_productos(request):
+    """GET /comparador/?q=&sku=&categoria=&tipo_cambio= → comparador.html."""
+    status, contexto = await buscar(request)
+    # Fuera del event loop: los context processors pueden leer la sesión (ORM síncrono).
+    return await sync_to_async(render)(request, PLANTILLA_COMPARADOR, contexto, status=status)
 
 
-def _contexto_comparador():
-    """Las seis claves del contrato, también en error y en la página en blanco."""
-    return {
+async def buscar(request):
+    """Flujo de búsqueda: M2 search_all → M6 por proveedor → M5 sobre lo que se muestra.
+
+    Devuelve (status, contexto) con las seis claves de docs/26 §4 en todas las respuestas.
+    200 sin q ni sku (formulario en blanco) y aunque caigan proveedores (aviso en
+    proveedores_caidos); 400 si la entrada no es válida; 429 al superar el límite;
+    503 si no queda ningún proveedor útil.
+    """
+    parametros = request.GET
+    contexto = {
         "ofertas": [],
         "proveedores_caidos": [],
         "proveedores_caidos_nombres": [],
         "tipo_cambio": None,
-        "categorias": Category.objects.filter(is_active=True).order_by("name"),
+        "categorias": [c async for c in Category.objects.filter(is_active=True).order_by("name")],
         "error": None,
     }
+    if not parametros.get("q", "").strip() and not parametros.get("sku", "").strip():
+        return 200, contexto  # sin búsqueda: no consulta a nadie ni cuenta en el límite
+
+    if await _limite_superado(request):
+        contexto["error"] = "Demasiadas búsquedas seguidas. Espera un minuto y vuelve a intentarlo."
+        return 429, contexto
+    try:
+        categoria_id, tipo_cambio = _leer_parametros(parametros, contexto["categorias"])
+    except _EntradaInvalida as exc:
+        contexto["error"] = str(exc)
+        return 400, contexto
+    contexto["tipo_cambio"] = tipo_cambio
+
+    consulta = ProductQuery(term=parametros.get("q", ""), sku=parametros.get("sku"))
+    try:
+        resultados = await search_all(consulta)
+    except Exception:  # search_all ya absorbe los ProviderError: esto es un fallo del proceso.
+        logger.exception("Fallo inesperado consultando proveedores")
+        contexto["error"] = "No fue posible consultar a los proveedores en este momento."
+        return 503, contexto
+    if not resultados:
+        contexto["error"] = "No hay proveedores activos para consultar."
+        return 503, contexto
+
+    nombres = {p.code: p.name async for p in Provider.objects.only("code", "name")}
+    caidos = [r.provider_code for r in resultados if not r.ok]
+    disponibles = [r for r in resultados if r.ok]
+    if tipo_cambio is None and any(o.currency == "USD" for r in disponibles for o in r.offers):
+        _asignar_caidos(contexto, sorted(caidos), nombres)
+        contexto["error"] = "Captura el tipo de cambio (pesos por dólar) para comparar los precios en USD."
+        return 400, contexto
+
+    comparadas = []
+    for resultado in disponibles:
+        # Por proveedor: si M6 rechaza los datos de uno, solo ese queda fuera.
+        try:
+            comparacion = comparar_configurado([resultado], tipo_cambio=tipo_cambio)
+        except (ValueError, TypeError) as exc:
+            logger.warning("Comparación descartada de %s: %s", resultado.provider_code, type(exc).__name__)
+            caidos.append(resultado.provider_code)
+            continue
+        comparadas.extend(comparacion.por_proveedor[resultado.provider_code])
+    _asignar_caidos(contexto, sorted(caidos), nombres)
+    if len(caidos) == len(resultados):
+        contexto["error"] = "Ningún proveedor pudo responder en este momento. Inténtalo de nuevo en unos minutos."
+        return 503, contexto
+
+    # M5 solo sobre lo que se muestra: no cambia el ranking, añade la identidad canónica.
+    matches = await asyncio.gather(*(
+        aemparejar_con_fallback(
+            c.oferta,
+            categoria_id=categoria_id,
+            confianza=CONFIANZA_POR_PROVEEDOR.get(c.oferta.provider_code, IdentificadoresConfiables()),
+        )
+        for c in comparadas
+    ))
+    contexto["ofertas"] = sorted(
+        (OfertaPresentada(c.oferta, c.precio_comparable, c.es_mejor_precio, m,
+                          nombres.get(c.oferta.provider_code, c.oferta.provider_code))
+         for c, m in zip(comparadas, matches)),
+        key=lambda o: (o.precio_comparable, o.oferta.provider_code, o.oferta.external_id),
+    )
+    return 200, contexto
 
 
-def _responder(request, contexto, status=200):
-    return render(request, "comparador.html", contexto, status=status)
+def _leer_parametros(parametros, categorias):
+    """Valida categoría y tipo de cambio antes de consultar a ningún proveedor."""
+    categoria_id = None
+    texto = parametros.get("categoria", "").strip()
+    if texto:
+        # Id interno de una categoría activa: las del <select> del formulario.
+        if not _ENTERO_POSITIVO.fullmatch(texto) or int(texto) not in {c.pk for c in categorias}:
+            raise _EntradaInvalida("La categoría seleccionada no es válida.")
+        categoria_id = int(texto)
+    tipo_cambio = None
+    texto = parametros.get("tipo_cambio", "").strip()
+    if texto:
+        try:
+            tipo_cambio = tipo_cambio_manual(texto, fecha=timezone.now())
+        except (TypeError, ValueError):
+            raise _EntradaInvalida(
+                "El tipo de cambio debe ser un decimal positivo con punto (ej. 17.50)."
+            ) from None
+    return categoria_id, tipo_cambio
+
+
+async def _limite_superado(request):
+    clave = f"cotizar:{request.META.get('REMOTE_ADDR', '')}"
+    await cache.aadd(clave, 0, VENTANA_SEGUNDOS)
+    try:
+        cuenta = await cache.aincr(clave)
+    except ValueError:  # la clave caducó entre aadd y aincr
+        await cache.aset(clave, 1, VENTANA_SEGUNDOS)
+        cuenta = 1
+    return cuenta > LIMITE_COTIZACIONES
 
 
 def _asignar_caidos(contexto, codigos, nombres):
-    codigos = list(codigos)
     contexto["proveedores_caidos"] = codigos
     contexto["proveedores_caidos_nombres"] = [nombres.get(codigo, codigo) for codigo in codigos]
-
-
-def _status_de_comparacion(exc):
-    """400 si falta el tipo de cambio o la moneda no es comparable; si no, 503."""
-    texto = str(exc).lower()
-    if "tipo de cambio" in texto or "moneda" in texto:
-        return 400
-    return 503
-
-
-def cotizar_productos(request):
-    """GET /comparador/ → busca en los proveedores activos y compara en MXN.
-
-    Siempre entrega las seis claves del contexto. 400 si la consulta no es
-    válida; 503 si no hay proveedores activos o caen todos. Sin escrituras,
-    sin datos demo y sin CSRF (el formulario es GET).
-    """
-    q = request.GET.get("q", "").strip()
-    sku = request.GET.get("sku", "").strip()
-    categoria_txt = request.GET.get("categoria", "").strip()
-    tipo_cambio_txt = request.GET.get("tipo_cambio", "").strip()
-    contexto = _contexto_comparador()
-
-    if not q and not sku:
-        return _responder(request, contexto)
-
-    try:
-        consulta = ProductQuery(term=q, sku=sku or None)
-    except ValueError as exc:
-        contexto["error"] = f"La búsqueda no es válida: {exc}"
-        return _responder(request, contexto, 400)
-
-    categoria_pk = None
-    if categoria_txt:
-        if not categoria_txt.isdigit():
-            contexto["error"] = "La categoría seleccionada no es válida."
-            return _responder(request, contexto, 400)
-        categoria_pk = int(categoria_txt)
-        if (
-            categoria_pk < 1
-            or categoria_pk > 2147483647
-            or not contexto["categorias"].filter(pk=categoria_pk).exists()
-        ):
-            contexto["error"] = "La categoría seleccionada no es válida."
-            return _responder(request, contexto, 400)
-
-    tipo_cambio = None
-    if tipo_cambio_txt:
-        try:
-            tipo_cambio = tipo_cambio_manual(tipo_cambio_txt, fecha=timezone.now())
-        except (TypeError, ValueError):
-            contexto["error"] = "El tipo de cambio debe ser un decimal positivo con punto (ej. 17.50)."
-            return _responder(request, contexto, 400)
-    contexto["tipo_cambio"] = tipo_cambio
-
-    try:
-        # async_to_sync cierra la conexión del ORM async; asyncio.run la dejaba abierta.
-        resultados = async_to_sync(search_all)(consulta)
-    except Exception:  # search_all absorbe ProviderError; esto es fallo del proceso.
-        logger.exception("Fallo inesperado consultando proveedores")
-        contexto["error"] = "No fue posible consultar a los proveedores en este momento."
-        return _responder(request, contexto, 503)
-
-    if not resultados:
-        contexto["error"] = "No hay proveedores activos para consultar."
-        return _responder(request, contexto, 503)
-
-    nombres = {p.code: p.name for p in Provider.objects.all()}
-    if all(not resultado.ok for resultado in resultados):
-        _asignar_caidos(contexto, [r.provider_code for r in resultados], nombres)
-        contexto["error"] = "Ningún proveedor pudo responder en este momento."
-        return _responder(request, contexto, 503)
-
-    try:
-        comparacion = comparar_configurado(resultados, tipo_cambio=tipo_cambio)
-    except ValueError as exc:
-        # M6 no arma ranking parcial: USD sin tipo de cambio u otra moneda inválida.
-        _asignar_caidos(contexto, [r.provider_code for r in resultados if not r.ok], nombres)
-        contexto["error"] = str(exc)
-        return _responder(request, contexto, _status_de_comparacion(exc))
-
-    _asignar_caidos(contexto, comparacion.errores, nombres)
-
-    try:
-        catalogo_disponible = ProductoCanonico.objects.exists()
-    except DatabaseError:
-        # catalog/0004 aún sin aplicar en esta BD (ProgrammingError en PG,
-        # OperationalError en SQLite): matching degradado a SIN_MATCH.
-        logger.warning("ProductoCanonico no disponible; matching deshabilitado.")
-        catalogo_disponible = False
-
-    filas = sorted(
-        (fila for grupo in comparacion.por_proveedor.values() for fila in grupo),
-        key=lambda fila: (fila.precio_comparable, fila.oferta.external_id),
-    )
-    contexto["ofertas"] = [
-        OfertaPresentada(
-            oferta=fila.oferta,
-            precio_comparable=fila.precio_comparable,
-            es_mejor_precio=fila.es_mejor_precio,
-            match=_match_de_oferta(fila.oferta, categoria_pk, catalogo_disponible),
-            proveedor_nombre=nombres.get(fila.oferta.provider_code, fila.oferta.provider_code),
-        )
-        for fila in filas
-    ]
-    return _responder(request, contexto)
