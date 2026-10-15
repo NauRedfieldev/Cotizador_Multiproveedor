@@ -1,7 +1,8 @@
-"""Pruebas V1–V14 de la vista async de cotización en modo degradado (M7, docs/24).
+"""Contrato HTTP de cotizar_productos (M7, docs/26 y docs/28), sin red ni credenciales reales.
 
-Los proveedores son adaptadores de prueba cuyo fetch no hace HTTP; sin_red() corta cualquier
-intento de salir a la red. No se usa ninguna credencial real.
+CotizarProductosTests (del equipo, M7b): página en blanco, validaciones y 503 sin
+proveedores activos, todo antes de cualquier HTTP. VistaCotizacionTests (V1–V16): modo
+degradado con adaptadores de prueba cuyo fetch no hace HTTP.
 """
 from decimal import Decimal
 from unittest import mock
@@ -11,18 +12,118 @@ from django.test import TestCase, override_settings, tag
 from django.urls import reverse
 
 from apps.catalog.constants import EstadoMatch, MetodoMatch
+from apps.catalog.matching import aemparejar_con_fallback
 from apps.catalog.models import Category, ProductoCanonico
 from apps.providers.models import Provider
 from apps.providers.tests.soporte import (
     adaptadores_registrados,
     crear_adaptador,
     crear_proveedor,
+    exigir_bd_de_pruebas,
     producto,
     sin_red,
 )
 from apps.quotes.views import LIMITE_COTIZACIONES
 
 PLANTILLA = "comparador.html"
+
+CLAVES = (
+    "ofertas",
+    "proveedores_caidos",
+    "proveedores_caidos_nombres",
+    "tipo_cambio",
+    "categorias",
+    "error",
+)
+
+
+@tag("django_db")
+class CotizarProductosTests(TestCase):
+    def setUp(self):
+        exigir_bd_de_pruebas()
+        self.enterContext(sin_red())
+        cache.clear()  # el rate limit es por IP y la LocMemCache dura toda la suite
+        self.url = reverse("cotizar_productos")
+        Category.objects.create(name="Alfas", is_active=True)
+        Category.objects.create(name="Zetas", is_active=True)
+        Category.objects.create(name="Oculta", is_active=False)
+
+    def assert_claves(self, respuesta):
+        self.assertTemplateUsed(respuesta, "comparador.html")
+        for clave in CLAVES:
+            self.assertIn(clave, respuesta.context)
+
+    def test_get_sin_parametros_responde_200_sin_ofertas_ni_error(self):
+        """Página en blanco: 200, ofertas vacías, sin error y solo categorías activas."""
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assert_claves(respuesta)
+        self.assertEqual(respuesta.context["ofertas"], [])
+        self.assertIsNone(respuesta.context["error"])
+        self.assertIsNone(respuesta.context["tipo_cambio"])
+        self.assertEqual(respuesta.context["proveedores_caidos"], [])
+        self.assertEqual(respuesta.context["proveedores_caidos_nombres"], [])
+        self.assertEqual(
+            [c.name for c in respuesta.context["categorias"]],
+            ["Alfas", "Zetas"],
+        )
+
+    def test_parametros_invalidos_responden_400_con_error(self):
+        """Coma decimal y categoría inexistente son 400, con ofertas vacías."""
+        casos = (
+            (
+                {"q": "switch", "tipo_cambio": "17,50"},
+                "decimal positivo con punto",
+            ),
+            (
+                {"q": "switch", "categoria": "999999"},
+                "categoría seleccionada no es válida",
+            ),
+        )
+        for params, fragmento in casos:
+            with self.subTest(params=params):
+                respuesta = self.client.get(self.url, params)
+
+                self.assertEqual(respuesta.status_code, 400)
+                self.assert_claves(respuesta)
+                self.assertEqual(respuesta.context["ofertas"], [])
+                self.assertIn(fragmento, respuesta.context["error"])
+                self.assertContains(respuesta, respuesta.context["error"], status_code=400)
+                self.assertNotContains(
+                    respuesta, "No se encontraron productos.", status_code=400,
+                )
+
+    def test_sin_proveedores_activos_responde_503(self):
+        """Un proveedor inactivo no cuenta: no hay a quién consultar."""
+        Provider.objects.create(
+            code="inactivo", name="Inactivo", base_url="https://inactivo.test", active=False,
+        )
+
+        respuesta = self.client.get(self.url, {"q": "switch"})
+
+        self.assertEqual(respuesta.status_code, 503)
+        self.assert_claves(respuesta)
+        self.assertEqual(respuesta.context["ofertas"], [])
+        self.assertEqual(
+            respuesta.context["error"],
+            "No hay proveedores activos para consultar.",
+        )
+        self.assertEqual(respuesta.context["proveedores_caidos"], [])
+        self.assertContains(respuesta, respuesta.context["error"], status_code=503)
+
+    def test_la_plantilla_recibe_las_seis_claves_del_contexto(self):
+        """200, 400 y 503 renderizan comparador.html con el contrato completo."""
+        respuestas = (
+            self.client.get(self.url),
+            self.client.get(self.url, {"sku": "SW-1", "tipo_cambio": "17,50"}),
+            self.client.get(self.url, {"sku": "SW-1"}),
+        )
+        self.assertEqual([r.status_code for r in respuestas], [200, 400, 503])
+        for respuesta in respuestas:
+            with self.subTest(status=respuesta.status_code):
+                self.assert_claves(respuesta)
+                self.assertEqual(len(CLAVES), 6)
 
 
 def mxn(id_, precio, **campos):
@@ -49,6 +150,8 @@ def adaptador(code, *items, error=None, llamadas=None):
 @tag("django_db")
 @override_settings(OFERTAS_POR_PROVEEDOR=3)
 class VistaCotizacionTests(TestCase):
+    """V1–V16: la vista async en modo degradado (docs/26 y docs/28), sin red."""
+
     def setUp(self):
         cache.clear()
         crear_proveedor("alfa")
@@ -72,7 +175,7 @@ class VistaCotizacionTests(TestCase):
         self.assertSinTraza(respuesta)
         self.assertEqual(respuesta.context["proveedores_caidos"], ["beta"])
         self.assertEqual([o.oferta.provider_code for o in respuesta.context["ofertas"]], ["alfa"])
-        self.assertNotIn("error", respuesta.context)
+        self.assertIsNone(respuesta.context["error"])
 
     async def test_v2_ambos_caidos_da_503_sin_traza(self):
         respuesta = await self.buscar([
@@ -83,7 +186,7 @@ class VistaCotizacionTests(TestCase):
         self.assertSinTraza(respuesta)
         self.assertEqual(respuesta.context["proveedores_caidos"], ["alfa", "beta"])
         self.assertEqual(respuesta.context["ofertas"], [])
-        self.assertIn("error", respuesta.context)
+        self.assertIsNotNone(respuesta.context["error"])
 
     async def test_v3_ambos_vivos_ordenados_por_precio_comparable(self):
         respuesta = await self.buscar([
@@ -116,14 +219,16 @@ class VistaCotizacionTests(TestCase):
         )
 
     async def test_v5_entrada_invalida_da_400_sin_consultar_proveedores(self):
+        inactiva = await Category.objects.acreate(name="Descontinuada", is_active=False)
         invalidas = [
-            {"q": ""},
-            {"q": "   ", "sku": "  "},
             {"tipo_cambio": "17,50"},
             {"tipo_cambio": "0"},
             {"categoria": "abc"},
             {"categoria": "0"},
             {"categoria": "-3"},
+            {"categoria": "99999999999"},
+            {"categoria": "999"},  # no existe
+            {"categoria": str(inactiva.pk)},  # no está en el formulario
         ]
         for parametros in invalidas:
             with self.subTest(parametros=parametros):
@@ -134,7 +239,7 @@ class VistaCotizacionTests(TestCase):
                 )
                 self.assertEqual(respuesta.status_code, 400)
                 self.assertSinTraza(respuesta)
-                self.assertIn("error", respuesta.context)
+                self.assertTrue(respuesta.context["error"])
                 self.assertEqual(llamadas, [])
 
     async def test_v6_ningun_proveedor_activo_da_503(self):
@@ -169,6 +274,14 @@ class VistaCotizacionTests(TestCase):
         self.assertEqual(respuesta.status_code, 200)
         self.assertEqual(respuesta.context["proveedores_caidos"], ["beta"])
         self.assertNotIn(b"fallo interno", respuesta.content)
+
+    async def test_v8b_fallo_del_proceso_en_search_all_da_503_generico(self):
+        with mock.patch("apps.quotes.views.search_all", side_effect=RuntimeError("detalle interno")), \
+                self.assertLogs("apps.quotes", "ERROR"):
+            respuesta = await self.buscar([])
+        self.assertEqual(respuesta.status_code, 503)
+        self.assertSinTraza(respuesta)
+        self.assertNotIn(b"detalle interno", respuesta.content)
 
     async def test_v9_datos_que_m6_rechaza_dejan_fuera_solo_a_ese_proveedor(self):
         duplicados = adaptador("alfa", mxn("1", "100.00"), mxn("1", "90.00"))
@@ -206,11 +319,16 @@ class VistaCotizacionTests(TestCase):
         self.assertEqual(matches["alfa"].motivo, "FALLBACK_SIN_CATEGORIA")
 
     async def test_v10b_categoria_llega_al_fallback_de_m5(self):
+        categoria = await Category.objects.acreate(name="Switches")
         item = mxn("1", "100.00", marca="Marca X", nombre="Switch 24 puertos")
-        respuesta = await self.buscar([adaptador("alfa", item), adaptador("beta")], categoria="999")
+        with mock.patch("apps.quotes.views.aemparejar_con_fallback",
+                        wraps=aemparejar_con_fallback) as emparejar:
+            respuesta = await self.buscar(
+                [adaptador("alfa", item), adaptador("beta")], categoria=str(categoria.pk)
+            )
         self.assertEqual(respuesta.status_code, 200)
-        # M5c valida la categoría en BD: la 999 no existe.
-        self.assertEqual(respuesta.context["ofertas"][0].match.motivo, "FALLBACK_CATEGORIA_INVALIDA")
+        self.assertEqual(emparejar.await_args.kwargs["categoria_id"], categoria.pk)
+        self.assertNotEqual(respuesta.context["ofertas"][0].match.motivo, "FALLBACK_SIN_CATEGORIA")
 
     async def test_v11_solo_get(self):
         llamadas = []
@@ -223,7 +341,7 @@ class VistaCotizacionTests(TestCase):
         await Category.objects.acreate(name="Redes")
         await Category.objects.acreate(name="Cámaras")
         await Category.objects.acreate(name="Descontinuada", is_active=False)
-        respuesta = await self.buscar([adaptador("alfa", mxn("1", "1.00"))], q="")
+        respuesta = await self.buscar([adaptador("alfa", mxn("1", "1.00"))], tipo_cambio="17,50")
         self.assertEqual(respuesta.status_code, 400)
         self.assertEqual([c.name for c in respuesta.context["categorias"]], ["Cámaras", "Redes"])
 
@@ -246,3 +364,17 @@ class VistaCotizacionTests(TestCase):
             [(o.oferta.provider_code, o.oferta.external_id) for o in respuesta.context["ofertas"]],
             [("alfa", "2"), ("beta", "1")],
         )
+
+    async def test_v15_formulario_en_blanco_no_consulta_ni_cuenta_en_el_limite(self):
+        llamadas = []
+        adaptadores = [adaptador("alfa", mxn("1", "1.00"), llamadas=llamadas)]
+        for _ in range(LIMITE_COTIZACIONES + 1):
+            respuesta = await self.buscar(adaptadores, q="  ", sku="")
+            self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(llamadas, [])
+        self.assertIsNone(await cache.aget("cotizar:127.0.0.1"))
+
+    async def test_v16_el_menu_marca_el_comparador_como_activo(self):
+        respuesta = await self.buscar([adaptador("alfa", mxn("1", "1.00"))])
+        self.assertEqual(respuesta.resolver_match.url_name, "comparador")
+        self.assertEqual(reverse("cotizar_productos"), reverse("comparador"))

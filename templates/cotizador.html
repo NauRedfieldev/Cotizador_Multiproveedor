@@ -20,46 +20,65 @@
         </p>
     </div>
 
-    <!-- SELECCIÓN RÁPIDA DE CLIENTE Y METADATOS -->
+    <!-- CABECERA DE LA COTIZACIÓN (M7b: datos directos del cliente según modelo Quote) -->
     <div class="cconor-card p-3 mb-4">
-        <div class="row g-3 align-items-center">
+        <div class="row g-3">
             <div class="col-md-4">
-                <label for="clientSelect" class="form-label small fw-bold text-uppercase text-secondary mb-1">
-                    <i class="bi bi-person-badge me-1"></i> Cliente / Empresa
+                <label for="clientName" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-person-badge me-1"></i> Razón social *
                 </label>
-                <div class="input-group input-group-sm">
-                    <select class="form-select" id="clientSelect">
-                        <option value="1" selected>Constructora e Inmobiliaria del Norte S.A. de C.V.</option>
-                        <option value="2">Tecnologías y Enlaces Fronterizos S. de R.L.</option>
-                        <option value="3">Maquiladora Médica Internacional S.A.</option>
-                        <option value="nuevo">+ Registrar Nuevo Cliente...</option>
-                    </select>
-                    <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#newClientModal" title="Nuevo Cliente">
-                        <i class="bi bi-plus-lg"></i>
-                    </button>
-                </div>
+                <input type="text" class="form-control form-control-sm" id="clientName" name="client_name"
+                       maxlength="255" required autocomplete="organization"
+                       placeholder="Constructora e Inmobiliaria del Norte S.A. de C.V.">
+            </div>
+            <div class="col-md-2">
+                <label for="clientRfc" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-card-text me-1"></i> RFC
+                </label>
+                <input type="text" class="form-control form-control-sm font-monospace" id="clientRfc" name="client_rfc"
+                       maxlength="13" pattern="^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$"
+                       title="RFC inválido: formato oficial (3-4 letras, 6 dígitos, 3 alfanuméricos, sin guiones)."
+                       placeholder="XAXX010101000" style="text-transform: uppercase;">
+            </div>
+            <div class="col-md-3">
+                <label for="clientEmail" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-envelope me-1"></i> Correo
+                </label>
+                <input type="email" class="form-control form-control-sm" id="clientEmail" name="client_email"
+                       placeholder="compras@empresa.com.mx">
+            </div>
+            <div class="col-md-2">
+                <label for="validDays" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-calendar-event me-1"></i> Vigencia (días)
+                </label>
+                <input type="number" class="form-control form-control-sm" id="validDays" name="valid_days"
+                       value="15" min="1" max="365">
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+                <a href="{% url 'comparador' %}" class="btn btn-outline-primary btn-sm w-100 d-flex align-items-center justify-content-center gap-1" title="Ver Comparador">
+                    <i class="bi bi-arrow-left-right"></i>
+                </a>
             </div>
             <div class="col-md-3">
                 <label for="quoteFolio" class="form-label small fw-bold text-uppercase text-secondary mb-1">
-                    <i class="bi bi-hash me-1"></i> Folio Cotización
+                    <i class="bi bi-hash me-1"></i> Folio
                 </label>
-                <input type="text" class="form-control form-control-sm bg-light fw-bold text-primary" id="quoteFolio" value="COT-2026-0048" readonly>
+                <input type="text" class="form-control form-control-sm bg-light text-secondary" id="quoteFolio"
+                       value="Se asigna al guardar" readonly disabled>
             </div>
-            <div class="col-md-3">
-                <label for="quoteValidity" class="form-label small fw-bold text-uppercase text-secondary mb-1">
-                    <i class="bi bi-calendar-event me-1"></i> Vigencia
+            <div class="col-md-2">
+                <label for="exchangeRate" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-currency-dollar me-1"></i> Tipo de cambio (USD→MXN)
                 </label>
-                <select class="form-select form-select-sm" id="quoteValidity">
-                    <option value="15">15 Días Naturales</option>
-                    <option value="30" selected>30 Días Naturales (Fin de mes)</option>
-                    <option value="7">7 Días (Equipos con alta rotación)</option>
-                </select>
+                <input type="number" class="form-control form-control-sm text-end" id="exchangeRate" name="exchange_rate"
+                       step="0.01" min="0.01" value="17.50" placeholder="17.50">
             </div>
-            <div class="col-md-2 text-md-end pt-3 pt-md-0">
-                <a href="{% url 'comparador' %}" class="btn btn-outline-primary btn-sm w-100 d-flex align-items-center justify-content-center gap-1">
-                    <i class="bi bi-arrow-left-right"></i>
-                    <span>Ver Comparador</span>
-                </a>
+            <div class="col-md-7">
+                <label for="quoteNotes" class="form-label small fw-bold text-uppercase text-secondary mb-1">
+                    <i class="bi bi-journal-text me-1"></i> Notas / condiciones
+                </label>
+                <textarea class="form-control form-control-sm" id="quoteNotes" name="notes" rows="2"
+                          placeholder="Condiciones comerciales, forma de pago, garantías..."></textarea>
             </div>
         </div>
     </div>
@@ -67,13 +86,13 @@
     <!-- BUSCADOR PRINCIPAL DE PRODUCTOS -->
     <div class="cconor-card p-3 p-md-4 mb-4">
         <label for="productSearchInput" class="form-label fw-bold mb-2" style="color: var(--cconor-azul-marino);">
-            Código, Clave o Descripción:
+            Código, modelo o descripción:
         </label>
         <div class="row g-2">
             <div class="col-md-7">
                 <div class="input-group search-input-group">
                     <span class="input-group-text bg-transparent border-0 text-muted"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" id="productSearchInput" placeholder="Ej: Bobina UTP Syscom, Cámara IP Hikvision, Monitor Dell CT, Servidor HPE..." autocomplete="off">
+                    <input type="text" class="form-control" id="productSearchInput" placeholder="Ej: Bobina UTP Syscom, Cámara IP Hikvision, Monitor Dell Exel, Servidor HPE..." autocomplete="off">
                     <button class="btn btn-sm btn-light border-0" type="button" id="clearSearchBtn" style="display: none;">
                         <i class="bi bi-x-circle-fill text-muted"></i>
                     </button>
@@ -83,7 +102,7 @@
                 <select class="form-select py-2 border-2" id="providerFilter" style="border-color: var(--cconor-gris-lavanda);">
                     <option value="todos" selected>Todos los Distribuidores</option>
                     <option value="syscom">SYSCOM</option>
-                    <option value="ct">CT Online</option>
+                    <option value="ct">Exel del Norte</option>
                 </select>
             </div>
             <div class="col-md-2">
@@ -100,6 +119,12 @@
                 <span class="small fw-bold text-secondary text-uppercase" id="resultsLabel">Resultados encontrados</span>
                 <span class="badge bg-primary rounded-pill" id="resultsCountBadge">0 productos</span>
             </div>
+
+            <!-- CONTEXTO FX APLICADO A LA BÚSQUEDA (contrato M7b) -->
+            <div id="searchFxInfo" class="small text-secondary mb-2" style="display: none;"></div>
+
+            <!-- PROVEEDORES QUE NO RESPONDIERON (MODO DEGRADADO) -->
+            <div id="searchWarning" class="alert alert-warning py-2 px-3 small d-none align-items-center gap-2 mb-2" role="alert"></div>
 
             <!-- SKELETON LOADER DE BÚSQUEDA -->
             <div id="searchSkeletonLoader" style="display: none;" class="py-2">
@@ -147,20 +172,21 @@
                     <tr>
                         <th style="width: 40px;" class="text-center">#</th>
                         <th>Código / SKU</th>
-                        <th>Clave</th>
+                        <th>Modelo / Clave</th>
                         <th>Descripción</th>
                         <th>Proveedor</th>
-                        <th class="text-end">Precio Mayoreo c/IVA</th>
+                        <th class="text-center" style="width: 155px;">Unidad</th>
+                        <th class="text-end">Costo Mayoreo MXN</th>
                         <th class="text-center" style="width: 110px;">Margen %</th>
                         <th class="text-center" style="width: 110px;">Cantidad</th>
-                        <th class="text-end">Total c/IVA</th>
+                        <th class="text-end">Importe (sin IVA)</th>
                         <th class="text-center" style="width: 50px;"><i class="bi bi-trash3-fill text-warning"></i></th>
                     </tr>
                 </thead>
                 <tbody id="quoteItemsBody">
                     <!-- FILA DE EMPTY STATE DE LA TABLA (SE MUESTRA CUANDO NO HAY PARTIDAS) -->
                     <tr id="quoteTableEmptyState" style="display: none;">
-                        <td colspan="10" class="text-center py-5">
+                        <td colspan="11" class="text-center py-5">
                             <div class="empty-state border-0 p-4">
                                 <div class="empty-state-icon" style="width: 68px; height: 68px; line-height: 68px; font-size: 2.2rem;">
                                     <i class="bi bi-cart-x"></i>
@@ -174,7 +200,7 @@
                         </td>
                     </tr>
                     <!-- Fila de Ejemplo 1 (SYSCOM) -->
-                    <tr data-sku="SYS-PRO-CAT6" data-price="2180.00" data-provider="syscom">
+                    <tr data-sku="SYS-PRO-CAT6" data-external-id="SYS-PRO-CAT6" data-model="PRO-CAT6-EXT" data-description="Bobina de Cable UTP Cat6 Exterior CMX 100% Cobre, color negro 305m" data-price="2180.00" data-provider="syscom" data-es-divisible="1" data-unidad-base="Caja" data-unidad-base-etiqueta="Bobina / Caja" data-factor-conversion="305" data-unidad-fraccion="Metro" data-simbolo-fraccion="m" data-unidad-seleccionada="caja">
                         <td class="text-center fw-bold text-secondary">2</td>
                         <td><span class="font-monospace fw-semibold text-dark">PRO-CAT6-EXT</span></td>
                         <td><span class="badge bg-light text-dark border">CAB-UTP305</span></td>
@@ -182,6 +208,13 @@
                             <strong>Bobina de Cable UTP Cat6</strong> Exterior CMX 100% Cobre, color negro 305m
                         </td>
                         <td><span class="badge badge-provider badge-syscom">SYSCOM</span></td>
+                        <td class="text-center">
+                            <!-- Divisible: selector de unidad (unidad base o fracción) -->
+                            <select class="item-unit-select" title="Unidad de venta">
+                                <option value="caja" selected>Bobina / Caja (305 m)</option>
+                                <option value="metro">Metro (m)</option>
+                            </select>
+                        </td>
                         <td class="text-end fw-semibold item-unit-price">$2,180.00</td>
                         <td class="text-center">
                             <input type="number" class="form-control form-control-sm text-center item-margin-input mx-auto" style="width: 70px;" value="22" min="0" max="100">
@@ -197,15 +230,16 @@
                         </td>
                     </tr>
 
-                    <!-- Fila de Ejemplo 3 (CT Online) -->
-                    <tr data-sku="CT-DELL-P2422H" data-price="3490.00" data-provider="ct">
+                    <!-- Fila de Ejemplo 3 (Exel del Norte) -->
+                    <tr data-sku="CT-DELL-P2422H" data-external-id="CT-DELL-P2422H" data-model="DELL-P2422H" data-description="Monitor Dell Pro 23.8&quot; Full HD IPS, HDMI/DP/VGA, base ergonómica regulable" data-price="3490.00" data-provider="ct" data-es-divisible="0">
                         <td class="text-center fw-bold text-secondary">3</td>
                         <td><span class="font-monospace fw-semibold text-dark">DELL-P2422H</span></td>
                         <td><span class="badge bg-light text-dark border">MON-24IPS</span></td>
                         <td class="text-wrap" style="max-width: 320px;">
                             <strong>Monitor Dell Pro 23.8"</strong> Full HD IPS, HDMI/DP/VGA, base ergonómica regulable
                         </td>
-                        <td><span class="badge badge-provider badge-ct">CT Online</span></td>
+                        <td><span class="badge badge-provider badge-ct">Exel del Norte</span></td>
+                        <td class="text-center"><span class="badge bg-light text-dark border item-unit-badge">Pieza (Pza)</span></td>
                         <td class="text-end fw-semibold item-unit-price">$3,490.00</td>
                         <td class="text-center">
                             <input type="number" class="form-control form-control-sm text-center item-margin-input mx-auto" style="width: 70px;" value="15" min="0" max="100">
@@ -321,51 +355,8 @@
 
 </div>
 
-<!-- MODAL PARA REGISTRO RÁPIDO DE CLIENTE -->
-<div class="modal fade" id="newClientModal" tabindex="-1" aria-labelledby="newClientModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header bg-light">
-                <h5 class="modal-title fw-bold" id="newClientModalLabel">
-                    <i class="bi bi-person-plus-fill me-1 text-primary"></i> Alta de Nuevo Cliente
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-            </div>
-            <div class="modal-body">
-                <form id="newClientForm">
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold">Razón Social o Nombre Completo *</label>
-                        <input type="text" class="form-control" required placeholder="Ej: Redes y Telecomunicaciones del Pacífico S.A.">
-                    </div>
-                    <div class="row g-2 mb-3">
-                        <div class="col-md-6">
-                            <label class="form-label small fw-bold">RFC *</label>
-                            <input type="text" class="form-control font-monospace" placeholder="XAXX010101000" maxlength="13">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label small fw-bold">Teléfono</label>
-                            <input type="tel" class="form-control" placeholder="(664) 000-0000">
-                        </div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold">Correo de Envío de Cotizaciones *</label>
-                        <input type="email" class="form-control" required placeholder="compras@empresa.com">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold">Ciudad / Ubicación</label>
-                        <input type="text" class="form-control" placeholder="Ciudad / Estado">
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer bg-light">
-                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-cconor-primary btn-sm" id="saveClientBtn">Registrar Cliente</button>
-            </div>
-        </div>
-    </div>
-</div>
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/cotizador.js' %}"></script>
+<script src="{% static 'js/cotizador.js' %}?v=4"></script>
 {% endblock %}

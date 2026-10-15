@@ -189,6 +189,37 @@ body {
     font-weight: 600;
 }
 
+/* Selector de unidad de venta (productos fraccionables, ej. Bobina/Metro).
+   Look de badge discreto: pill redondeado, caret SVG propio, sin flecha nativa. */
+.cconor-table .item-unit-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-color: #FFFFFF;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 5.5l6 6 6-6z' fill='%2364748B'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.55rem center;
+    background-size: 11px;
+    border: 1px solid var(--cconor-gris-lavanda);
+    border-radius: var(--cconor-radius-full);
+    color: var(--cconor-azul-marino);
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.35rem 1.6rem 0.35rem 0.75rem;
+    max-width: 170px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cconor-table .item-unit-select:hover {
+    border-color: #CBD5E1;
+}
+
+.cconor-table .item-unit-select:focus {
+    outline: none;
+    border-color: var(--cconor-morado-principal);
+    box-shadow: 0 0 0 0.15rem rgba(115, 17, 245, 0.15);
+}
+
 .btn-remove-row {
     color: #DC2626;
     background: #FEE2E2;

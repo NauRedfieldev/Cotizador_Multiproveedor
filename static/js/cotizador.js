@@ -4,21 +4,26 @@
  * ==============================================================================
  * 
  * Funcionalidades del Módulo:
- * - Carga dinámica de clientes desde `apiClient.clients`.
  * - Búsqueda de productos en tiempo real con Skeleton Loader y Empty State.
- * - Comparativa de precios y stock en vivo (SYSCOM vs CT Online).
+ * - Contrato JSON M7b: dinero como strings, contexto FX y proveedores caídos.
+ * - Filtro de proveedor local sobre el atributo provider de cada resultado.
+ * - Auto-búsqueda al llegar del comparador (?sku=&tipo_cambio=).
  * - Selección interactiva de productos y adición a la cotización.
- * - Recálculo reactivo de costos, márgenes comerciales, IVA y totales.
- * - Manejo de estado vacío en la tabla de cotización.
- * - Guardado formal de la cotización mediante `apiClient.quotes.save()`.
+ * - Recálculo: importe = precio_mxn * (1 + margen/100) * cantidad;
+ *   IVA 16% sumado aparte sobre el subtotal (redondeo solo al mostrar).
+ * - Advertencia al cambiar el tipo de cambio con partidas en la tabla.
+ * - Guardado con el payload exacto del modelo Quote (números como strings).
  * - Notificaciones Toast no invasivas.
  */
 
 document.addEventListener('DOMContentLoaded', function () {
-    // Referencias a elementos del DOM
-    const clientSelect = document.getElementById('clientSelect');
-    const quoteFolioInput = document.getElementById('quoteFolio');
-    const quoteValiditySelect = document.getElementById('quoteValidity');
+    // Referencias a elementos del DOM (cabecera de la cotización)
+    const clientNameInput = document.getElementById('clientName');
+    const clientRfcInput = document.getElementById('clientRfc');
+    const clientEmailInput = document.getElementById('clientEmail');
+    const validDaysInput = document.getElementById('validDays');
+    const exchangeRateInput = document.getElementById('exchangeRate');
+    const quoteNotesInput = document.getElementById('quoteNotes');
     
     // Búsqueda de Productos
     const searchInput = document.getElementById('productSearchInput');
@@ -30,6 +35,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const resultsCountBadge = document.getElementById('resultsCountBadge');
     const searchSkeletonLoader = document.getElementById('searchSkeletonLoader');
     const searchEmptyState = document.getElementById('searchEmptyState');
+    const searchFxInfo = document.getElementById('searchFxInfo');
+    const searchWarning = document.getElementById('searchWarning');
 
     // Tabla de Partidas
     const tableBody = document.getElementById('quoteItemsBody');
@@ -46,11 +53,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const saveQuoteBtn = document.getElementById('saveQuoteBtn');
     const clearTableBtn = document.getElementById('clearTableBtn');
 
-    // Formulario de Cliente Rápido en Modal
-    const newClientForm = document.getElementById('newClientForm');
-    const saveClientBtn = document.getElementById('saveClientBtn');
-    const newClientModalEl = document.getElementById('newClientModal');
-    const newClientModal = newClientModalEl ? new bootstrap.Modal(newClientModalEl) : null;
+    // Constantes financieras (M7b)
+    const IVA_RATE = 0.16;      // IVA trasladado sobre el subtotal
+    const DEFAULT_MARGIN = 20;  // Margen % por defecto en partidas nuevas
 
     // Formateador monetario MXN
     function formatMoney(amount) {
@@ -61,104 +66,38 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // ==========================================================================
-    // 1. CARGA DINÁMICA DE CLIENTES B2B
+    // UNIDADES DE VENTA (PRODUCTOS DIVISIBLES)
     // ==========================================================================
-
-    async function loadClientOptions() {
-        if (!clientSelect) return;
-
-        try {
-            const res = await window.apiClient.clients.getAll();
-            const clients = res.data || [];
-
-            // Leer parámetro de URL si viene redirigido desde el módulo de clientes (?cliente=cli-002)
-            const urlParams = new URLSearchParams(window.location.search);
-            const preselectedClientId = urlParams.get('cliente');
-
-            clientSelect.innerHTML = '';
-            clients.forEach(c => {
-                const opt = document.createElement('option');
-                opt.value = c.id;
-                opt.textContent = `${c.business_name} (${c.rfc})`;
-                opt.dataset.email = c.email;
-                if (preselectedClientId && c.id === preselectedClientId) {
-                    opt.selected = true;
-                }
-                clientSelect.appendChild(opt);
-            });
-
-            // Opción de alta rápida
-            const newOpt = document.createElement('option');
-            newOpt.value = 'nuevo';
-            newOpt.textContent = '+ Registrar Nuevo Cliente...';
-            clientSelect.appendChild(newOpt);
-
-        } catch (error) {
-            console.error('Error al cargar selector de clientes:', error);
+    // Costo unitario vigente de la fila (data-price = precio_base MXN):
+    //   unidad base  -> costo = precio_base
+    //   unidad fracc -> costo = precio_base / factor_conversion (2 dec.)
+    function getRowUnitCost(row) {
+        const precioBase = parseFloat(row.dataset.price) || 0;
+        const seleccionada = row.dataset.unidadSeleccionada;
+        const base = (row.dataset.unidadBase || '').toLowerCase();
+        if (row.dataset.esDivisible === '1' && seleccionada && seleccionada !== base) {
+            const factor = parseFloat(row.dataset.factorConversion) || 0;
+            if (factor > 0) return Math.round((precioBase / factor) * 100) / 100;
         }
+        return precioBase;
     }
 
-    // Detectar selección de "nuevo cliente" en el dropdown
-    if (clientSelect) {
-        clientSelect.addEventListener('change', function () {
-            if (this.value === 'nuevo' && newClientModal) {
-                newClientModal.show();
-            }
-        });
-    }
-
-    // Guardado desde el modal rápido de cliente
-    if (saveClientBtn && newClientForm) {
-        saveClientBtn.addEventListener('click', async function () {
-            const inputs = newClientForm.querySelectorAll('input');
-            const businessName = inputs[0] ? inputs[0].value.trim() : '';
-            const rfc = inputs[1] ? inputs[1].value.trim().toUpperCase() : 'XAXX010101000';
-            const phone = inputs[2] ? inputs[2].value.trim() : '';
-            const email = inputs[3] ? inputs[3].value.trim() : '';
-            const city = inputs[4] ? inputs[4].value.trim() : 'Tijuana, B.C.';
-
-            if (!businessName || !email) {
-                window.showToast('Por favor completa la razón social y el correo del cliente.', 'warning');
-                return;
-            }
-
-            try {
-                const res = await window.apiClient.clients.create({
-                    business_name: businessName,
-                    rfc,
-                    contact_name: 'Contacto General',
-                    email,
-                    phone,
-                    city,
-                    type: 'Corporativo',
-                    status: 'Activo'
-                });
-
-                window.showToast(`Cliente "${businessName}" registrado con éxito.`, 'success');
-                if (newClientModal) newClientModal.hide();
-                newClientForm.reset();
-
-                // Recargar y preseleccionar el cliente recién creado
-                await loadClientOptions();
-                clientSelect.value = res.data.id;
-
-            } catch (err) {
-                window.showToast('Error al registrar cliente: ' + err.message, 'danger');
-            }
-        });
+    // Actualiza la celda "Costo Mayoreo MXN" al cambiar de unidad.
+    function updateRowUnitPrice(row) {
+        const cell = row.querySelector('.item-unit-price');
+        if (cell) cell.textContent = formatMoney(getRowUnitCost(row));
     }
 
     // ==========================================================================
-    // 2. BÚSQUEDA REACTIVA DE PRODUCTOS Y COMPARATIVA EN VIVO
+    // 1. BÚSQUEDA REACTIVA DE PRODUCTOS Y COMPARATIVA EN VIVO
     // ==========================================================================
 
     let searchDebounceTimer = null;
 
     async function executeProductSearch() {
         const query = searchInput.value.trim();
-        const provider = providerFilter.value;
 
-        if (!query && provider === 'todos') {
+        if (!query) {
             resultsBox.style.display = 'none';
             return;
         }
@@ -168,13 +107,18 @@ document.addEventListener('DOMContentLoaded', function () {
         searchSkeletonLoader.style.display = 'block';
         searchEmptyState.style.display = 'none';
         resultsList.style.display = 'none';
+        if (searchFxInfo) searchFxInfo.style.display = 'none';
+        if (searchWarning) searchWarning.style.display = 'none';
         resultsCountBadge.textContent = 'Buscando...';
 
         try {
-            const res = await window.apiClient.products.search({ query, provider });
+            // El tipo de cambio de la cabecera viaja en la búsqueda (contexto FX).
+            const tipoCambio = exchangeRateInput ? exchangeRateInput.value.trim() : '';
+            const res = await window.apiClient.products.search({ query, tipo_cambio: tipoCambio });
             const products = res.data || [];
 
             searchSkeletonLoader.style.display = 'none';
+            renderSearchContext(res);
 
             if (products.length === 0) {
                 searchEmptyState.style.display = 'block';
@@ -183,14 +127,54 @@ document.addEventListener('DOMContentLoaded', function () {
             } else {
                 searchEmptyState.style.display = 'none';
                 resultsList.style.display = 'block';
-                resultsCountBadge.textContent = `${products.length} producto${products.length > 1 ? 's' : ''}`;
                 renderSearchResults(products);
+                applyProviderFilter();
             }
 
         } catch (error) {
             searchSkeletonLoader.style.display = 'none';
             searchEmptyState.style.display = 'block';
-            window.showToast('Error en la búsqueda de productos.', 'danger');
+            // Los errores 400/429/503 traen el mensaje legible del backend.
+            window.showToast('Error en la búsqueda: ' + error.message, 'danger');
+        }
+    }
+
+    // Contexto de la respuesta M7b: tipo de cambio aplicado y proveedores caídos.
+    function renderSearchContext(res) {
+        if (searchFxInfo) {
+            if (res.tipo_cambio) {
+                const fecha = res.tipo_cambio.fecha ? new Date(res.tipo_cambio.fecha) : null;
+                const fechaTxt = fecha && !isNaN(fecha) ? fecha.toLocaleString('es-MX') : '';
+                searchFxInfo.innerHTML = `<i class="bi bi-arrow-repeat me-1"></i>Tipo de cambio: ${res.tipo_cambio.valor} MXN/USD (${res.tipo_cambio.origen}${fechaTxt ? ', ' + fechaTxt : ''})`;
+                searchFxInfo.style.display = 'block';
+            } else {
+                searchFxInfo.style.display = 'none';
+            }
+        }
+        if (searchWarning) {
+            const caidos = res.proveedores_caidos_nombres || [];
+            if (caidos.length > 0) {
+                searchWarning.innerHTML = `<i class="bi bi-cloud-slash-fill me-1"></i><span>No respondieron: ${caidos.join(', ')}. Se muestran los demás proveedores.</span>`;
+                searchWarning.style.display = 'flex';
+            } else {
+                searchWarning.style.display = 'none';
+            }
+        }
+    }
+
+    // Filtro de proveedor local: oculta/muestra resultados por data-provider.
+    function applyProviderFilter() {
+        const filtro = providerFilter ? providerFilter.value : 'todos';
+        const items = resultsList.querySelectorAll('[data-provider]');
+        if (items.length === 0) return;
+        let visibles = 0;
+        items.forEach(it => {
+            const coincide = filtro === 'todos' || it.dataset.provider === filtro;
+            it.style.display = coincide ? '' : 'none';
+            if (coincide) visibles++;
+        });
+        if (resultsCountBadge) {
+            resultsCountBadge.textContent = `${visibles} producto${visibles === 1 ? '' : 's'}`;
         }
     }
 
@@ -200,48 +184,50 @@ document.addEventListener('DOMContentLoaded', function () {
         products.forEach(p => {
             const item = document.createElement('div');
             item.className = 'list-group-item list-group-item-action p-3 border mb-2 rounded-3 bg-white shadow-sm';
-
-            // Etiqueta de comparador en vivo (SYSCOM vs CT Online)
-            let comparisonBadge = '';
-            if (p.comparison) {
-                if (p.comparison.is_best_price) {
-                    comparisonBadge = `
-                        <span class="badge badge-comparison-best me-2">
-                            <i class="bi bi-star-fill me-1"></i> Mejor Precio vs ${p.comparison.alternative_label} (Ahorro $${Math.abs(p.comparison.price_difference_mxn).toLocaleString('es-MX')})
-                        </span>
-                    `;
-                } else {
-                    comparisonBadge = `
-                        <span class="badge bg-light text-muted border me-2">
-                            Equiv. en ${p.comparison.alternative_label}: $${p.comparison.alternative_price.toLocaleString('es-MX')}
-                        </span>
-                    `;
-                }
-            }
+            item.dataset.provider = p.provider; // filtro local por proveedor
 
             const providerBadgeClass = p.provider === 'syscom' ? 'badge-syscom' : 'badge-ct';
+
+            // Insignia de mejor precio (contrato M7b)
+            const bestBadge = p.es_mejor_precio
+                ? `<span class="badge badge-comparison-best me-2"><i class="bi bi-star-fill me-1"></i> Mejor Precio</span>`
+                : '';
+
+            // Disponibilidad (null = el proveedor no informa)
+            let stockHtml = '';
+            if (p.stock === null || p.stock === undefined) {
+                stockHtml = '<span class="text-secondary small"><i class="bi bi-question-circle me-1"></i> Disponibilidad no informada</span>';
+            } else if (p.stock === 0) {
+                stockHtml = '<span class="text-danger small fw-bold"><i class="bi bi-x-octagon me-1"></i> Sin existencias</span>';
+            } else {
+                stockHtml = `<span class="text-success small fw-bold"><i class="bi bi-box-seam me-1"></i> ${p.stock} en stock</span>`;
+            }
+
+            // Coincidencia con el catálogo canónico (M5b/M5c)
+            let matchHtml = '';
+            if (p.match && p.match.estado === 'AUTO_MATCH' && p.match.canonico) {
+                matchHtml = `<div class="small text-success mt-1"><i class="bi bi-patch-check-fill me-1"></i> Identificado: ${p.match.canonico.descripcion}</div>`;
+            } else if (p.match && p.match.estado === 'REVISION_MANUAL') {
+                matchHtml = `<div class="small mt-1" style="color: var(--cconor-naranja);"><i class="bi bi-patch-question-fill me-1"></i> Posible coincidencia: requiere revisión</div>`;
+            }
 
             item.innerHTML = `
                 <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
                     <div class="flex-grow-1">
                         <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
                             <span class="badge badge-provider ${providerBadgeClass}">${p.provider_label}</span>
-                            <span class="badge bg-light text-dark border font-monospace">${p.sku}</span>
-                            <span class="badge bg-light text-secondary border font-monospace">${p.clave}</span>
-                            ${comparisonBadge}
-                            <span class="text-success small fw-bold">
-                                <i class="bi bi-box-seam me-0.5"></i> ${p.stock} en stock
-                            </span>
+                            <span class="badge bg-light text-dark border font-monospace">${p.external_id}</span>
+                            ${p.model && p.model !== p.external_id ? `<span class="badge bg-light text-secondary border font-monospace">${p.model}</span>` : ''}
+                            ${bestBadge}
+                            ${stockHtml}
                         </div>
                         <h6 class="fw-bold mb-1 text-dark">${p.name}</h6>
-                        <p class="text-muted small mb-0 text-truncate" style="max-width: 600px;">
-                            ${p.description}
-                        </p>
+                        ${matchHtml}
                     </div>
 
                     <div class="text-md-end flex-shrink-0">
-                        <div class="small text-muted">Precio Mayoreo c/IVA:</div>
-                        <div class="fw-bold fs-5 text-primary mb-2">${formatMoney(p.price_wholesale_mxn)}</div>
+                        <div class="small text-muted">Costo Mayoreo MXN:</div>
+                        <div class="fw-bold fs-5 text-primary mb-2">${formatMoney(p.precio_mxn)}</div>
                         <button type="button" class="btn btn-cconor-primary btn-sm px-3 rounded-pill btn-add-product" data-product='${JSON.stringify(p).replace(/'/g, "&#39;")}'>
                             <i class="bi bi-plus-lg me-1"></i> Agregar
                         </button>
@@ -269,8 +255,8 @@ document.addEventListener('DOMContentLoaded', function () {
         // Ocultar empty state de la tabla si estaba visible
         if (emptyTableState) emptyTableState.style.display = 'none';
 
-        // Verificar si el producto ya está en la cotización
-        const existingRow = tableBody.querySelector(`tr[data-sku="${product.sku}"]`);
+        // Verificar si el producto ya está en la cotización (clave: external_id)
+        const existingRow = tableBody.querySelector(`tr[data-sku="${product.external_id}"]`);
         if (existingRow) {
             const qtyInput = existingRow.querySelector('.item-qty-input');
             if (qtyInput) {
@@ -283,22 +269,45 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         const tr = document.createElement('tr');
-        tr.dataset.sku = product.sku;
-        tr.dataset.price = product.price_wholesale_mxn;
+        tr.dataset.sku = product.external_id;
+        tr.dataset.externalId = product.external_id;
+        tr.dataset.model = product.model || '';
+        tr.dataset.description = product.name;
+        tr.dataset.price = String(product.precio_base); // precio_base MXN (unidad base)
         tr.dataset.provider = product.provider;
+        tr.dataset.esDivisible = product.es_divisible ? '1' : '0';
+        if (product.es_divisible) {
+            tr.dataset.unidadBase = product.unidad_base;
+            tr.dataset.unidadBaseEtiqueta = product.unidad_base_etiqueta || product.unidad_base;
+            tr.dataset.factorConversion = product.factor_conversion;
+            tr.dataset.unidadFraccion = product.unidad_fraccion;
+            tr.dataset.simboloFraccion = product.simbolo_fraccion || '';
+            tr.dataset.unidadSeleccionada = String(product.unidad_base).toLowerCase(); // por defecto: unidad base
+        }
 
         const providerBadgeClass = product.provider === 'syscom' ? 'badge-syscom' : 'badge-ct';
-        const defaultMargin = product.suggested_margin || 20;
+        const defaultMargin = DEFAULT_MARGIN;
+
+        // Celda "Unidad": select con las opciones de división, o etiqueta estática.
+        const unitCellHtml = product.es_divisible
+            ? `<td class="text-center">
+                   <select class="item-unit-select" title="Unidad de venta">
+                       <option value="${String(product.unidad_base).toLowerCase()}" selected>${product.unidad_base_etiqueta || product.unidad_base} (${product.factor_conversion} ${product.simbolo_fraccion})</option>
+                       <option value="${String(product.unidad_fraccion).toLowerCase()}">${product.unidad_fraccion} (${product.simbolo_fraccion})</option>
+                   </select>
+               </td>`
+            : `<td class="text-center"><span class="badge bg-light text-dark border item-unit-badge">Pieza (Pza)</span></td>`;
 
         tr.innerHTML = `
             <td class="text-center fw-bold text-secondary row-index"></td>
-            <td><span class="font-monospace fw-semibold text-dark">${product.sku}</span></td>
-            <td><span class="badge bg-light text-dark border">${product.clave}</span></td>
+            <td><span class="font-monospace fw-semibold text-dark">${product.external_id}</span></td>
+            <td><span class="badge bg-light text-dark border">${product.model || '—'}</span></td>
             <td class="text-wrap" style="max-width: 320px;">
                 <strong>${product.name}</strong>
             </td>
             <td><span class="badge badge-provider ${providerBadgeClass}">${product.provider_label}</span></td>
-            <td class="text-end fw-semibold item-unit-price">${formatMoney(product.price_wholesale_mxn)}</td>
+            ${unitCellHtml}
+            <td class="text-end fw-semibold item-unit-price">${formatMoney(product.precio_base)}</td>
             <td class="text-center">
                 <input type="number" class="form-control form-control-sm text-center item-margin-input mx-auto" style="width: 70px;" value="${defaultMargin}" min="0" max="100">
             </td>
@@ -326,7 +335,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // ==========================================================================
 
     function updateRowTotal(row) {
-        const unitCost = parseFloat(row.dataset.price) || 0;
+        const unitCost = getRowUnitCost(row);
         const marginInput = row.querySelector('.item-margin-input');
         const qtyInput = row.querySelector('.item-qty-input');
         const totalCell = row.querySelector('.item-row-total');
@@ -334,7 +343,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const marginPercent = parseFloat(marginInput ? marginInput.value : 0) || 0;
         const qty = parseInt(qtyInput ? qtyInput.value : 1) || 1;
 
-        // Precio unitario cliente = Costo base * (1 + margen / 100)
+        // Importe (sin IVA) = precio_mxn * (1 + margen / 100) * cantidad
         const unitPriceClient = unitCost * (1 + (marginPercent / 100));
         const rowTotal = unitPriceClient * qty;
 
@@ -359,39 +368,36 @@ document.addEventListener('DOMContentLoaded', function () {
             if (emptyTableState) emptyTableState.style.display = 'none';
         }
 
+        // Cálculo M7b: importe = precio_mxn * (1 + margen/100) * cantidad;
+        // subtotal = suma de importes; IVA 16% sumado aparte. El redondeo a 2
+        // decimales ocurre únicamente al mostrar (formatMoney).
         let totalCostBase = 0;
-        let totalFinalWithTax = 0;
-        let totalClientSubtotalWithoutTax = 0;
+        let totalSubtotal = 0;
 
         rows.forEach((row, index) => {
             const numCell = row.querySelector('.row-index') || row.cells[0];
             if (numCell) numCell.textContent = index + 1;
 
-            const unitCost = parseFloat(row.dataset.price) || 0;
+            const unitCost = getRowUnitCost(row);
             const marginInput = row.querySelector('.item-margin-input');
             const qtyInput = row.querySelector('.item-qty-input');
 
             const marginPercent = parseFloat(marginInput ? marginInput.value : 0) || 0;
             const qty = parseInt(qtyInput ? qtyInput.value : 1) || 1;
 
-            const rowCostBase = unitCost * qty;
-            const unitPriceClient = unitCost * (1 + (marginPercent / 100));
-            const rowTotalWithTax = unitPriceClient * qty;
-            const rowClientSubtotal = rowTotalWithTax / 1.16;
-
-            totalCostBase += rowCostBase;
-            totalFinalWithTax += rowTotalWithTax;
-            totalClientSubtotalWithoutTax += rowClientSubtotal;
+            totalCostBase += unitCost * qty;
+            totalSubtotal += unitCost * (1 + marginPercent / 100) * qty;
         });
 
-        const totalTaxIva = totalFinalWithTax - totalClientSubtotalWithoutTax;
-        const totalNetMargin = (totalFinalWithTax - totalCostBase);
+        const totalIva = totalSubtotal * IVA_RATE;
+        const totalFinal = totalSubtotal + totalIva;
+        const totalNetMargin = totalSubtotal - totalCostBase;
 
         if (costBaseDisplay) costBaseDisplay.textContent = formatMoney(totalCostBase) + ' MXN';
         if (marginDisplay) marginDisplay.textContent = '+' + formatMoney(totalNetMargin) + ' MXN';
-        if (subtotalDisplay) subtotalDisplay.textContent = formatMoney(totalClientSubtotalWithoutTax) + ' MXN';
-        if (ivaDisplay) ivaDisplay.textContent = formatMoney(totalTaxIva) + ' MXN';
-        if (totalFinalDisplay) totalFinalDisplay.textContent = formatMoney(totalFinalWithTax) + ' MXN';
+        if (subtotalDisplay) subtotalDisplay.textContent = formatMoney(totalSubtotal) + ' MXN';
+        if (ivaDisplay) ivaDisplay.textContent = formatMoney(totalIva) + ' MXN';
+        if (totalFinalDisplay) totalFinalDisplay.textContent = formatMoney(totalFinal) + ' MXN';
     }
 
     function attachRowEvents(row) {
@@ -402,6 +408,17 @@ document.addEventListener('DOMContentLoaded', function () {
         if (qtyInput) {
             qtyInput.addEventListener('input', () => {
                 if (qtyInput.value < 1) qtyInput.value = 1;
+                updateRowTotal(row);
+                recalculateTotals();
+            });
+        }
+
+        // Cambio de unidad (solo productos divisibles)
+        const unitSelect = row.querySelector('.item-unit-select');
+        if (unitSelect) {
+            unitSelect.addEventListener('change', () => {
+                row.dataset.unidadSeleccionada = unitSelect.value;
+                updateRowUnitPrice(row);
                 updateRowTotal(row);
                 recalculateTotals();
             });
@@ -443,29 +460,47 @@ document.addEventListener('DOMContentLoaded', function () {
                 return;
             }
 
-            const clientSelectedOption = clientSelect ? clientSelect.selectedOptions[0] : null;
-            const clientId = clientSelectedOption ? clientSelectedOption.value : 'cli-001';
-            const clientName = clientSelectedOption ? clientSelectedOption.textContent : 'Cliente General';
-            const folio = quoteFolioInput ? quoteFolioInput.value : 'COT-2026-0048';
-            const validityDays = quoteValiditySelect ? parseInt(quoteValiditySelect.value) : 30;
+            // Datos del cliente leídos directo de la cabecera (modelo Quote)
+            const clientName = clientNameInput ? clientNameInput.value.trim() : '';
+            if (!clientName) {
+                window.showToast('La razón social del cliente es obligatoria.', 'warning');
+                if (clientNameInput) clientNameInput.focus();
+                return;
+            }
+            const clientRfc = clientRfcInput ? clientRfcInput.value.trim().toUpperCase() : '';
+            if (clientRfc && !/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(clientRfc)) {
+                window.showToast('El RFC no tiene un formato válido (3-4 letras, 6 dígitos, 3 alfanuméricos).', 'warning');
+                if (clientRfcInput) clientRfcInput.focus();
+                return;
+            }
+            const clientEmail = clientEmailInput ? clientEmailInput.value.trim() : '';
+            const validityDays = validDaysInput ? (parseInt(validDaysInput.value) || 15) : 15;
+            const notes = quoteNotesInput ? quoteNotesInput.value.trim() : '';
 
+            // Payload M7b exacto del modelo Quote: números como strings y sin
+            // folio, client_id, subtotal ni IVA (los calcula el servidor).
             const items = [];
             rows.forEach(r => {
+                const marginInput = r.querySelector('.item-margin-input');
+                const qtyInput = r.querySelector('.item-qty-input');
                 items.push({
-                    sku: r.dataset.sku,
                     provider: r.dataset.provider,
-                    price: parseFloat(r.dataset.price),
-                    margin: parseFloat(r.querySelector('.item-margin-input')?.value || 20),
-                    qty: parseInt(r.querySelector('.item-qty-input')?.value || 1)
+                    external_id: r.dataset.externalId || r.dataset.sku,
+                    description: r.dataset.description || '',
+                    model: r.dataset.model || '',
+                    quantity: String(parseInt(qtyInput ? qtyInput.value : 1) || 1),
+                    costo_mxn: getRowUnitCost(r).toFixed(4),
+                    margen: String((marginInput ? parseFloat(marginInput.value) : DEFAULT_MARGIN) || 0)
                 });
             });
 
             const quotePayload = {
-                folio,
-                client_id: clientId,
                 client_name: clientName,
-                validity_days: validityDays,
-                items_count: items.length,
+                client_rfc: clientRfc,
+                client_email: clientEmail,
+                valid_days: validityDays,
+                notes,
+                tipo_cambio: exchangeRateInput ? exchangeRateInput.value.trim() : '',
                 items
             };
 
@@ -474,7 +509,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
             try {
                 const res = await window.apiClient.quotes.save(quotePayload);
-                window.showToast(res.message || `Cotización ${folio} guardada con éxito.`, 'success');
+                window.showToast(res.message || 'Cotización guardada con éxito.', 'success');
             } catch (err) {
                 window.showToast('Error al guardar cotización: ' + err.message, 'danger');
             } finally {
@@ -523,9 +558,40 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     if (providerFilter) {
-        providerFilter.addEventListener('change', executeProductSearch);
+        providerFilter.addEventListener('change', applyProviderFilter);
     }
 
-    // Inicializar clientes
-    loadClientOptions();
+    // ==========================================================================
+    // 7. TIPO DE CAMBIO Y AUTO-BÚSQUEDA DESDE EL COMPARADOR (M7b)
+    // ==========================================================================
+
+    // Cambiar el tipo de cambio con partidas en la tabla invalida los precios
+    // mostrados: se advierte y se solicita recargar la búsqueda.
+    if (exchangeRateInput) {
+        exchangeRateInput.addEventListener('change', function () {
+            const rows = tableBody.querySelectorAll('tr:not(#quoteTableEmptyState)');
+            if (rows.length === 0) return;
+            window.showToast(
+                'El tipo de cambio cambió: los precios de la tabla provienen de la búsqueda anterior. Vuelve a buscar para recalcularlos.',
+                'warning', 'Tipo de cambio actualizado', 6000
+            );
+            const query = searchInput ? searchInput.value.trim() : '';
+            if (query && typeof window.confirm === 'function'
+                && window.confirm('¿Volver a buscar con el nuevo tipo de cambio?')) {
+                executeProductSearch();
+            }
+        });
+    }
+
+    // Auto-búsqueda al llegar del comparador: /cotizador/?sku=X&tipo_cambio=Y
+    (function autoBuscarDesdeComparador() {
+        const params = new URLSearchParams(window.location.search);
+        const sku = (params.get('sku') || '').trim();
+        const tipoCambio = (params.get('tipo_cambio') || '').trim();
+        if (tipoCambio && exchangeRateInput) exchangeRateInput.value = tipoCambio;
+        if (!sku || !searchInput) return;
+        searchInput.value = sku;
+        if (clearSearchBtn) clearSearchBtn.style.display = 'block';
+        executeProductSearch();
+    })();
 });

@@ -21,257 +21,215 @@ const API_BASE_URL = '/api/v1';
 
 // Claves de persistencia para mocks en localStorage
 const STORAGE_KEYS = {
-    CLIENTS: 'cconor_mock_clients_v1',
     QUOTES: 'cconor_mock_quotes_v1'
 };
+
+// ==============================================================================
+// NOMBRE VISIBLE DE CADA PROVEEDOR — FUENTE ÚNICA DEL SISTEMA
+// ==============================================================================
+// Toda etiqueta de proveedor mostrada en búsqueda, comparaciones, partidas del
+// cotizador, resumen o PDF se deriva de este mapa (nunca se escribe a mano en
+// templates ni en los datasets). Cambiar el nombre aquí lo actualiza en todo
+// el sistema y en los datos guardados con nombres anteriores.
+const PROVIDER_LABELS = {
+    syscom: 'SYSCOM',
+    ct: 'Exel del Norte'
+};
+
+// Copia del producto con la etiqueta vigente del proveedor (y la de su
+// comparación). Se aplica en la salida del servicio, de modo que aunque un
+// objeto guarde un nombre de proveedor obsoleto, nunca llegue a la interfaz.
+function withCurrentLabels(product) {
+    const p = { ...product };
+    p.provider_label = PROVIDER_LABELS[p.provider] || p.provider_label;
+    return p;
+}
+
+// Datos derivados del esquema de fracciones: precio_base (alias numérico de
+// precio_mxn, un solo origen de verdad) y precio_fraccion =
+// precio_base / factor_conversion (2 decimales). Ej.: bobina 2180 / 305 m = 7.15.
+function withDerivedData(product) {
+    const p = withCurrentLabels(product);
+    p.precio_base = parseFloat(p.precio_mxn);
+    if (p.es_divisible && p.factor_conversion > 0) {
+        p.precio_fraccion = Math.round((p.precio_base / p.factor_conversion) * 100) / 100;
+    }
+    return p;
+}
 
 // ==============================================================================
 // 1. DATASETS INICIALES NORMALIZADOS (CONTRATOS DE DATOS MOCKS)
 // ==============================================================================
 
 /**
- * Contrato de Cliente (Client Schema):
+ * Contrato oficial de búsqueda JSON (Product Schema, M7b):
  * {
- *   id: string,                 // Identificador único (ej: "cli-001")
- *   business_name: string,      // Razón social completa
- *   rfc: string,                // RFC mexicano (12 o 13 caracteres)
- *   contact_name: string,       // Nombre de la persona de contacto
- *   email: string,              // Correo electrónico corporativo
- *   phone: string,              // Teléfono con lada
- *   type: string,               // 'Corporativo' | 'Integrador TI' | 'Maquiladora' | 'Distribuidor'
- *   city: string,               // Ciudad / Estado
- *   address: string,            // Domicilio fiscal
- *   status: string,             // 'Activo' | 'Inactivo'
- *   created_at: string          // Fecha ISO
- * }
- */
-const INITIAL_MOCK_CLIENTS = [
-    {
-        id: 'cli-001',
-        business_name: 'Constructora e Inmobiliaria del Norte S.A. de C.V.',
-        rfc: 'CIN980415AA2',
-        contact_name: 'Ing. Carlos Mendoza',
-        email: 'compras@cinorte.mx',
-        phone: '(664) 625-1100',
-        type: 'Corporativo',
-        city: 'Tijuana, B.C.',
-        address: 'Blvd. Agua Caliente 10450, Col. Aviación',
-        status: 'Activo',
-        created_at: '2026-01-15T09:30:00Z'
-    },
-    {
-        id: 'cli-002',
-        business_name: 'Tecnologías y Enlaces Fronterizos S. de R.L.',
-        rfc: 'TEF051120K81',
-        contact_name: 'Lic. Mariana Vega',
-        email: 'contacto@tefrontera.com',
-        phone: '(664) 680-4490',
-        type: 'Integrador TI',
-        city: 'Tijuana, B.C.',
-        address: 'Vía Rápida Poniente 4500, Zona Río',
-        status: 'Activo',
-        created_at: '2026-02-01T11:20:00Z'
-    },
-    {
-        id: 'cli-003',
-        business_name: 'Maquiladora Médica Internacional S.A. de C.V.',
-        rfc: 'MMI120308PX5',
-        contact_name: 'Ing. Roberto Garza',
-        email: 'adquisiciones@medint.com.mx',
-        phone: '(664) 647-8900',
-        type: 'Maquiladora',
-        city: 'Tijuana, B.C.',
-        address: 'Parque Industrial Otay, Calle 4 Norte #220',
-        status: 'Activo',
-        created_at: '2026-02-18T14:15:00Z'
-    },
-    {
-        id: 'cli-004',
-        business_name: 'Distribuidora Baja Telecomunicaciones S.A.',
-        rfc: 'DBT1607149V3',
-        contact_name: 'Ing. Laura Salgado',
-        email: 'proyectos@bajatelecom.mx',
-        phone: '(686) 555-1289',
-        type: 'Distribuidor',
-        city: 'Mexicali, B.C.',
-        address: 'Calz. Justo Sierra 1205, Fracc. Los Pinos',
-        status: 'Inactivo',
-        created_at: '2026-03-05T16:45:00Z'
-    }
-];
-
-/**
- * Contrato de Producto Normalizado Multi-Proveedor (Product Schema):
- * {
- *   id: string,
- *   sku: string,
- *   clave: string,
+ *   provider: string,           // 'syscom' | 'ct'
+ *   provider_label: string,     // Derivado de PROVIDER_LABELS (fuente única)
+ *   external_id: string,        // Identificador del producto en el proveedor
  *   name: string,
- *   category: string,
- *   description: string,
- *   provider: 'syscom' | 'ct',
- *   provider_label: 'SYSCOM' | 'CT Online',
- *   price_wholesale_mxn: number,
- *   stock: number,
- *   suggested_margin: number,
- *   warranty_months: number,
- *   specs: Array<string>,
- *   // Objeto comparativo en vivo frente al competidor
- *   comparison: {
- *     alternative_provider: 'syscom' | 'ct',
- *     alternative_label: string,
- *     alternative_sku: string,
- *     alternative_price: number,
- *     alternative_stock: number,
- *     price_difference_mxn: number, // Positivo si el principal es más caro, negativo si es más barato
- *     is_best_price: boolean
- *   }
+ *   brand: string | null,
+ *   model: string | null,
+ *   mpn: string | null,
+ *   price_original: string,     // Dinero como string: sin pérdida de precisión
+ *   currency: string,           // 'MXN' | 'USD'
+ *   precio_mxn: string,         // Precio comparable en pesos (string)
+ *   es_mejor_precio: boolean,
+ *   stock: number | null,       // null = el proveedor no informa existencias
+ *   match: {
+ *     estado: 'AUTO_MATCH' | 'REVISION_MANUAL' | 'SIN_MATCH',
+ *     estado_label: string,
+ *     canonico: { descripcion: string } | null,  // Solo en AUTO_MATCH
+ *     score: number | null,
+ *     motivo: string
+ *   },
+ *   // Extensión local de venta fraccionable (no es parte del contrato M7):
+ *   es_divisible: boolean,
+ *   unidad_base: string,          // Solo si es divisible (ej. 'Caja')
+ *   unidad_base_etiqueta: string, // Solo si es divisible (ej. 'Bobina / Caja')
+ *   factor_conversion: number,    // Solo si es divisible (ej. 305 m)
+ *   unidad_fraccion: string,      // Solo si es divisible (ej. 'Metro')
+ *   simbolo_fraccion: string,     // Solo si es divisible (ej. 'm')
+ *   precio_fraccion: number       // Derivado: precio_base / factor_conversion
  * }
  */
 const MOCK_PRODUCTS = [
     {
-        id: 'prod-001',
-        sku: 'RG-ES224GC-P',
-        clave: 'SW-RUIJIE24',
+        provider: 'syscom',
+        provider_label: PROVIDER_LABELS.syscom,
+        external_id: 'RG-ES224GC-P',
         name: 'Switch Ruijie Reyee 24 puertos Gigabit PoE+ 370W Cloud Managed',
-        category: 'switches',
-        description: 'Switch gestionado en la nube de 24 puertos Gigabit 802.3at/af con presupuesto PoE de 370W. Monitoreo remoto mediante Ruijie Cloud App.',
-        provider: 'syscom',
-        provider_label: 'SYSCOM',
-        price_wholesale_mxn: 8890.00,
+        brand: 'Ruijie',
+        model: 'RG-ES224GC-P',
+        mpn: null,
+        price_original: '8890.0000',
+        currency: 'MXN',
+        precio_mxn: '8890.0000',
+        es_mejor_precio: true,
         stock: 28,
-        suggested_margin: 25,
-        warranty_months: 36,
-        specs: ['24 Puertos 10/100/1000 Mbps', 'PoE+ 370W Total', 'Cloud Managed Gratuito', '2 Puertos SFP Combo'],
-        comparison: {
-            alternative_provider: 'ct',
-            alternative_label: 'CT Online',
-            alternative_sku: 'TL-SG3428MP',
-            alternative_price: 9450.00,
-            alternative_stock: 16,
-            price_difference_mxn: -560.00,
-            is_best_price: true
-        }
+        match: {
+            estado: 'AUTO_MATCH',
+            estado_label: 'Coincidencia automática',
+            canonico: { descripcion: 'Switch Ruijie Reyee 24 puertos Gigabit PoE+ 370W Cloud Managed' },
+            score: 100,
+            motivo: 'COINCIDENCIA_UNICA_VERIFICADA'
+        },
+        es_divisible: false
     },
     {
-        id: 'prod-002',
-        sku: 'PRO-CAT6-EXT',
-        clave: 'CAB-UTP305',
+        provider: 'syscom',
+        provider_label: PROVIDER_LABELS.syscom,
+        external_id: 'PRO-CAT6-EXT',
         name: 'Bobina de Cable UTP Cat6 Exterior CMX 100% Cobre 305m Negro',
-        category: 'cableado',
-        description: 'Bobina de 305 metros Cat6 UTP para intemperie con doble cubierta anti-UV, conductores de cobre sólido electrolítico 23 AWG.',
-        provider: 'syscom',
-        provider_label: 'SYSCOM',
-        price_wholesale_mxn: 2180.00,
+        brand: null,
+        model: 'PRO-CAT6-EXT',
+        mpn: null,
+        price_original: '2180.0000',
+        currency: 'MXN',
+        precio_mxn: '2180.0000',
+        es_mejor_precio: true,
         stock: 54,
-        suggested_margin: 22,
-        warranty_months: 120,
-        specs: ['100% Cobre Electrolítico', 'Calibre 23 AWG', 'Protección Rayos UV CMX', 'Certificación ANSI/TIA 568-C.2'],
-        comparison: {
-            alternative_provider: 'ct',
-            alternative_label: 'CT Online',
-            alternative_sku: 'CT-CAB6-BLK',
-            alternative_price: 2310.00,
-            alternative_stock: 32,
-            price_difference_mxn: -130.00,
-            is_best_price: true
-        }
+        match: {
+            estado: 'REVISION_MANUAL',
+            estado_label: 'Revisión manual',
+            canonico: null,
+            score: null,
+            motivo: 'MARCA_AUSENTE'
+        },
+        es_divisible: true,
+        unidad_base: 'Caja',
+        unidad_base_etiqueta: 'Bobina / Caja',
+        factor_conversion: 305,
+        unidad_fraccion: 'Metro',
+        simbolo_fraccion: 'm'
     },
     {
-        id: 'prod-003',
-        sku: 'DS-2CD2043G2-I',
-        clave: 'CAM-IP4MP',
-        name: 'Cámara IP Tubular Hikvision AcuSense 4 Megapíxel Lente 2.8mm PoE',
-        category: 'camaras',
-        description: 'Cámara tipo bala para videovigilancia exterior con analítica de inteligencia artificial AcuSense (clasificación humanos/vehículos), WDR 120dB e infrarrojo EXIR 30m.',
         provider: 'syscom',
-        provider_label: 'SYSCOM',
-        price_wholesale_mxn: 1890.00,
+        provider_label: PROVIDER_LABELS.syscom,
+        external_id: 'DS-2CD2043G2-I',
+        name: 'Cámara IP Tubular Hikvision AcuSense 4 Megapíxel Lente 2.8mm PoE',
+        brand: 'Hikvision',
+        model: 'DS-2CD2043G2-I',
+        mpn: null,
+        price_original: '1890.0000',
+        currency: 'MXN',
+        precio_mxn: '1890.0000',
+        es_mejor_precio: true,
         stock: 35,
-        suggested_margin: 25,
-        warranty_months: 24,
-        specs: ['Resolución 4 MP (2688x1520)', 'Lente fijo 2.8mm (103°)', 'Filtro AcuSense IA', 'Protección IP67'],
-        comparison: {
-            alternative_provider: 'ct',
-            alternative_label: 'CT Online',
-            alternative_sku: 'DAH-IPC-HFW',
-            alternative_price: 1980.00,
-            alternative_stock: 19,
-            price_difference_mxn: -90.00,
-            is_best_price: true
-        }
+        match: {
+            estado: 'AUTO_MATCH',
+            estado_label: 'Coincidencia automática',
+            canonico: { descripcion: 'Cámara IP Tubular Hikvision AcuSense 4 Megapíxel Lente 2.8mm PoE' },
+            score: 100,
+            motivo: 'COINCIDENCIA_UNICA_VERIFICADA'
+        },
+        es_divisible: false
     },
     {
-        id: 'prod-004',
-        sku: 'TL-SG3428MP',
-        clave: 'SW-OMADA24',
+        provider: 'ct',
+        provider_label: PROVIDER_LABELS.ct,
+        external_id: 'TL-SG3428MP',
         name: 'Switch TP-Link Omada 24 puertos Gigabit PoE+ 384W L2+ Managed',
-        category: 'switches',
-        description: 'Switch corporativo gestionable L2+ con 24 puertos PoE+ 802.3at/af y 4 ranuras SFP gigabit. Integración nativa con controlador Omada SDN.',
-        provider: 'ct',
-        provider_label: 'CT Online',
-        price_wholesale_mxn: 9450.00,
+        brand: 'TP-Link',
+        model: 'TL-SG3428MP',
+        mpn: null,
+        price_original: '9450.0000',
+        currency: 'MXN',
+        precio_mxn: '9450.0000',
+        es_mejor_precio: false,
         stock: 16,
-        suggested_margin: 20,
-        warranty_months: 60,
-        specs: ['24 Puertos Gigabit PoE+', 'Presupuesto PoE 384W', '4 Ranuras SFP', 'Gestión Omada SDN'],
-        comparison: {
-            alternative_provider: 'syscom',
-            alternative_label: 'SYSCOM',
-            alternative_sku: 'RG-ES224GC-P',
-            alternative_price: 8890.00,
-            alternative_stock: 28,
-            price_difference_mxn: 560.00,
-            is_best_price: false
-        }
+        match: {
+            estado: 'AUTO_MATCH',
+            estado_label: 'Coincidencia automática',
+            canonico: { descripcion: 'Switch TP-Link Omada 24 puertos Gigabit PoE+ 384W L2+ Managed' },
+            score: 100,
+            motivo: 'COINCIDENCIA_UNICA_VERIFICADA'
+        },
+        es_divisible: false
     },
     {
-        id: 'prod-005',
-        sku: 'DELL-P2422H',
-        clave: 'MON-24IPS',
+        provider: 'ct',
+        provider_label: PROVIDER_LABELS.ct,
+        external_id: 'DELL-P2422H',
         name: 'Monitor Dell Profesional 23.8" Full HD IPS HDMI/DP/VGA',
-        category: 'computo',
-        description: 'Monitor corporativo con tecnología ComfortView Plus, panel IPS antireflejo de bisel ultrafino, puertos USB 3.2 y base ergonómica regulable en altura y pivote.',
-        provider: 'ct',
-        provider_label: 'CT Online',
-        price_wholesale_mxn: 3490.00,
+        brand: 'Dell',
+        model: 'DELL-P2422H',
+        mpn: null,
+        price_original: '3490.0000',
+        currency: 'MXN',
+        precio_mxn: '3490.0000',
+        es_mejor_precio: true,
         stock: 22,
-        suggested_margin: 15,
-        warranty_months: 36,
-        specs: ['Pantalla 23.8" FHD 1920x1080', 'Panel IPS 99% sRGB', 'Base regulable 4 ejes', 'HDMI, DP, VGA y Hub USB'],
-        comparison: {
-            alternative_provider: 'syscom',
-            alternative_label: 'SYSCOM',
-            alternative_sku: 'SYS-MON24-PRO',
-            alternative_price: 3650.00,
-            alternative_stock: 8,
-            price_difference_mxn: -160.00,
-            is_best_price: true
-        }
+        match: {
+            estado: 'AUTO_MATCH',
+            estado_label: 'Coincidencia automática',
+            canonico: { descripcion: 'Monitor Dell Profesional 23.8" Full HD IPS HDMI/DP/VGA' },
+            score: 100,
+            motivo: 'COINCIDENCIA_UNICA_VERIFICADA'
+        },
+        es_divisible: false
     },
     {
-        id: 'prod-006',
-        sku: 'HPE-DL380-G10',
-        clave: 'SRV-DL380',
-        name: 'Servidor HPE ProLiant DL380 Gen10 Xeon Silver 4208 16GB 8SFF',
-        category: 'servidores',
-        description: 'Servidor en rack 2U de alto rendimiento con procesador Intel Xeon Silver 4208 (8 núcleos), 16GB RAM DDR4 SmartMemory, controladora RAID Smart Array P408i-a y fuentes redundantes.',
         provider: 'ct',
-        provider_label: 'CT Online',
-        price_wholesale_mxn: 52400.00,
+        provider_label: PROVIDER_LABELS.ct,
+        external_id: 'HPE-DL380-G10',
+        name: 'Servidor HPE ProLiant DL380 Gen10 Xeon Silver 4208 16GB 8SFF',
+        brand: 'HPE',
+        model: 'HPE-DL380-G10',
+        mpn: null,
+        price_original: '52400.0000',
+        currency: 'MXN',
+        precio_mxn: '52400.0000',
+        es_mejor_precio: true,
         stock: 5,
-        suggested_margin: 12,
-        warranty_months: 36,
-        specs: ['Intel Xeon Silver 4208', '16GB RAM DDR4 ECC', 'Chasis 8 bahías SFF 2.5"', 'Fuentes Platinum 500W redundantes'],
-        comparison: {
-            alternative_provider: 'syscom',
-            alternative_label: 'SYSCOM',
-            alternative_sku: 'SYS-SRV-RACK2U',
-            alternative_price: 54100.00,
-            alternative_stock: 2,
-            price_difference_mxn: -1700.00,
-            is_best_price: true
-        }
+        match: {
+            estado: 'AUTO_MATCH',
+            estado_label: 'Coincidencia automática',
+            canonico: { descripcion: 'Servidor HPE ProLiant DL380 Gen10 Xeon Silver 4208 16GB 8SFF' },
+            score: 100,
+            motivo: 'COINCIDENCIA_UNICA_VERIFICADA'
+        },
+        es_divisible: false
     }
 ];
 
@@ -367,9 +325,6 @@ const INITIAL_MOCK_QUOTES = [
 
 // Inicializar almacenamiento local si no existe
 function initMockStorage() {
-    if (!localStorage.getItem(STORAGE_KEYS.CLIENTS)) {
-        localStorage.setItem(STORAGE_KEYS.CLIENTS, JSON.stringify(INITIAL_MOCK_CLIENTS));
-    }
     if (!localStorage.getItem(STORAGE_KEYS.QUOTES)) {
         localStorage.setItem(STORAGE_KEYS.QUOTES, JSON.stringify(INITIAL_MOCK_QUOTES));
     }
@@ -399,224 +354,69 @@ function getCsrfToken() {
 }
 
 // ==============================================================================
-// 2. SERVICIOS DE API DESACOPLADOS (CLIENTS, PRODUCTS, QUOTES)
+// 2. SERVICIOS DE API DESACOPLADOS (PRODUCTS, QUOTES)
 // ==============================================================================
 
 const apiClient = {
     /**
-     * MÓDULO DE CLIENTES (CRUD):
-     * Contratos y operaciones REST para gestión de empresas y clientes B2B.
-     */
-    clients: {
-        /**
-         * GET /api/v1/clients?search=&status=&type=
-         * Retorna lista de clientes filtrada.
-         * Payload de Respuesta: Array<Client>
-         */
-        async getAll(filters = {}) {
-            if (USE_MOCKS) {
-                await delay(300);
-                const raw = localStorage.getItem(STORAGE_KEYS.CLIENTS);
-                let list = raw ? JSON.parse(raw) : [...INITIAL_MOCK_CLIENTS];
-
-                if (filters.search) {
-                    const q = filters.search.toLowerCase().trim();
-                    list = list.filter(c => 
-                        c.business_name.toLowerCase().includes(q) ||
-                        c.rfc.toLowerCase().includes(q) ||
-                        c.contact_name.toLowerCase().includes(q) ||
-                        c.email.toLowerCase().includes(q)
-                    );
-                }
-                if (filters.status && filters.status !== 'todos') {
-                    list = list.filter(c => c.status.toLowerCase() === filters.status.toLowerCase());
-                }
-                if (filters.type && filters.type !== 'todos') {
-                    list = list.filter(c => c.type.toLowerCase() === filters.type.toLowerCase());
-                }
-                return { success: true, count: list.length, data: list };
-            }
-
-            // Llamada real al backend
-            const params = new URLSearchParams(filters);
-            const res = await fetch(`${API_BASE_URL}/clients/?${params.toString()}`);
-            if (!res.ok) throw new Error(`Error HTTP: ${res.status}`);
-            return await res.json();
-        },
-
-        /**
-         * GET /api/v1/clients/{id}/
-         * Retorna el detalle de un cliente específico.
-         */
-        async getById(id) {
-            if (USE_MOCKS) {
-                await delay(200);
-                const raw = localStorage.getItem(STORAGE_KEYS.CLIENTS);
-                const list = raw ? JSON.parse(raw) : INITIAL_MOCK_CLIENTS;
-                const client = list.find(c => c.id === id);
-                if (!client) throw new Error('Cliente no encontrado');
-                return { success: true, data: client };
-            }
-
-            const res = await fetch(`${API_BASE_URL}/clients/${id}/`);
-            if (!res.ok) throw new Error(`Error HTTP: ${res.status}`);
-            return await res.json();
-        },
-
-        /**
-         * POST /api/v1/clients/
-         * Payload de Envío: { business_name, rfc, contact_name, email, phone, type, city, address, status }
-         * Retorna el cliente creado con ID asignado.
-         */
-        async create(clientData) {
-            if (USE_MOCKS) {
-                await delay(400);
-                const raw = localStorage.getItem(STORAGE_KEYS.CLIENTS);
-                const list = raw ? JSON.parse(raw) : [...INITIAL_MOCK_CLIENTS];
-
-                // Generar nuevo ID correlativo
-                const nextNum = list.length + 1;
-                const newClient = {
-                    ...clientData,
-                    id: `cli-${String(nextNum).padStart(3, '0')}`,
-                    created_at: new Date().toISOString()
-                };
-
-                list.unshift(newClient);
-                localStorage.setItem(STORAGE_KEYS.CLIENTS, JSON.stringify(list));
-                return { success: true, message: 'Cliente registrado exitosamente', data: newClient };
-            }
-
-            const res = await fetch(`${API_BASE_URL}/clients/`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCsrfToken()
-                },
-                body: JSON.stringify(clientData)
-            });
-            if (!res.ok) throw new Error(`Error HTTP: ${res.status}`);
-            return await res.json();
-        },
-
-        /**
-         * PUT /api/v1/clients/{id}/
-         * Actualiza los datos de un cliente existente.
-         */
-        async update(id, clientData) {
-            if (USE_MOCKS) {
-                await delay(400);
-                const raw = localStorage.getItem(STORAGE_KEYS.CLIENTS);
-                let list = raw ? JSON.parse(raw) : [...INITIAL_MOCK_CLIENTS];
-
-                const index = list.findIndex(c => c.id === id);
-                if (index === -1) throw new Error('Cliente no encontrado para actualizar');
-
-                list[index] = { ...list[index], ...clientData, updated_at: new Date().toISOString() };
-                localStorage.setItem(STORAGE_KEYS.CLIENTS, JSON.stringify(list));
-                return { success: true, message: 'Cliente actualizado correctamente', data: list[index] };
-            }
-
-            const res = await fetch(`${API_BASE_URL}/clients/${id}/`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCsrfToken()
-                },
-                body: JSON.stringify(clientData)
-            });
-            if (!res.ok) throw new Error(`Error HTTP: ${res.status}`);
-            return await res.json();
-        },
-
-        /**
-         * DELETE /api/v1/clients/{id}/
-         * Elimina o desactiva un cliente.
-         */
-        async delete(id) {
-            if (USE_MOCKS) {
-                await delay(350);
-                const raw = localStorage.getItem(STORAGE_KEYS.CLIENTS);
-                let list = raw ? JSON.parse(raw) : [...INITIAL_MOCK_CLIENTS];
-
-                list = list.filter(c => c.id !== id);
-                localStorage.setItem(STORAGE_KEYS.CLIENTS, JSON.stringify(list));
-                return { success: true, message: 'Cliente eliminado del catálogo' };
-            }
-
-            const res = await fetch(`${API_BASE_URL}/clients/${id}/`, {
-                method: 'DELETE',
-                headers: {
-                    'X-CSRFToken': getCsrfToken()
-                }
-            });
-            if (!res.ok) throw new Error(`Error HTTP: ${res.status}`);
-            return await res.json();
-        }
-    },
-
-    /**
      * MÓDULO DE PRODUCTOS (CATÁLOGO & COMPARADOR EN VIVO):
-     * Contratos para búsqueda normalizada multi-proveedor (SYSCOM / CT Online).
+     * Contratos para búsqueda normalizada multi-proveedor (SYSCOM / Exel del Norte).
      */
     products: {
         /**
-         * GET /api/v1/products/search?q=&provider=&category=
-         * Retorna productos coincidentes con metadatos de comparación en vivo.
+         * GET /api/v1/products/search/?q=&tipo_cambio=
+         * Respuesta M7b: { success, data: [...], proveedores_caidos,
+         * proveedores_caidos_nombres, tipo_cambio: { valor, origen, fecha } }.
+         * El dinero viaja como string para no perder precisión.
          */
         async search(filters = {}) {
             if (USE_MOCKS) {
                 await delay(450); // Simular latencia de búsqueda en catálogo mayorista
-                let list = [...MOCK_PRODUCTS];
+                // Copias con la etiqueta vigente del proveedor y datos derivados.
+                let list = MOCK_PRODUCTS.map(withDerivedData);
 
                 if (filters.query) {
                     const q = filters.query.toLowerCase().trim();
-                    list = list.filter(p => 
+                    list = list.filter(p =>
                         p.name.toLowerCase().includes(q) ||
-                        p.sku.toLowerCase().includes(q) ||
-                        p.clave.toLowerCase().includes(q) ||
-                        p.description.toLowerCase().includes(q)
+                        p.external_id.toLowerCase().includes(q) ||
+                        (p.model || '').toLowerCase().includes(q)
                     );
                 }
 
-                if (filters.provider && filters.provider !== 'todos') {
-                    list = list.filter(p => p.provider === filters.provider);
-                }
-
-                if (filters.category && filters.category !== 'todos') {
-                    list = list.filter(p => p.category === filters.category);
-                }
-
-                return { success: true, count: list.length, data: list };
+                // El filtro por proveedor es local en la interfaz (atributo
+                // provider de cada resultado), no un parámetro de búsqueda.
+                // Todos los precios mock son MXN: el tipo de cambio solo se
+                // devuelve como contexto de la búsqueda.
+                return {
+                    success: true,
+                    count: list.length,
+                    data: list,
+                    proveedores_caidos: [],
+                    proveedores_caidos_nombres: [],
+                    tipo_cambio: filters.tipo_cambio
+                        ? {
+                            valor: String(filters.tipo_cambio),
+                            origen: 'manual',
+                            fecha: new Date().toISOString()
+                        }
+                        : null
+                };
             }
 
             const params = new URLSearchParams(filters);
             const res = await fetch(`${API_BASE_URL}/products/search/?${params.toString()}`);
-            if (!res.ok) throw new Error(`Error HTTP: ${res.status}`);
-            return await res.json();
-        },
-
-        /**
-         * GET /api/v1/products/{sku}/comparison/
-         * Retorna comparativa directa entre SYSCOM y CT Online para un producto o equivalente.
-         */
-        async getComparison(sku) {
-            if (USE_MOCKS) {
-                await delay(300);
-                const prod = MOCK_PRODUCTS.find(p => p.sku === sku);
-                if (!prod) throw new Error('Producto no encontrado');
-                return {
-                    success: true,
-                    data: {
-                        primary_product: prod,
-                        comparison: prod.comparison
-                    }
-                };
+            if (!res.ok) {
+                // En 400/429/503 el backend responde { success: false, error }.
+                if (res.status === 400 || res.status === 429 || res.status === 503) {
+                    const body = await res.json().catch(() => null);
+                    throw new Error(body && body.error ? body.error : `Error HTTP: ${res.status}`);
+                }
+                throw new Error(`Error HTTP: ${res.status}`);
             }
-
-            const res = await fetch(`${API_BASE_URL}/products/${sku}/comparison/`);
-            if (!res.ok) throw new Error(`Error HTTP: ${res.status}`);
-            return await res.json();
+            const data = await res.json();
+            if (Array.isArray(data.data)) data.data = data.data.map(withDerivedData);
+            return data;
         }
     },
 
@@ -677,7 +477,11 @@ const apiClient = {
 
         /**
          * POST /api/v1/quotes/
-         * Guarda una nueva cotización.
+         * Payload M7b exacto del modelo Quote: client_name, client_rfc,
+         * client_email, valid_days, notes, tipo_cambio (string) e items con
+         * provider/external_id/description/model/quantity/costo_mxn/margen
+         * (números como strings). Sin folio, client_id, subtotal ni IVA:
+         * el folio lo asigna el servidor (el mock lo genera para su registro).
          */
         async save(quoteData) {
             if (USE_MOCKS) {
@@ -685,13 +489,13 @@ const apiClient = {
                 const raw = localStorage.getItem(STORAGE_KEYS.QUOTES);
                 const list = raw ? JSON.parse(raw) : [...INITIAL_MOCK_QUOTES];
 
-                // Generar nuevo folio si no viene
-                const folio = quoteData.folio || `COT-2026-${String(list.length + 49).padStart(4, '0')}`;
+                // Folio del registro interno del mock (NO viene en el payload).
+                const folio = `COT-2026-${String(list.length + 49).padStart(4, '0')}`;
                 const newQuote = {
                     ...quoteData,
                     folio,
                     created_at: new Date().toISOString(),
-                    status: quoteData.status || 'Pendiente'
+                    status: 'Pendiente'
                 };
 
                 list.unshift(newQuote);
@@ -707,7 +511,14 @@ const apiClient = {
                 },
                 body: JSON.stringify(quoteData)
             });
-            if (!res.ok) throw new Error(`Error HTTP: ${res.status}`);
+            if (!res.ok) {
+                // En 400/429/503 el backend responde { success: false, error }.
+                if (res.status === 400 || res.status === 429 || res.status === 503) {
+                    const body = await res.json().catch(() => null);
+                    throw new Error(body && body.error ? body.error : `Error HTTP: ${res.status}`);
+                }
+                throw new Error(`Error HTTP: ${res.status}`);
+            }
             return await res.json();
         },
 

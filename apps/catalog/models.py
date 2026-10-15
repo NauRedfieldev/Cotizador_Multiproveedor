@@ -34,7 +34,7 @@ class Category(models.Model):
 
 
 class Supplier(models.Model):
-    """Marca o distribuidor del producto (ej. SYSCOM, CT ONLINE).
+    """Marca o distribuidor del producto (ej. SYSCOM, EXEL DEL NORTE).
 
     Si el distribuidor se consulta por API, `provider` lo enlaza con su configuración en
     apps.providers (duda 7 del SDD de M2, alternativa A). La dependencia va de catalog a
