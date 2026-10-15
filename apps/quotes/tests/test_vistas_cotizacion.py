@@ -443,3 +443,19 @@ class ProteccionTests(TestCase):
     def test_p6_un_usuario_inactivo_no_tiene_sesion(self):
         self.client.force_login(crear_asesor("baja", is_active=False))
         self.assertEqual(self.client.get(reverse("comparador")).status_code, 302)
+
+    def test_p7_el_menu_ofrece_entrar_o_salir_segun_la_sesion(self):
+        anonimo = self.client.get(reverse("inicio"))
+        self.assertContains(anonimo, f'href="{reverse("login")}"')
+        self.assertNotContains(anonimo, f'action="{reverse("logout")}"')
+
+        self.asesor.first_name, self.asesor.last_name = "Ana", "Asesora"
+        self.asesor.save()
+        self.client.force_login(self.asesor)
+        con_sesion = self.client.get(reverse("inicio"))
+        self.assertContains(con_sesion, f'<form method="post" action="{reverse("logout")}"')
+        self.assertContains(con_sesion, "csrfmiddlewaretoken")
+        self.assertContains(con_sesion, "SALIR (Ana Asesora)")
+        # El botón del menú cierra la sesión de verdad.
+        self.assertRedirects(self.client.post(reverse("logout")), reverse("login"))
+        self.assertEqual(self.client.get(reverse("comparador")).status_code, 302)
