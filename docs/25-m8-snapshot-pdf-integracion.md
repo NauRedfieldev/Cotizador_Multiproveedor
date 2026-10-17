@@ -371,8 +371,8 @@ solo gestiona los cinco ajustes permitidos de un asesor ya interno; no crea cuen
 no da is_staff/superusuario, grupos, auth.change_user o gestión comercial. Consulta
 usuarios frescos para no conservar una autorización revocada en has_perm.
 
-No hay pantalla ni endpoint de administración comercial todavía. No abrir UserAdmin
-genérico a un asesor comercial para suplir esa ausencia.
+P4 añade un endpoint limitado de administración comercial (doc28 §13), sin pantalla
+de gestión de terceros en P5. No abrir UserAdmin genérico al asesor para suplirla.
 
 ### 7.4 Async, regresión y despliegue
 
@@ -468,7 +468,7 @@ Wrappers materializados con thread_sensitive=True:
 `aprevisualizar_comercial`, `aprevisualizar_edicion_comercial`,
 `aprevisualizar_revision_comercial`; emisión y documentos usan los existentes
 `aemitir_revision` / `aobtener_documento`. No hay un segundo renderer ni endpoints
-duplicados. API comercial P4 documentada en doc28 §13, UI P5 pendiente; no habilitar mocks ni emisión
+duplicados. API comercial P4 documentada en doc28 §13, UI P5 en doc28 §14; no habilitar mocks ni emisión
 HTTP por asumir que tener servicios equivale a despliegue aceptado.
 
 Pruebas nuevas amplían test_commercial_persistence.py/test_commercial_permissions.py:
@@ -501,3 +501,16 @@ requieren transición explícita. No truncar cantidades ni asignar margen histó
 La base IVA API verificada se configura explícitamente en servidor; por defecto
 UNKNOWN impide crear/preview comercial de esa selección. Ningún proveedor real
 queda certificado por las pruebas sintéticas. Emisión HTTP continúa OFF.
+
+## 10. Consumidor de interfaz P5
+
+La pantalla interna de cotizador consume el adaptador comercial conectado sin cambiar
+el flag global de simulaciones. No calcula precios en JavaScript ni conserva datos
+financieros en almacenamiento del navegador. Edita snapshots con EXISTING, conserva
+versión/huellas e intención ante guardado incierto y confirma solo versiones guardadas.
+Detalle FX añade valor/origen/fecha capturados; capacidades identifica actor_id para
+detectar cambios de sesión antes de reenviar una intención. No hay esquema nuevo.
+
+Distribución de controles, recuperación y QA en [28 §14](28-m7a-integracion-vistas-y-m8.md#14-p5--cotizador-conectado-al-cálculo-comercial).
+La UI no habilita emisión, migraciones o roles reales. Resumen/PDF/correo exactos se
+conectan en P6; no reemplazar originales ni navegar a un mock como resultado real.

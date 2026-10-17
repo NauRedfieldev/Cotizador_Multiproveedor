@@ -113,9 +113,9 @@
             <div class="col-md-2 text-md-end">
                 {% if o.oferta.model %}
                 <a class="btn btn-cconor-primary btn-sm d-inline-flex align-items-center gap-1"
-                   href="{% url 'cotizador' %}?sku={{ o.oferta.model|urlencode }}&tipo_cambio={{ request.GET.tipo_cambio|urlencode }}"
-                   title="Agregar a cotización">
-                    <i class="bi bi-cart-plus"></i> Agregar a cotización
+                    href="{% url 'cotizador' %}?sku={{ o.oferta.model|urlencode }}"
+                    title="Buscar este modelo y seleccionar una captura comercial; no agrega ni cambia FX automáticamente">
+                     <i class="bi bi-search"></i> Buscar en cotizador
                 </a>
                 {% endif %}
             </div>

@@ -280,7 +280,7 @@ estructura, de M7a/M8) de los datos y políticas que debe confirmar CCONOR.
 Implementación en `api.py`, `models.py`, `snapshots.py`, `urls.py` y migración
 `0004_commercial_api_contexts`. Motor/esquema: [24 §8–9](24-sdd-m8-snapshot-pdf.md).
 La versión HTTP sigue `/api/v1/`; `schema_version=2` identifica formato comercial,
-no una segunda API. No se cambió frontend ni `USE_MOCKS`.
+no una segunda API. P4 no cambió frontend ni `USE_MOCKS`; su consumidor P5 se describe en §14.
 
 ### 13.1 Rutas y autorización
 
@@ -302,7 +302,7 @@ se ejecutan completos mediante `sync_to_async(..., thread_sensitive=True)`.
 | POST `.../revisiones/<n>/emitir/` | edit_version y state_fingerprint guardados; P3 durable; bandera HTTP sigue requerida |
 | POST `.../revisiones/<n>/nueva/` | request_id y schema_version2; desde v2 emitida copia snapshots; desde v1 exige partidas comerciales revisadas y parámetros explícitos |
 | POST `/api/v1/quotes/fx-contexts/` | request_id y value decimal; exige facultad FX, origen manual/fecha servidor; 201 |
-| GET `/api/v1/commercial/capabilities/` | Capacidades efectivas del usuario actual |
+| GET `/api/v1/commercial/capabilities/` | Capacidades efectivas en data; actor_id identifica la sesión actual (P5) |
 | GET/PATCH `/api/v1/commercial/permissions/<user_id>/` | Admin comercial: consultar/ajustar cinco facultades de un usuario ya interno; PATCH capability/ enabled booleano |
 
 Rutas estáticas antes de `<folio>`. No GET global de cotizaciones, DELETE, CRUD de
@@ -420,6 +420,8 @@ confirmations auditables, y preview de borrador con avisos `{code,line_key|null,
 requires_confirmation,required_capability,confirmed}`. `confirmed` solo cuenta
 actor activo, permiso/acceso actuales y misma versión/huella. Las constancias
 anteriores siguen auditables pero no habilitan datos cambiados o permisos revocados.
+Desde P5 incluye también `tipo_cambio={valor,origen,fecha}` o null, leído de la
+revisión junto con fx_context_id: mostrar evidencia guardada no crea otro contexto FX.
 
 Confirmar: `{"edit_version":1,"state_fingerprint":"<64 hex>","warnings":[{"code":"COSTO_DESCONOCIDO","line_key":"<uuid>"}]}`.
 Global usa line_key=null. No acepta actor/fecha del JSON. Emitir requiere versión y
@@ -451,10 +453,103 @@ EXCLUSIVAMENTE interno, no una respuesta para un portal externo.
   carreras, permisos/CSRF, confirmaciones/archivo y migración0003→0004 reversible
   SOLO en fixtures aislados. Revertir0004 en uso real perdería evidencia/recibos.
 - Código requiere0003/0004 antes de usar BD de trabajo. No se aplicaron allí ni se
-  dieron roles reales. No activar HTTP/mocks por desplegar esta entrega. Faltan P5,
+   dieron roles reales. No activar HTTP/mocks por desplegar esta entrega. Faltan P6,
   validación de proveedores/empresa, retención/recuperación y aceptación comercial.
 
 Validación P4: **676 pruebas Django + 6 terminal OK**, BD PostgreSQL UUID creada y
 destruida, PDFs temporales y correo en memoria, red/SMTP reales bloqueados. Checks
 y estado modelos/migraciones en disco consistentes. No certifica proveedores reales,
 UI ni aceptación comercial; 0003/0004 no aplicadas a BD de trabajo.
+
+## 14. P5 · Cotizador conectado al cálculo comercial
+
+### 14.1 Alcance y presentación
+
+`templates/cotizador.html` y `static/js/cotizador.js` consumen exclusivamente
+`apiClient.commercial` de `static/js/api.js`. Se conservan tarjetas, tabla, detalles
+desplegables y estilos existentes; se retiran filas/totales demo de este flujo.
+`USE_MOCKS` global no se desactiva: el resumen antiguo sigue separado y etiquetado
+Demo. La página conectada no inicializa almacenamiento mock ni guarda finanzas en
+localStorage/sessionStorage. No hay autosave, dependencias, build o motor alterno.
+
+- Cabecera: cliente/contacto/proyecto, fecha/vigencia y folio/revisión/versión del
+  servidor. Condiciones cliente separadas de notas internas, estas solo en alta.
+- Búsqueda `q` + schema_version2; filtros por código/nombre real de respuesta,
+  disponibilidad desconocida distinta de cero. Cada selección conserva referencias
+  context_ref/offer_ref y un line_key nuevo, sin fusionar SKU de proveedores distintos.
+- Originales API de solo lectura. Base IVA UNKNOWN impide agregar y se explica; no
+  se asume NET para habilitar proveedores. Otra búsqueda no reemplaza líneas/FX.
+  Recapturar precios es explícito: agregar otra selección y quitar la anterior.
+  El enlace del comparador solo propone un modelo para buscar, no transporta una
+  captura inequívoca: se etiqueta Buscar en cotizador, precarga el término y exige
+  seleccionar la oferta. No importa precio/FX ni agrega un proveedor por suposición.
+- Detalle por línea: unidad original/vendida, factor divisor confirmado, cantidad
+  entera, modalidad MARGIN/MANUAL, margen sobre venta o venta manual, moneda/base IVA
+  y tasa incluida propia. Productos API nuevos parten de35%; conceptos manuales
+  parten de venta directa sin margen automático. Campos guardados no se reconstruyen
+  con35% ni con una base IVA supuesta. Costo desconocido es null, no cero.
+- Ajustes: IVA venta16% inicial, descuento porcentual global antes de IVA y FX
+  explícito con origen/fecha, sin tasa17.50 supuesta. Cinco capacidades controlan los
+  editores; permisos se verifican siempre de nuevo en backend. Sin panel de gestión
+  de otros usuarios en este incremento; la API limitada de P4 permanece disponible.
+- Resumen exclusivamente interno: costos conocidos/completitud, venta/descuento/
+  neto/IVA/total y utilidad solo cuando está completa. Unitarios y etiquetas de
+  aproximación provienen del servidor, no de divisiones ni redondeos JavaScript.
+
+Dinero/tasas/factores viajan como texto decimal. La validación de cantidad rechaza
+`1.5`, exponentes y valores inválidos: nunca parseInt/truncamiento. El formato de
+moneda separa caracteres, sin convertir importes a Number ni recalcular finanzas.
+El preview no crea Quote, folio, revisión o PDF; ningún error usa totales locales.
+
+### 14.2 Estados, guardado y conflictos
+
+1. Los cambios invalidan el cálculo visible y aceptaciones mostradas. Preview tras
+   una pausa corta; AbortController y contador de cambios descartan respuestas viejas.
+   Sesión expirada, HTML CSRF, error financiero o red fallida dejan totales en —.
+2. Alta lleva UUID y cuerpo estables. Una escritura incierta bloquea el formulario
+   y permite resolver/repetir SOLO esa intención. Un403/CSRF posterior no descarta
+   una incertidumbre anterior ni genera otro UUID. No hay reintentos automáticos.
+3. Edición usa EXISTING para conservar snapshots y edit_version. Antes de repetir
+   PUT se lee la revisión exacta: versión base+huella base permite el mismo PUT;
+   versión base+1 con huella propuesta reconoce el guardado ya efectuado; cualquier
+   otro estado exige recarga explícita. No sobrescribir cambios ajenos ni adoptar
+   una versión nueva a ciegas. Si falla GET tras una escritura exitosa, conserva
+   folio/identidad y exige recarga: nunca vuelve a crear la cotización.
+4. Capacidades devuelve actor_id; antes de guardar, confirmar, abrir o capturar FX
+   se revisa la sesión. Cambiar de asesor no reenvía el formulario del anterior.
+   Esto complementa, no sustituye, autenticación, CSRF y permisos de cada operación.
+5. Guardar recarga la versión exacta y su cálculo. Las advertencias se aceptan
+   individualmente con versión/huella GUARDADAS y permiso vigente; preview nuevo no
+   sirve para confirmar. Una edición conserva la auditoría anterior, no su vigencia.
+6. Abrir por folio/número respeta acceso de objeto. V1 y emitidas son solo lectura;
+   no se truncan históricos, convierten silenciosamente ni recalculan emisiones.
+   Las emitidas muestran sellos/metadatos archivados; no invocan motor/renderer.
+
+Salir/recargar avisa si hay cambios/intención pendiente. El estado no guardado vive
+solo en memoria: **no se promete recuperarlo tras cerrar o recargar la pestaña**.
+Conexión/permisos se pueden revisar y el login se abre en otra pestaña para conservar
+la captura. Limpiar solo afecta las líneas locales, no borra historial del servidor.
+No copiar datos internos a descripciones/condiciones de salida cliente.
+
+### 14.3 Pruebas y límites operativos
+
+- Pruebas nativas sin red/dependencias: `node --test tools/test_cotizador_comercial.cjs`.
+  Si Node no está en PATH, usar su ruta local ya disponible. Cubren decimales,
+  enteros, null/0, IVA incluido, referencias, reintentos, HTML/401/403/409/500 y rutas.
+- Django añade contrato de evidencia FX/actor de sesión y plantilla sin demo.
+  Validación de esta entrega: **678 Django + 6 terminal + 15 JavaScript correctas**;
+  PostgreSQL UUID y PDFs temporales, correo en memoria, APIs/SMTP reales bloqueados.
+- QA ASGI/browser aislado: búsqueda/selección, unidades/fracciones, venta manual,
+  costo desconocido/0, avisos/confirmaciones obsoletas, guardado/recarga, respuesta
+  perdida CREATE/PUT, CSRF tras incertidumbre, respuestas fuera de orden, conflicto,
+  sesión vencida/otro asesor, capacidades, acceso ajeno y lectura emitida. Texto
+  parecido a HTML se presenta como texto, no se ejecuta. FX elegido no cambia al buscar.
+  Las fixtures no certifican IVA/stock o contratos de SYSCOM/Exel reales.
+
+Resumen externo, emitir/nueva revisión, PDF y correo se integran en P6. Sus acciones
+están deshabilitadas en el flujo conectado, no llevan a un resumen demo como si
+fuera una cotización real. El enlace al resumen anterior está marcado Demo.
+No hay migración adicional ni cambio del formato persistido. 0003/0004 continúan
+pendientes en BD de trabajo y la emisión HTTP sigue OFF. Tampoco se asignaron roles
+reales, alteró .env o validaron datos oficiales/retención/recuperación. No arrancar
+esta versión con la BD de trabajo sin autorización para preparar ese entorno.

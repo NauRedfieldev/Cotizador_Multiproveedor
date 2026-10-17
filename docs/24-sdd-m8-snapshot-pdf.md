@@ -2,7 +2,7 @@
 
 **Versionado:** §§1–7 describen el esquema histórico v1. La ampliación comercial
 v2/P2 está en §8; preview/render/emisión de servicio P3 en §9. API P4 en
-[28 §13](28-m7a-integracion-vistas-y-m8.md#13-p4--api-comercial-v2-y-capturas-estables); UI P5 pendiente.
+[28 §13](28-m7a-integracion-vistas-y-m8.md#13-p4--api-comercial-v2-y-capturas-estables); UI P5 en [28 §14](28-m7a-integracion-vistas-y-m8.md#14-p5--cotizador-conectado-al-cálculo-comercial).
 No reinterpretar los
 campos históricos usando reglas comerciales nuevas.
 
@@ -266,7 +266,7 @@ Código: `commercial.py`, `models.py`, `permissions.py`, servicios comerciales e
   datos comerciales ni asigna margen, unidades, moneda o FX al histórico.
 - Al cerrar P2, emisión/documento comercial v2 estaban bloqueados. **P3 (§9)**
   conecta motor, confirmaciones, sellado y renderer cliente a nivel de servicio.
-  P4 conecta los endpoints (doc28 §13); UI y habilitación de uso real siguen pendientes.
+  P4 conecta los endpoints (doc28 §13); P5 conecta el cotizador (doc28 §14). Uso real pendiente.
 - Los resultados del motor y de la validación P2 son INTERNOS, contienen costos:
   no serializarlos directamente al cliente ni ponerlos en el documento externo.
 
@@ -553,6 +553,6 @@ nunca regeneración. Una revisión nueva no modifica el original v1 ni v2 de su 
 En P3 no se crearon archivos de aplicación nuevos ni otra migración. P4 añade0004
 con capturas/recibos técnicos y API comercial (doc28 §13). 0003/0004 siguen pendientes
 de autorización para BD de trabajo. No se asignan usuarios/grupos reales ni se
-habilita emisión HTTP/frontend/mocks.
-Falta P4/P5 y aceptación visual/comercial final con datos oficiales. Los fixtures y
+habilita emisión HTTP/mocks. P5 conecta la captura/preview/guardado de interfaz (doc28 §14).
+Faltan P6 y aceptación comercial final con datos oficiales. Los fixtures y
 pruebas sintéticos no certifican semántica real de IVA/stock de Exel ni uso con clientes.

@@ -876,6 +876,7 @@ def _exact_detail(folio, number, actor):
             "issue_date": revision.issue_date.isoformat(), "valid_days": revision.valid_days,
             "tax_rate": revision.tax_rate, "discount_percent": revision.discount_percent,
             "fx_context_id": revision.exchange_context_id,
+            "tipo_cambio": _tipo_cambio(commercial_services._tipo(revision)),
             "capabilities": _capabilities(actor),
             "emission_enabled": bool(settings.COTIZACIONES_EMISION_HABILITADA and revision.schema_version == 2),
             "items": [{f: getattr(s, f) for f in commercial_services.PartidaComercialCapturada.__dataclass_fields__}
@@ -996,7 +997,9 @@ def _capabilities(actor):
 
 @_api("GET")
 async def capacidades_comerciales(request):
-    return JsonResponse({"success": True, "data": await sync_to_async(_capabilities, thread_sensitive=True)(await request.auser())})
+    actor = await request.auser()
+    return JsonResponse({"success": True, "actor_id": actor.pk,
+                         "data": await sync_to_async(_capabilities, thread_sensitive=True)(actor)})
 
 
 @_api("GET PATCH")

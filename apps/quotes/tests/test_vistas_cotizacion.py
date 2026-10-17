@@ -176,7 +176,7 @@ class VistaCotizacionTests(TestCase):
 
     async def test_v1_un_proveedor_caido_da_200_con_aviso(self):
         respuesta = await self.buscar([
-            adaptador("alfa", mxn("1", "100.00")),
+            adaptador("alfa", mxn("1", "100.00", modelo="QA-MODELO")),
             adaptador("beta", error=TimeoutError()),
         ])
         self.assertEqual(respuesta.status_code, 200)
@@ -184,6 +184,9 @@ class VistaCotizacionTests(TestCase):
         self.assertEqual(respuesta.context["proveedores_caidos"], ["beta"])
         self.assertEqual([o.oferta.provider_code for o in respuesta.context["ofertas"]], ["alfa"])
         self.assertIsNone(respuesta.context["error"])
+        self.assertContains(respuesta, "Buscar en cotizador")
+        self.assertContains(respuesta, '/cotizador/?sku=QA-MODELO')
+        self.assertNotContains(respuesta, "Agregar a cotización")
 
     async def test_v2_ambos_caidos_da_503_sin_traza(self):
         respuesta = await self.buscar([

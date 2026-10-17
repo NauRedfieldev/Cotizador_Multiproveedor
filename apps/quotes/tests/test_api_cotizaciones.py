@@ -716,6 +716,25 @@ class CommercialAPITests(CommercialFixtures, TestCase):
         self.client.force_login(self.other)
         self.send("api_crear_cotizacion", alta_comercial(fx_context_id=fx["fx_context_id"]), status=409)
 
+    def test_detalle_devuelve_evidencia_fx_capturada_para_interfaz(self):
+        fx = self.send("api_contexto_fx", {"request_id": str(uuid4()), "value": "17.12345678"}, status=201)
+        created = self.create(alta_comercial(fx_context_id=fx["fx_context_id"]))
+        detail = self.detail(created)
+        self.assertEqual(detail["tipo_cambio"]["valor"], "17.12345678")
+        self.assertEqual(detail["tipo_cambio"]["origen"], "manual")
+        self.assertEqual(detail["fx_context_id"], fx["fx_context_id"])
+        capabilities = self.client.get(reverse("api_capacidades_comerciales")).json()
+        self.assertEqual(capabilities["actor_id"], self.actor.pk)
+
+    def test_pagina_cotizador_conectada_sin_filas_o_totales_demo(self):
+        response = self.client.get(reverse("cotizador"))
+        self.assertEqual(response.status_code, 200)
+        for text in ("commercialQuoteApp", "quoteConditions", "quoteWarnings", "addManualBtn", "Abrir revisión exacta"):
+            self.assertContains(response, text)
+        for demo in ("SYS-PRO-CAT6", "CT-DELL-P2422H", "$64,335.90", 'value="17.50"', "Openpay / Stripe"):
+            self.assertNotContains(response, demo)
+        self.assertContains(response, "pendientes de P6")
+
     def test_json_ambiguo_no_se_acepta(self):
         for body in ('{"schema_version":2,"schema_version":2}', '{"schema_version":NaN}'):
             response = self.client.post(reverse("api_crear_cotizacion"), body, content_type="application/json")

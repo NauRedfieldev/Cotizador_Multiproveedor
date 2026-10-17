@@ -325,6 +325,7 @@ const INITIAL_MOCK_QUOTES = [
 
 // Inicializar almacenamiento local si no existe
 function initMockStorage() {
+    if (!USE_MOCKS || document.getElementById('commercialQuoteApp')) return;
     if (!localStorage.getItem(STORAGE_KEYS.QUOTES)) {
         localStorage.setItem(STORAGE_KEYS.QUOTES, JSON.stringify(INITIAL_MOCK_QUOTES));
     }
@@ -548,6 +549,59 @@ const apiClient = {
     }
 };
 
+// P5: flujo comercial siempre conectado. No cambiar USE_MOCKS globalmente:
+// historial/resumen antiguos siguen separados, nunca se usan en una propuesta v2.
+class CommercialHTTPError extends Error {
+    constructor(message, status = 0, code = '', uncertain = false) {
+        super(message);
+        this.name = 'CommercialHTTPError';
+        this.status = status;
+        this.code = code;
+        this.uncertain = uncertain;
+    }
+}
+
+async function commercialRequest(path, { method = 'GET', data, signal, mutation = false } = {}) {
+    let response;
+    try {
+        response = await fetch(`${API_BASE_URL}${path}`, {
+            method, signal, credentials: 'same-origin', cache: 'no-store',
+            headers: { 'Accept': 'application/json', ...(data === undefined ? {} : {
+                'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken()
+            }) },
+            ...(data === undefined ? {} : { body: JSON.stringify(data) })
+        });
+    } catch (error) {
+        if (error.name === 'AbortError') throw error;
+        throw new CommercialHTTPError('No se recibió respuesta. Comprueba la conexión antes de reintentar.', 0, 'NETWORK', mutation);
+    }
+    let body = null;
+    if ((response.headers.get('Content-Type') || '').includes('application/json')) {
+        try { body = await response.json(); } catch (_) { /* No considerar un HTML/JSON roto como éxito. */ }
+    }
+    if (!response.ok || !body || body.success !== true) {
+        const message = body?.error || (response.status === 401 ? 'La sesión venció. Inicia sesión y reintenta.' :
+            response.status === 403 ? 'Solicitud no autorizada. Revisa sesión, permisos y protección CSRF.' :
+                `Respuesta no válida del servidor (HTTP ${response.status}).`);
+        throw new CommercialHTTPError(message, response.status, body?.code || 'INVALID_RESPONSE',
+            mutation && (response.status >= 500 || response.ok));
+    }
+    return body;
+}
+
+const revisionPath = (folio, number) => `/quotes/${encodeURIComponent(folio)}/revisiones/${number}/`;
+apiClient.commercial = Object.freeze({
+    capabilities: () => commercialRequest('/commercial/capabilities/'),
+    search: (filters, signal) => commercialRequest(`/products/search/?${new URLSearchParams({ ...filters, schema_version: '2' })}`, { signal }),
+    previewNew: (data, signal) => commercialRequest('/quotes/preview/', { method: 'POST', data, signal }),
+    create: data => commercialRequest('/quotes/', { method: 'POST', data, mutation: true }),
+    revision: (folio, number) => commercialRequest(revisionPath(folio, number)),
+    previewEdit: (folio, number, data, signal) => commercialRequest(`${revisionPath(folio, number)}preview/`, { method: 'POST', data, signal }),
+    update: (folio, number, data) => commercialRequest(revisionPath(folio, number), { method: 'PUT', data, mutation: true }),
+    confirm: (folio, number, data) => commercialRequest(`${revisionPath(folio, number)}confirmaciones/`, { method: 'POST', data, mutation: true }),
+    createFX: data => commercialRequest('/quotes/fx-contexts/', { method: 'POST', data, mutation: true })
+});
+
 // ==============================================================================
 // 3. SISTEMA DE TOASTS Y FEEDBACK VISUAL NO INVASIVO (UI KIT GLOBAL)
 // ==============================================================================
@@ -590,14 +644,23 @@ function showToast(message, type = 'success', title = '', duration = 3500) {
     toast.style.borderLeft = `5px solid var(--bs-${type === 'info' ? 'primary' : type})`;
     toast.style.boxShadow = '0 10px 25px rgba(17, 22, 56, 0.12)';
 
-    toast.innerHTML = `
-        <i class="bi ${icons[type] || icons.info} fs-4 mt-1 flex-shrink-0"></i>
-        <div class="flex-grow-1">
-            <div class="fw-bold text-dark small mb-0">${title || titles[type]}</div>
-            <div class="small text-secondary mt-1">${message}</div>
-        </div>
-        <button type="button" class="btn-close btn-sm ms-2" aria-label="Cerrar" onclick="this.closest('.cconor-toast').remove()"></button>
-    `;
+    const icon = document.createElement('i');
+    icon.className = `bi ${icons[type] || icons.info} fs-4 mt-1 flex-shrink-0`;
+    const content = document.createElement('div');
+    content.className = 'flex-grow-1';
+    const heading = document.createElement('div');
+    heading.className = 'fw-bold text-dark small mb-0';
+    heading.textContent = title || titles[type];
+    const text = document.createElement('div');
+    text.className = 'small text-secondary mt-1';
+    text.textContent = message;
+    content.append(heading, text);
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'btn-close btn-sm ms-2';
+    close.setAttribute('aria-label', 'Cerrar');
+    close.addEventListener('click', () => toast.remove());
+    toast.append(icon, content, close);
 
     container.appendChild(toast);
 
