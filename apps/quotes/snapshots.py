@@ -338,7 +338,7 @@ def leer_pdf_emitido(revision):
     return data
 
 
-def emitir_revision(revision_id, *, actor, expected_version):
+def emitir_revision(revision_id, *, actor, expected_version, state_fingerprint=None):
     """Transacción propia: no envolver en otra atomic real ni enviar correo dentro.
 
     El archivo y PostgreSQL no son una única transacción. Un fallo recuperable
@@ -357,6 +357,8 @@ def emitir_revision(revision_id, *, actor, expected_version):
                 raise RevisionConflict("El borrador cambió; recarga antes de emitir.")
             if revision.schema_version == 2:
                 _commercial_actor(quote, actor)
+                if state_fingerprint is not None and state_fingerprint != revision.state_fingerprint:
+                    raise RevisionConflict("La huella comercial cambió; recarga antes de emitir.")
             if revision.status == QuoteRevision.Status.ISSUED:
                 leer_pdf_emitido(revision)
                 return revision
@@ -941,3 +943,26 @@ async def aprevisualizar_revision_comercial(*args, **kwargs):
 
 async def aprevisualizar_edicion_comercial(*args, **kwargs):
     return await sync_to_async(previsualizar_edicion_comercial, thread_sensitive=True)(*args, **kwargs)
+
+
+def previsualizar_nueva_cotizacion(partidas, *, actor, company, client, conditions,
+        tax_rate, discount_percent, tipo_cambio, exchange_context_id, issue_date, valid_days):
+    """P4: ancla de alta propia en memoria, sin reservar folio ni crear Quote."""
+    from .permissions import require_commercial_permission
+
+    actor = require_commercial_permission(actor)
+    quote = Quote(advisor=actor, client_name=client["business_name"], issue_date=issue_date, valid_days=valid_days)
+    parts = _commercial_data(partidas)
+    tax = decimal_limit(tax_rate, 5, 4, maximum=Decimal("1"))
+    discount = decimal_limit(discount_percent, 5, 2, maximum=Decimal("100"))
+    if type(issue_date) is not date or type(valid_days) is not int or not 1 <= valid_days <= 3650:
+        raise ValidationError("Fecha/vigencia comercial inválidas.")
+    _valid_until(issue_date, valid_days)
+    header = _header(quote, company, conditions, client)
+    result = _commercial_calculate(parts, tipo_cambio, tax, discount)
+    _commercial_adjustments(actor, parts, [], tipo=tipo_cambio, context_id=exchange_context_id, tax=tax, discount=discount)
+    output = _preview_commercial_capture(quote, parts, result, actor=actor, header=header,
+        tipo_cambio=tipo_cambio, exchange_context_id=exchange_context_id, tax=tax, discount=discount,
+        issue_date=issue_date, valid_days=valid_days)
+    output["cliente"]["folio"] = None
+    return output

@@ -282,8 +282,9 @@ de rama requieren autorización separada.
 ## 7. Servicios comerciales v2 (P2)
 
 Esquema/precisión/permisos: [24 §8](24-sdd-m8-snapshot-pdf.md#8-ampliación-comercial-v2--p1p2).
-No sustituyen los servicios v1 de §§1–6. M7a actual sigue creando v1; API/UI comerciales
-siguen pendientes. P3 añade preview/documento/emisión v2 en servicios (§8), sin activar
+No sustituyen los servicios internos v1 de §§1–6. P4 conecta la API comercial en
+[28 §13](28-m7a-integracion-vistas-y-m8.md#13-p4--api-comercial-v2-y-capturas-estables); UI pendiente.
+P3 añade preview/documento/emisión v2 en servicios (§8), sin activar
 COTIZACIONES_EMISION_HABILITADA ni certificar uso real.
 
 ### 7.1 Entrada tipada y escritura
@@ -467,7 +468,7 @@ Wrappers materializados con thread_sensitive=True:
 `aprevisualizar_comercial`, `aprevisualizar_edicion_comercial`,
 `aprevisualizar_revision_comercial`; emisión y documentos usan los existentes
 `aemitir_revision` / `aobtener_documento`. No hay un segundo renderer ni endpoints
-duplicados. API/UI comerciales aún pendientes P4/P5; no habilitar mocks ni emisión
+duplicados. API comercial P4 documentada en doc28 §13, UI P5 pendiente; no habilitar mocks ni emisión
 HTTP por asumir que tener servicios equivale a despliegue aceptado.
 
 Pruebas nuevas amplían test_commercial_persistence.py/test_commercial_permissions.py:
@@ -478,3 +479,25 @@ commit incierto, descarga/correo con bytes idénticos y conservación de origina
 
 Validación P3: **640 pruebas Django + 6 terminal correctas**, recursos UUID/PDF/correo
 aislados y APIs/SMTP reales bloqueados. 0003 no aplicada a BD de trabajo; uso real no habilitado.
+
+## 9. Frontera HTTP P4
+
+Contrato vigente y ejemplos en [28 §13](28-m7a-integracion-vistas-y-m8.md#13-p4--api-comercial-v2-y-capturas-estables).
+0004 añade QuoteSelectionContext (captura normalizada, nunca raw) y QuoteAPIRequest
+(recibo de intención transaccional). P4 no cambia defaults históricos ni aplica
+migraciones a BD de trabajo. No sustituir originales API con costos del JSON.
+
+Vista previa nueva sin Quote: `previsualizar_nueva_cotizacion` recibe actor interno,
+empresa de servidor/cliente/condiciones y partidas verificadas; ancla efímera sin
+folio ni escritura. No usar folio inventado ni crear Quote escondida para autorizar.
+HTTP llama a servicios completos desde hilo ORM, no a helpers sin autorización en
+event loop. Simulación de edición continúa ligada a revisión/versión base.
+
+La emisión admite `state_fingerprint` opcional en servicio para compatibilidad P3;
+en HTTP P4 es OBLIGATORIO y se valida bajo bloqueo durable junto con edit_version.
+V1 queda consultable; nueva emisión HTTP v1 y PUT comercial v1 se rechazan409 y
+requieren transición explícita. No truncar cantidades ni asignar margen histórico.
+
+La base IVA API verificada se configura explícitamente en servidor; por defecto
+UNKNOWN impide crear/preview comercial de esa selección. Ningún proveedor real
+queda certificado por las pruebas sintéticas. Emisión HTTP continúa OFF.

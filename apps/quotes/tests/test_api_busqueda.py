@@ -8,6 +8,7 @@ from decimal import Decimal
 from unittest import mock
 
 from django.core.cache import cache
+from django.contrib.auth.models import Permission
 from django.test import TestCase, override_settings, tag
 from django.urls import reverse
 
@@ -17,6 +18,10 @@ from apps.providers.tests.soporte import adaptadores_registrados, crear_proveedo
 from apps.quotes import api
 from apps.quotes.tests.test_vistas_cotizacion import adaptador, crear_asesor, mxn, usd
 from apps.quotes.views import LIMITE_COTIZACIONES
+from apps.quotes.tests.test_commercial_persistence import CommercialFixtures
+from apps.quotes.tests.test_api_cotizaciones import alta_comercial
+from apps.quotes.models import QuoteSelectionContext
+from uuid import uuid4
 
 
 @tag("django_db")
@@ -27,7 +32,9 @@ class ApiBusquedaTests(TestCase):
         crear_proveedor("alfa")
         crear_proveedor("beta")
         self.url = reverse("api_buscar_productos")
-        self.async_client.force_login(crear_asesor())
+        actor = crear_asesor()
+        actor.user_permissions.add(Permission.objects.get(content_type__app_label="quotes", codename="view_commercial_costs"))
+        self.async_client.force_login(actor)
 
     async def buscar(self, adaptadores, **parametros):
         parametros.setdefault("q", "camara ip")
@@ -181,6 +188,128 @@ class ApiBusquedaTests(TestCase):
         llamadas = []
         respuesta, cuerpo = await self.buscar([adaptador("alfa", mxn("1", "1.00"), llamadas=llamadas)])
         self.assertEqual(respuesta.status_code, 401)
-        self.assertEqual(cuerpo, {"success": False, "error": "Inicia sesión para continuar."})
+        self.assertEqual(cuerpo, {"success": False, "error": "Inicia sesión para continuar.",
+                                "code": "UNAUTHENTICATED", "details": {}})
         self.assertEqual(llamadas, [])
         self.assertIsNone(await cache.aget("cotizar:127.0.0.1"))
+
+
+@override_settings(CCONOR_EMPRESA={"name": "QA sintética", "rfc": "", "tagline": "", "phone": "", "email": ""},
+                   CCONOR_PROVIDER_PRICE_BASES={"alfa": {"vat_basis": "NET"}})
+class CommercialSearchTests(CommercialFixtures, TestCase):
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        crear_proveedor("alfa")
+        self.client.force_login(self.actor)
+
+    def search(self, price="100", *, currency="MXN", **params):
+        offer = usd("1", price) if currency == "USD" else mxn("1", price)
+        with adaptadores_registrados(adaptador("alfa", offer)), sin_red():
+            response = self.client.get(reverse("api_buscar_productos"), {"q": "equipo", "schema_version": "2", **params})
+        self.assertEqual(response.status_code, 200, response.content.decode())
+        return response.json()
+
+    def body(self, result):
+        return alta_comercial(items=[{"line_key": str(uuid4()), "source": {"type": "API",
+            "context_ref": result["context_ref"], "offer_ref": result["data"][0]["offer_ref"]}, "quantity": 1,
+            "units": {"source_label": "Pieza", "sale_label": "Pieza", "conversion_factor": "1", "confirmed": True},
+            "pricing": {"mode": "MARGIN", "margin_percent": "35"}}])
+
+    def post(self, data, status=201):
+        response = self.client.post(reverse("api_crear_cotizacion"), json.dumps(data), content_type="application/json")
+        self.assertEqual(response.status_code, status, response.content.decode())
+        return response.json().get("data", response.json())
+
+    def test_busqueda_nueva_no_sustituye_captura_anterior(self):
+        first = self.search()
+        second = self.search("110")
+        self.assertNotEqual(first["context_ref"], second["context_ref"])
+        old = QuoteSelectionContext.objects.get(pk=first["context_ref"])
+        self.assertEqual(list(old.payload["offers"].values())[0]["price"], "100.000000")
+        saved = self.post(self.body(first))
+        from apps.quotes.models import QuoteRevision
+        self.assertEqual(QuoteRevision.objects.get(quote__folio=saved["folio"]).snapshots.get().source_unit_price, Decimal("100"))
+
+    def test_originales_api_falsificados_no_se_aceptan(self):
+        result = self.search()
+        for field in ("price", "currency", "provider", "raw"):
+            body = self.body(result)
+            body["items"][0][field] = "falso"
+            self.post(body, 400)
+        body = self.body(result)
+        body["items"][0]["cost"] = {"amount": "1", "currency": "MXN", "vat_basis": "NET"}
+        self.post(body, 400)
+
+    def test_captura_ajena_y_referencia_inventada_no_crean_quote(self):
+        result = self.search()
+        body = self.body(result)
+        self.client.force_login(self.other)
+        self.post(body, 409)
+        self.client.force_login(self.actor)
+        body["items"][0]["source"]["offer_ref"] = str(uuid4())
+        self.post(body, 409)
+
+    def test_base_iva_desconocida_no_se_asume_neta(self):
+        with override_settings(CCONOR_PROVIDER_PRICE_BASES={}):
+            result = self.search()
+        self.assertEqual(result["data"][0]["vat"], {"vat_basis": "UNKNOWN"})
+        self.post(self.body(result), 409)
+
+    def test_seleccion_guardada_se_edita_sin_busqueda_ni_sesion(self):
+        body = self.body(self.search())
+        created = self.post(body)
+        edit = {k: v for k, v in body.items() if k not in ("request_id", "schema_version", "notes")}
+        edit["items"][0]["source"] = {"type": "EXISTING"}
+        edit["items"][0]["quantity"] = 2
+        edit["edit_version"] = 1
+        with mock.patch.object(api, "_owned_context", side_effect=AssertionError("No recapturar")):
+            response = self.client.put(reverse("api_guardar_revision", args=[created["folio"], 1]),
+                                       json.dumps(edit), content_type="application/json")
+        self.assertEqual(response.status_code, 200, response.content.decode())
+
+    def test_reintentar_alta_no_necesita_captura_original(self):
+        body = self.body(self.search())
+        first = self.post(body)
+        with mock.patch.object(api, "_owned_context", side_effect=AssertionError("No recapturar")):
+            again = self.post(body)
+        self.assertEqual(again["folio"], first["folio"])
+
+    def test_captura_excluye_raw_y_contextos_son_por_usuario(self):
+        result = self.search()
+        context = QuoteSelectionContext.objects.get(pk=result["context_ref"])
+        self.assertEqual(context.actor_id, self.actor.pk)
+        self.assertNotIn("raw", json.dumps(context.payload))
+        from django.core.exceptions import ValidationError
+        offer = next(iter(context.payload["offers"].values()))
+        offer["vat"]["raw"] = {"dato": "no guardar"}
+        with self.assertRaises(ValidationError):
+            QuoteSelectionContext.objects.create(actor=self.actor, kind="SEARCH", payload=context.payload)
+
+    def test_fx_de_cabecera_no_se_mezcla_por_fechas_o_busquedas_distintas(self):
+        first = self.search(currency="USD", tipo_cambio="17.50")
+        second = self.search(currency="USD", tipo_cambio="18.00")
+        body = self.body(first)
+        body["fx_context_id"] = first["fx_context_id"]
+        body["items"].extend(self.body(second)["items"])
+        saved = self.post(body)
+        from apps.quotes.models import QuoteRevision
+        revision = QuoteRevision.objects.get(quote__folio=saved["folio"])
+        self.assertEqual(revision.exchange_rate, Decimal("17.50"))
+        response = self.client.get(reverse("api_guardar_revision", args=[saved["folio"], 1]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["preview"]["resultado"]["total"], "6246.16")
+
+    def test_fx_anterior_se_conserva_al_editar_sin_permisos_para_cambiarlo(self):
+        result = self.search(currency="USD", tipo_cambio="17.50")
+        body = self.body(result)
+        body["fx_context_id"] = result["fx_context_id"]
+        created = self.post(body)
+        self.actor.groups.remove(self.commercial_admin)
+        edit = {k: v for k, v in body.items() if k not in ("request_id", "schema_version", "notes")}
+        edit["items"][0]["source"] = {"type": "EXISTING"}
+        edit["items"][0]["quantity"] = 2
+        edit["edit_version"] = 1
+        response = self.client.put(reverse("api_guardar_revision", args=[created["folio"], 1]),
+                                   json.dumps(edit), content_type="application/json")
+        self.assertEqual(response.status_code, 200, response.content.decode())

@@ -3,7 +3,7 @@
 DER completo y diccionario de datos en docs/DER.md.
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID, uuid4
 
@@ -608,3 +608,122 @@ class QuoteCommercialConfirmation(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("No se borran constancias de confirmación.")
+
+
+class QuoteSelectionContext(models.Model):
+    """Evidencia técnica normalizada e inmutable; no contiene payload raw."""
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+                              related_name="quote_selection_contexts")
+    kind = models.CharField(max_length=6, choices=[("SEARCH", "Búsqueda"), ("FX", "Tipo de cambio")])
+    payload = models.JSONField()
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    objects = RevisionQuerySet.as_manager()
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=Q(kind__in=["SEARCH", "FX"]), name="quote_context_kind")]
+
+    def clean(self):
+        if not isinstance(self.payload, dict):
+            raise ValidationError("Contexto normalizado requerido.")
+        if self.kind == "FX":
+            if set(self.payload) != {"value", "source", "date"}:
+                raise ValidationError("Campos FX no admitidos.")
+            try:
+                if not all(isinstance(self.payload[k], str) for k in ("value", "source", "date")) or len(self.payload["value"]) > 80:
+                    raise ValueError
+                decimal_limit(Decimal(self.payload["value"]), 18, 8, minimum=Decimal(".00000001"))
+                observed = datetime.fromisoformat(self.payload["date"])
+                if observed.utcoffset() is None or not self.payload["source"].strip() or len(self.payload["source"]) > 120:
+                    raise ValueError
+            except (ValueError, TypeError, ArithmeticError, AttributeError):
+                raise ValidationError("Evidencia FX inválida.") from None
+        elif self.kind == "SEARCH":
+            if set(self.payload) != {"offers", "fx_context_id"} or not isinstance(self.payload["offers"], dict) or not 1 <= len(self.payload["offers"]) <= 500:
+                raise ValidationError("Captura de ofertas inválida.")
+            allowed = {"name", "price", "currency", "provider_code", "provider_name", "external_id",
+                       "brand", "model", "mpn", "stock", "es_mejor_precio", "vat"}
+            try:
+                ref = self.payload["fx_context_id"]
+                if ref is not None and str(UUID(ref)) != ref:
+                    raise ValueError
+            except (ValueError, TypeError, AttributeError):
+                raise ValidationError("Referencia FX normalizada inválida.") from None
+            for key, offer in self.payload["offers"].items():
+                try:
+                    if str(UUID(key)) != key or not isinstance(offer, dict) or set(offer) != allowed:
+                        raise ValueError
+                    for field in ("name", "provider_code", "provider_name", "external_id", "brand", "model", "mpn"):
+                        value = offer[field]
+                        limit = 80 if field == "provider_code" else 255 if field == "provider_name" else 6000
+                        if not isinstance(value, str) or len(value) > limit or (field in ("name", "provider_code", "provider_name", "external_id") and not value.strip()):
+                            raise ValueError
+                    if not isinstance(offer["price"], str) or len(offer["price"]) > 80:
+                        raise ValueError
+                    decimal_limit(Decimal(offer["price"]), 18, 6)
+                    if offer["currency"] not in ("MXN", "USD") or type(offer["es_mejor_precio"]) is not bool:
+                        raise ValueError
+                    if offer["stock"] is not None and (type(offer["stock"]) is not int or not 0 <= offer["stock"] <= 9223372036854775807):
+                        raise ValueError
+                    vat = offer["vat"]
+                    if not isinstance(vat, dict):
+                        raise ValueError
+                    if vat.get("vat_basis") in ("NET", "UNKNOWN"):
+                        if set(vat) != {"vat_basis"}:
+                            raise ValueError
+                    elif vat.get("vat_basis") == "INCLUDED" and set(vat) == {"vat_basis", "vat_rate"} and isinstance(vat["vat_rate"], str):
+                        decimal_limit(Decimal(vat["vat_rate"]), 5, 4, maximum=Decimal("1"))
+                    else:
+                        raise ValueError
+                except (ValueError, TypeError, AttributeError, ArithmeticError):
+                    raise ValidationError("Oferta normalizada inválida; no guardar raw.") from None
+        else:
+            raise ValidationError("Tipo de contexto inválido.")
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("La captura es inmutable; crea otra referencia.")
+        self.full_clean()
+        kwargs["force_insert"] = True
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("No borrar evidencia de selección desde el modelo.")
+
+
+class QuoteAPIRequest(models.Model):
+    """Recibo de intención HTTP; resultado y recibo se confirman juntos."""
+
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="quote_api_requests")
+    request_id = models.UUIDField()
+    operation = models.CharField(max_length=8, choices=[("CREATE", "Alta"), ("CLONE", "Revisión"), ("FX", "FX")])
+    fingerprint = models.CharField(max_length=64)
+    revision = models.ForeignKey(QuoteRevision, null=True, blank=True, on_delete=models.PROTECT, related_name="api_requests")
+    context = models.ForeignKey(QuoteSelectionContext, null=True, blank=True, on_delete=models.PROTECT, related_name="api_requests")
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    objects = RevisionQuerySet.as_manager()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["actor", "request_id"], name="quote_api_request_unique"),
+            models.CheckConstraint(condition=(Q(operation__in=["CREATE", "CLONE"], revision__isnull=False, context__isnull=True)
+                | Q(operation="FX", revision__isnull=True, context__isnull=False)), name="quote_api_result_shape"),
+            models.CheckConstraint(condition=Q(fingerprint__regex=r"^[0-9a-f]{64}$"), name="quote_api_fingerprint"),
+        ]
+
+    def clean(self):
+        if self.context_id and (self.context.kind != "FX" or self.context.actor_id != self.actor_id):
+            raise ValidationError("El recibo FX requiere un contexto propio de tipo FX.")
+        if self.revision_id and self.revision.schema_version != 2:
+            raise ValidationError("El recibo comercial requiere una revisión v2.")
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("El recibo API es inmutable.")
+        self.full_clean()
+        kwargs["force_insert"] = True
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("No borrar recibos de idempotencia.")

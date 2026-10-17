@@ -19,10 +19,33 @@ erDiagram
     QUOTE_REVISION ||--o{ QUOTE_COMMERCIAL_CONFIRMATION : "confirma estado (PROTECT)"
     AUTH_USER ||--o{ QUOTE_COMMERCIAL_CONFIRMATION : "acepta aviso (PROTECT)"
     AUTH_USER |o--o{ QUOTE_SNAPSHOT : "valida unidad (PROTECT)"
+    AUTH_USER ||--o{ QUOTE_SELECTION_CONTEXT : "captura evidencia (PROTECT)"
+    AUTH_USER ||--o{ QUOTE_API_REQUEST : "solicita (PROTECT)"
+    QUOTE_REVISION |o--o{ QUOTE_API_REQUEST : "resultado (PROTECT)"
+    QUOTE_SELECTION_CONTEXT |o--o{ QUOTE_API_REQUEST : "resultado FX (PROTECT)"
 
     AUTH_USER {
         int id PK
         varchar username
+    }
+
+    QUOTE_SELECTION_CONTEXT {
+        uuid id PK
+        bigint actor_id FK "PROTECT"
+        varchar kind "SEARCH o FX"
+        jsonb payload "normalizado, sin raw, inmutable"
+        datetime created_at
+    }
+
+    QUOTE_API_REQUEST {
+        bigint id PK
+        bigint actor_id FK "UK con request_id, PROTECT"
+        uuid request_id "intención estable por usuario"
+        varchar operation "CREATE, CLONE o FX"
+        varchar fingerprint "SHA-256 de intención HTTP tipada"
+        bigint revision_id FK "nullable, PROTECT; XOR context_id"
+        uuid context_id FK "nullable, PROTECT"
+        datetime created_at
     }
 
     CATEGORY {
@@ -256,7 +279,10 @@ en costo manual desconocido v2. Cantidad entera para v2 sin eliminar decimales v
 Constancia única por revisión/versión/huella/código/alcance/actor, inmutable. No hay
 descuento por partida ni duplicación del usuario/roles: se reutiliza auth.Group/Permission.
 P3 usa ese mismo esquema para preview, sellado y archivo comercial v2: [24 §9](24-sdd-m8-snapshot-pdf.md#9-p3--preview-contexto-cliente-y-emisión-comercial-v2).
-No añade columnas ni convierte históricos; endpoints/UI comerciales M7a pendientes.
+P4 añade dos tablas técnicas sin convertir históricos: QuoteSelectionContext y
+QuoteAPIRequest (0004). Modelo/contrato en [28 §13](28-m7a-integracion-vistas-y-m8.md#13-p4--api-comercial-v2-y-capturas-estables).
+Unicidad actor/request_id, resultado revisión XOR contexto FX, recibos/capturas
+inmutables. API comercial implementada; UI/uso real y retención operativa pendientes.
 
 ## Notas de diseño
 

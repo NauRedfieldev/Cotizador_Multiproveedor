@@ -1,5 +1,8 @@
 # M7a: vistas async, API JSON, login y cotizaciones sobre M8
 
+**Contrato vigente:** §13 añade P4 comercial v2 y prevalece sobre los ejemplos
+históricos de §§1–12. No implica conexión del frontend ni habilitación de uso real.
+
 | | |
 |---|---|
 | **Código** | `apps/quotes/views.py` (`cotizar_productos`, `buscar`), `apps/quotes/api.py`, `apps/quotes/urls.py`, `settings/urls.py`, `settings/settings.py`, `templates/registration/login.html` |
@@ -271,3 +274,187 @@ estructura, de M7a/M8) de los datos y políticas que debe confirmar CCONOR.
 
 **Por qué la edición conserva la empresa:** es un dato capturado en la revisión, igual que hace
 `crear_revision` de M8; cambiar `CCONOR_EMPRESA` afecta solo a las cotizaciones nuevas.
+
+## 13. P4 · API comercial v2 y capturas estables
+
+Implementación en `api.py`, `models.py`, `snapshots.py`, `urls.py` y migración
+`0004_commercial_api_contexts`. Motor/esquema: [24 §8–9](24-sdd-m8-snapshot-pdf.md).
+La versión HTTP sigue `/api/v1/`; `schema_version=2` identifica formato comercial,
+no una segunda API. No se cambió frontend ni `USE_MOCKS`.
+
+### 13.1 Rutas y autorización
+
+Todas requieren sesión activa, lectura financiera interna y autorización de objeto
+cuando exista Quote; operaciones mutables mantienen CSRF. Staff no sustituye la
+capacidad financiera. Roles no amplían acceso entre asesores. ORM/servicios síncronos
+se ejecutan completos mediante `sync_to_async(..., thread_sensitive=True)`.
+
+| Método y ruta | Contrato |
+| --- | --- |
+| GET `/api/v1/products/search/?q=...&schema_version=2` | Ofertas internas con `context_ref`/`offer_ref`; guarda captura normalizada, no raw |
+| POST `/api/v1/quotes/preview/` | Captura nueva antes de existir Quote; schema_version2, sin request_id/notes; no escribe, reserva folio ni archiva PDF |
+| POST `/api/v1/quotes/` | Alta v2 explícita con request_id; recibo y Quote/revisión en misma transacción; 201 |
+| GET `/api/v1/quotes/<folio>/` | Lista de revisiones/actual; lectura consistente, no reemplaza selección explícita de documento |
+| GET `/api/v1/quotes/<folio>/revisiones/<n>/` | Revisión exacta: originales/inputs internos, preview o sellos, constancias y capacidades |
+| PUT en la misma ruta | Reemplazo completo de borrador v2 con edit_version; conserva capturas originales |
+| POST `.../revisiones/<n>/preview/` | Simula ese reemplazo sin guardar ni aceptar su huella propuesta |
+| POST `.../revisiones/<n>/confirmaciones/` | edit_version, state_fingerprint y warnings explícitos; actor/fecha servidor |
+| POST `.../revisiones/<n>/emitir/` | edit_version y state_fingerprint guardados; P3 durable; bandera HTTP sigue requerida |
+| POST `.../revisiones/<n>/nueva/` | request_id y schema_version2; desde v2 emitida copia snapshots; desde v1 exige partidas comerciales revisadas y parámetros explícitos |
+| POST `/api/v1/quotes/fx-contexts/` | request_id y value decimal; exige facultad FX, origen manual/fecha servidor; 201 |
+| GET `/api/v1/commercial/capabilities/` | Capacidades efectivas del usuario actual |
+| GET/PATCH `/api/v1/commercial/permissions/<user_id>/` | Admin comercial: consultar/ajustar cinco facultades de un usuario ya interno; PATCH capability/ enabled booleano |
+
+Rutas estáticas antes de `<folio>`. No GET global de cotizaciones, DELETE, CRUD de
+usuarios/grupos ni refresco automático de ofertas. No abrir UserAdmin al asesor.
+
+### 13.2 Alta y campos de partida
+
+Ejemplo sintético de API; referencias deben salir de una búsqueda del mismo usuario:
+
+```json
+{
+  "schema_version": 2,
+  "request_id": "11111111-1111-4111-8111-111111111111",
+  "client_name": "Cliente sintético QA",
+  "client_rfc": "",
+  "client_email": "",
+  "conditions": ["Muestra sin validez comercial."],
+  "notes": "Nota interna, nunca condición cliente.",
+  "issue_date": "2026-10-16",
+  "valid_days": 15,
+  "tax_rate": "0.16",
+  "discount_percent": "0",
+  "fx_context_id": null,
+  "items": [{
+    "line_key": "22222222-2222-4222-8222-222222222222",
+    "source": {"type": "API", "context_ref": "33333333-3333-4333-8333-333333333333", "offer_ref": "44444444-4444-4444-8444-444444444444"},
+    "quantity": 2,
+    "units": {"source_label": "Pieza", "sale_label": "Pieza", "conversion_factor": "1", "confirmed": true},
+    "pricing": {"mode": "MARGIN", "margin_percent": "35.00"}
+  }]
+}
+```
+
+- Empresa/asesor siempre del servidor. Contacto/teléfono/proyecto opcionales como
+  `client_contact`, `client_phone`, `client_project`. Fecha YYYY-MM-DD estricta.
+- Tasas fracción (.16), porcentajes35/10, precios/factores como TEXTO decimal sin
+  exponente/separadores. Cantidad/versión enteros estrictos; bool no es entero válido.
+- Nuevas capturas: IVA16%, descuento0 y margen35% si mode=MARGIN omite porcentaje.
+  Edición exige fecha/vigencia/IVA/descuento/FX explícitos y margen cuando corresponda;
+  no usa defaults para reconstruir ajustes previos. Hasta500 líneas.
+- `source.type=API`: solo context_ref/offer_ref del servidor. Se rechazan campos
+  precio/costo/moneda/proveedor suministrados por navegador; descripción pública sí
+  puede editarse. No usar external_id del distribuidor como código cliente automático.
+- `source.type=EXISTING`: solo type, resuelve snapshot de esa revisión/line_key;
+  permite editar sin sesión/búsqueda. Otra captura requiere NUEVO line_key explícito.
+- `source.type=MANUAL`: name obligatorio, code/brand/model opcionales. Campo `cost`
+  es null si desconocido o un precio explícito. No inventar moneda para costo ausente.
+- Un precio manual tiene amount/currency y vat_basis=NET o INCLUDED. INCLUDED exige
+  vat_rate propia; NET no admite vat_rate. Costo0 conocido conserva amount="0" y moneda.
+- `pricing.mode=MANUAL` requiere `sale` con ese contrato de precio; no acepta margen.
+  MARGIN admite margin_percent, no sale, y exige costo conocido. Ejemplo venta directa:
+  `{"mode":"MANUAL","sale":{"amount":"150.00","currency":"MXN","vat_basis":"NET"}}`.
+- source_label/sale_label/factor y confirmed=true son explícitos; actor/fecha de
+  validación salen de la petición autenticada, no de un confirmed_by del browser.
+- Notas internas solo en alta, no en detalle/PDF. conditions es lista externa
+  obligatoria, aunque vacía. No copiar secretos/proveedor a texto público: la allowlist
+  estructural no es detector de secretos en texto libre.
+
+### 13.3 Captura confiable y base IVA API
+
+`QuoteSelectionContext` es append-only: UUID, actor PROTECT, kind SEARCH/FX,
+payload normalizado y created_at. SEARCH guarda offers por offer_ref UUID, con
+originales y base IVA, y referencia de FX observado. FX guarda value/source/date.
+Sin raw, credenciales ni caché de proceso como única fuente de verdad. Una nueva
+búsqueda crea otro contexto: no pisa el precio seleccionado antes. Referencia ajena,
+inexistente o fuera de contexto da409, jamás recaptura silenciosa.
+
+La base IVA de origen NO está en ProviderOffer actual. Por eso P4 consulta la
+configuración confiable `settings.CCONOR_PROVIDER_PRICE_BASES`, vacía por defecto.
+Solo poblarla tras verificar que el contrato aplica a TODAS las ofertas de ese
+proveedor: `{"codigo":{"vat_basis":"NET"}}` o INCLUDED con vat_rate decimal.
+No se configuró NET para SYSCOM/Exel por suposición. Ausencia=UNKNOWN: la búsqueda
+puede mostrar la oferta internamente, pero crear/preview comercial la rechaza409.
+Si hay variación por producto, no usar una regla global; falta enriquecer el contrato
+verificado por oferta antes de habilitar ese proveedor para uso real.
+
+FX elegido por la cabecera es independiente de fechas/FX incidentales de nuevas
+búsquedas. Productos de búsquedas distintas pueden compartir el FX elegido sin
+conflicto artificial por timestamp. Aplicar/cambiar FX exige capacidad; conservar
+exactamente el capturado permite editar cantidad/cabecera sin facultad de cambiarlo.
+Si el contexto original ya no estuviera disponible, una línea guardada se reconstruye
+de su snapshot. No se añade caducidad comercial, retención o limpieza automática:
+esas políticas siguen pendientes de M9/operación antes del uso real.
+
+### 13.4 Recibos e idempotencia
+
+`QuoteAPIRequest`: actor PROTECT + request_id únicos, operation CREATE/CLONE/FX,
+SHA-256 de intención y resultado FK a revisión O contexto FX (no ambos), created_at.
+Inmutable, sin almacenar el JSON completo del cliente ni notas claras en el recibo.
+La huella incluye operación, destino y JSON tipado ordenado por claves, excluyendo
+request_id. Reintentar requiere los mismos valores/tipos ("35" y "35.00" no se
+normalizan semánticamente como la misma petición). No reformatear el cuerpo al reintentar.
+
+En PostgreSQL se toma advisory lock transaccional por actor+UUID antes de resolver
+el recibo, sin bloquear User antes de Quote (evita invertir Quote→User de P3).
+Recibo/resultado se confirman juntos; fallo revierte ambos. Colisión de folio se
+reintenta en savepoint propio; el lock de intención no sustituye unicidad de folio.
+
+Mismo intento recupera su resultado ANTES de consultar capturas, empresa o defaults
+del día. Retorna `replayed=true` y estado vigente de la revisión si luego se editó,
+no otra alta ni JSON financiero antiguo cacheado. Acceso y capacidades de lectura
+se vuelven a comprobar. Misma clave/otra operación/destino/cuerpo da409. UUID previo
+de revisión sin recibo API tampoco se reaprovecha. Los servicios P2 conservan su
+propia huella de creación/estado; el recibo no las sustituye.
+
+### 13.5 Preview, confirmaciones y documento
+
+Preview retorna persistida, edit_version, state_fingerprint, resultado financiero
+INTERNO, warnings y cliente (allowlist). Sin Quote, cliente.folio/revision=null;
+sin escrituras/constancias/PDF. En simulación de edición la versión/huella BASE se
+separan de la huella propuesta. Guardar y volver a leer antes de aceptar avisos.
+
+GET exacto retorna originales/inputs internos, capacidades y emission_enabled,
+confirmations auditables, y preview de borrador con avisos `{code,line_key|null,
+requires_confirmation,required_capability,confirmed}`. `confirmed` solo cuenta
+actor activo, permiso/acceso actuales y misma versión/huella. Las constancias
+anteriores siguen auditables pero no habilitan datos cambiados o permisos revocados.
+
+Confirmar: `{"edit_version":1,"state_fingerprint":"<64 hex>","warnings":[{"code":"COSTO_DESCONOCIDO","line_key":"<uuid>"}]}`.
+Global usa line_key=null. No acepta actor/fecha del JSON. Emitir requiere versión y
+huella guardadas; ambas se verifican BAJO los bloqueos de P3 en la operación durable.
+La bandera HTTP sigue por defecto False, incluso cuando existe el motor comercial.
+
+Emitida: detalle retorna sellos y contexto cliente archived_only, sin ejecutar el
+motor. Recuperar/reintentar usa el mismo original SHA-256, no regenera ni exige
+aceptar avisos históricos otra vez. PDF/correo existentes usan revisión exacta y
+bytes archivados; SMTP fuera de transacción. Costos/proveedor/FX/margen/utilidad
+nunca pasan al contexto cliente. El contenedor completo de preview/detalle es
+EXCLUSIVAMENTE interno, no una respuesta para un portal externo.
+
+### 13.6 Compatibilidad, errores y despliegue
+
+- Alta sin schema_version conserva borrador v1 para transición del consumidor.
+  PUT comercial v1 da409: copia explícita a v2, sin recaptura/truncamiento. Emisión
+  HTTP v1 da409 aun con bandera activada; servicio interno v1 conserva históricos.
+  Clonado legacy sin schema_version sigue como vía histórica, no emisión comercial.
+- Errores de operaciones conservan success=false/error texto y añaden code/details:
+  INVALID_INPUT400, UNAUTHENTICATED401, FORBIDDEN403, NOT_FOUND404, CONFLICT409,
+  UNAVAILABLE503, INTERNAL_ERROR500. Búsqueda conserva cuerpo especializado y429;
+  CSRF/método conservan respuestas del middleware/Django, no se exime la API.
+- Cambiar gestión exige manage_commercial_permissions; solo cinco ajustes, booleano
+  enabled estricto. No concede lectura interna, grupos, gestión o auth.change_user.
+  Permiso heredado se rechaza explícitamente, sin fingir revocación.
+- Pruebas amplían archivos existentes: selección estable/ajena, IVA desconocido,
+  FX entre búsquedas, preview sin escrituras, corrupción de intención, reintentos,
+  carreras, permisos/CSRF, confirmaciones/archivo y migración0003→0004 reversible
+  SOLO en fixtures aislados. Revertir0004 en uso real perdería evidencia/recibos.
+- Código requiere0003/0004 antes de usar BD de trabajo. No se aplicaron allí ni se
+  dieron roles reales. No activar HTTP/mocks por desplegar esta entrega. Faltan P5,
+  validación de proveedores/empresa, retención/recuperación y aceptación comercial.
+
+Validación P4: **676 pruebas Django + 6 terminal OK**, BD PostgreSQL UUID creada y
+destruida, PDFs temporales y correo en memoria, red/SMTP reales bloqueados. Checks
+y estado modelos/migraciones en disco consistentes. No certifica proveedores reales,
+UI ni aceptación comercial; 0003/0004 no aplicadas a BD de trabajo.

@@ -1,7 +1,8 @@
 # 24 · SDD M8: revisiones, snapshots y PDF original
 
 **Versionado:** §§1–7 describen el esquema histórico v1. La ampliación comercial
-v2/P2 está en §8; preview/render/emisión de servicio P3 en §9. API/UI v2 pendientes.
+v2/P2 está en §8; preview/render/emisión de servicio P3 en §9. API P4 en
+[28 §13](28-m7a-integracion-vistas-y-m8.md#13-p4--api-comercial-v2-y-capturas-estables); UI P5 pendiente.
 No reinterpretar los
 campos históricos usando reglas comerciales nuevas.
 
@@ -265,7 +266,7 @@ Código: `commercial.py`, `models.py`, `permissions.py`, servicios comerciales e
   datos comerciales ni asigna margen, unidades, moneda o FX al histórico.
 - Al cerrar P2, emisión/documento comercial v2 estaban bloqueados. **P3 (§9)**
   conecta motor, confirmaciones, sellado y renderer cliente a nivel de servicio.
-  No hay aún adaptación comercial de endpoints/UI M7a ni habilitación de uso real.
+  P4 conecta los endpoints (doc28 §13); UI y habilitación de uso real siguen pendientes.
 - Los resultados del motor y de la validación P2 son INTERNOS, contienen costos:
   no serializarlos directamente al cliente ni ponerlos en el documento externo.
 
@@ -549,8 +550,9 @@ nunca regeneración. Una revisión nueva no modifica el original v1 ni v2 de su 
 
 ### 9.5 Alcance operativo
 
-No se crean archivos de aplicación nuevos ni otra migración en P3. 0003 sigue
-pendiente de autorización para BD de trabajo. No se asignan usuarios/grupos reales,
-no se habilita emisión HTTP, no se conectan frontend/mocks ni contratos API comerciales.
+En P3 no se crearon archivos de aplicación nuevos ni otra migración. P4 añade0004
+con capturas/recibos técnicos y API comercial (doc28 §13). 0003/0004 siguen pendientes
+de autorización para BD de trabajo. No se asignan usuarios/grupos reales ni se
+habilita emisión HTTP/frontend/mocks.
 Falta P4/P5 y aceptación visual/comercial final con datos oficiales. Los fixtures y
 pruebas sintéticos no certifican semántica real de IVA/stock de Exel ni uso con clientes.
