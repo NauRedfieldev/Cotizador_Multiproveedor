@@ -1,9 +1,20 @@
 from django.contrib import admin
+from django.core.exceptions import PermissionDenied
 
-from .models import QuoteRevision, QuoteSnapshot
+from .models import QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
+from .permissions import require_commercial_permission
 
 
 class SnapshotReadOnlyAdmin(admin.ModelAdmin):
+    def has_view_permission(self, request, obj=None):
+        if not super().has_view_permission(request, obj):
+            return False
+        try:
+            require_commercial_permission(request.user)
+        except PermissionDenied:
+            return False
+        return True
+
     def get_readonly_fields(self, request, obj=None):
         return tuple(field.name for field in self.model._meta.fields)
 
@@ -26,3 +37,8 @@ class QuoteRevisionAdmin(SnapshotReadOnlyAdmin):
 @admin.register(QuoteSnapshot)
 class QuoteSnapshotAdmin(SnapshotReadOnlyAdmin):
     list_display = ("revision", "position", "name", "source_currency", "source_unit_price")
+
+
+@admin.register(QuoteCommercialConfirmation)
+class QuoteCommercialConfirmationAdmin(SnapshotReadOnlyAdmin):
+    list_display = ("revision", "edit_version", "warning_code", "confirmed_by", "confirmed_at")

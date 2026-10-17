@@ -278,3 +278,116 @@ etiquetas. Tests no certifican datos oficiales, logo ni condiciones reales.
 
 No hay jobs automáticos, Docker ni hardening global. Publicación/PR/merge y borrado
 de rama requieren autorización separada.
+
+## 7. Servicios comerciales v2 (P2)
+
+Esquema/precisión/permisos: [24 §8](24-sdd-m8-snapshot-pdf.md#8-ampliación-comercial-v2--p1p2).
+No sustituyen los servicios v1 de §§1–6. M7a actual sigue creando v1; API, preview
+pública, documento y emisión v2 siguen pendientes de P3/P4. **No basta habilitar
+COTIZACIONES_EMISION_HABILITADA:** el servicio rechaza emisión v2 antes de escribir PDF.
+
+### 7.1 Entrada tipada y escritura
+
+Importar de `apps.quotes.snapshots`:
+
+```python
+key = uuid4()  # conservar la misma identidad en los reintentos
+linea = PartidaComercialCapturada(
+    name="Concepto sintético", source_unit_price=Decimal("100"),
+    source_currency="MXN", quantity=Decimal("2"), line_key=key,
+    source_kind="MANUAL", source_unit_label="Pieza", sale_unit_label="Pieza",
+    pricing_mode="MARGIN", margin_percent=Decimal("35"),
+)
+revision = crear_borrador_comercial(
+    quote_id, [linea], actor=actor_interno, company=empresa_validada,
+    conditions=condiciones_cliente, request_id=uuid_estable,
+)
+```
+
+El actor necesita acceso a Quote, lectura financiera y capacidad manual en ese
+ejemplo. Las entradas API requieren source_kind="API" y proveedor/nombre/ID de la
+captura confiable; no recibir precios de un JSON del navegador ni interpretar raw.
+No usar las factories v1 heredadas como constructor comercial: aportar campos v2
+explícitos (unidades, identidad, modo, bases IVA). P2 no implementa captura firmada.
+
+| Servicio | Contrato |
+| --- | --- |
+| `crear_borrador_comercial` | Quote existente, partidas tipadas; actor/company/conditions obligatorios; client opcional; IVA16%, descuento0 explícitos al crear; request_id estable |
+| `guardar_borrador_comercial` | revision_id + reemplazo completo; expected_version, company, conditions, client, tipo_cambio, exchange_context_id, tax_rate, discount_percent, issue_date, valid_days explícitos |
+| `crear_revision_comercial` | origen v1 borrador/emitida o v2 emitida; partidas revisadas y actor/request_id/tax_rate/discount_percent/tipo_cambio/exchange_context_id explícitos; nuevo borrador, sin heredar constancias |
+| `confirmar_advertencias_comerciales` | revision_id, pares (código, scope_ref), actor, expected_version y state_fingerprint que se mostraron |
+| `validar_confirmaciones_comerciales` | revision_id, actor y expected_version; devuelve ResultadoComercial INTERNO; verifica, NO emite |
+
+Crear admite tipo_cambio/identidad NULL para solo MXN, fecha/vigencia de Quote si
+se omiten. Cuando hay FX, aportar TipoCambio y UUID de contexto estables, con origen
+y fecha reales. Capturarlo inicialmente requiere capacidad FX. Para editar sin
+permiso FX, conservar exactamente contexto y valores previos; cambiarlos requiere
+capacidad y una identidad nueva. Un cambio de cabecera/cantidad no vuelve a buscar.
+
+En manual con costo ausente: source_unit_price/source_currency/cost_tax_rate_included
+son None, pricing_mode="MANUAL", margen NULL y precio/moneda manual definidos.
+Con costo0, capturar Decimal("0") y moneda conocida. Precio manual corresponde a
+unidad VENDIDA y no se divide otra vez por factor. Tasa incluida se expresa como
+fracción (.16), NULL indica sin IVA; no inferirla de la tasa de venta.
+
+Los importes resultantes son internos. Un actor sin facultad de ajustar un valor
+puede conservar el valor previamente capturado al cambiar cantidad/cabecera. No
+puede introducir un ajuste mediante cambios de identidad o confirmaciones.
+
+### 7.2 Confirmar e invalidar
+
+```python
+confirmar_advertencias_comerciales(
+    revision.pk, [("COSTO_DESCONOCIDO", str(line_key))],
+    actor=asesor_autorizado, expected_version=revision.edit_version,
+    state_fingerprint=revision.state_fingerprint,
+)
+resultado = validar_confirmaciones_comerciales(
+    revision.pk, actor=actor_interno, expected_version=revision.edit_version,
+)
+# resultado puede contener costo/utilidad: no devolverlo directamente a un cliente.
+```
+
+Para avisos globales scope_ref="". No aceptar un booleano general ni escoger
+confirmed_by desde HTTP. El servicio recalcula avisos y comprueba pertenencia,
+permisos actuales y huella. Código/referencia inválidos → ValidationError; versión
+obsoleta/huella diferente → RevisionConflict; falta de capacidad/confirmación válida
+→ PermissionDenied. Repetir la misma aceptación no crea duplicados.
+
+Después de editar: edit_version aumenta, state_fingerprint se recalcula y las
+constancias anteriores quedan como antecedente, no autorización vigente. La huella
+request_fingerprint inicial no cambia. Un confirmante inactivo o con permiso
+revocado no habilita emisión; otra persona autorizada puede aceptar el estado actual.
+
+### 7.3 Roles sin escalamiento técnico
+
+`apps.quotes.permissions.configure_commercial_groups(actor=superusuario_activo)`
+se ejecuta explícitamente DESPUÉS de migrate/post_migrate para preparar grupos.
+No asigna miembros; primer admin comercial necesita asignación confiable autorizada.
+
+`set_commercial_permission(user_id, capability, actor=admin_comercial, enabled=bool)`
+solo gestiona los cinco ajustes permitidos de un asesor ya interno; no crea cuentas,
+no da is_staff/superusuario, grupos, auth.change_user o gestión comercial. Consulta
+usuarios frescos para no conservar una autorización revocada en has_perm.
+
+No hay pantalla ni endpoint de administración comercial todavía. No abrir UserAdmin
+genérico a un asesor comercial para suplir esa ausencia.
+
+### 7.4 Async, regresión y despliegue
+
+Wrappers con thread_sensitive=True sobre la operación completa:
+`acrear_borrador_comercial`, `aguardar_borrador_comercial`,
+`acrear_revision_comercial`, `aconfirmar_advertencias_comerciales`.
+No consultar relaciones lazy en event loop. La validación previa a emitir se
+integrará en P3 dentro de la operación durable, no como comprobación independiente
+que una vista pueda usar después sobre datos modificados.
+
+La migración 0003 no contiene backfill ni asignación de usuarios. Crear el archivo
+no significa haberlo aplicado a la BD de trabajo: pedir autorización, respaldar y
+aplicar antes de ejecutar el código nuevo con esa BD. Tests: mismas instrucciones
+PostgreSQL/storage aislados de §6, incluyendo suites comerciales nuevas.
+
+Validación P2: **604 pruebas Django + 6 de terminal correctas**, con BD UUID
+exclusiva creada/destruida, PDFs temporales, correo en memoria y red/SMTP reales
+bloqueados. Incluye regresión v1 y forward/backward de migración con fixtures.
+No se aplicó 0003 a la BD de trabajo ni se certificó API real/SMTP o emisión v2.

@@ -5,13 +5,14 @@ DER completo y diccionario de datos en docs/DER.md.
 
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models, transaction
 from django.db.models import F, Q, Sum
+from django.db.models.functions import Floor
 from django.utils import timezone
 
 from .snapshot_values import decimal_limit
@@ -19,6 +20,25 @@ from .storage import QuotePDFStorage, quote_pdf_path
 
 TWO_PLACES = Decimal("0.01")
 DEFAULT_TAX_RATE = Decimal("0.16")  # IVA México
+
+REVISION_COMMERCIAL_FIELDS = (
+    "calculation_version", "state_fingerprint", "exchange_context_id", "discount_percent",
+    "sale_subtotal", "discount_amount", "known_cost_total", "costs_complete", "gross_profit",
+)
+SNAPSHOT_COMMERCIAL_FIELDS = (
+    "line_key", "source_kind", "cost_tax_rate_included", "source_unit_label", "sale_unit_label",
+    "conversion_factor", "unit_validated_by_id", "unit_validated_at", "pricing_mode", "margin_percent",
+    "manual_unit_price", "manual_currency", "manual_tax_rate_included", "sale_amount", "cost_amount",
+)
+COMMERCIAL_PERMISSIONS = (
+    ("view_commercial_costs", "Consultar datos financieros internos autorizados"),
+    ("change_commercial_margin", "Modificar margen comercial"),
+    ("set_commercial_sale", "Capturar venta y conceptos manuales"),
+    ("change_commercial_tax", "Modificar tasas de IVA comerciales"),
+    ("change_commercial_fx", "Modificar contexto de tipo de cambio"),
+    ("apply_commercial_discount", "Aplicar descuento global porcentual"),
+    ("manage_commercial_permissions", "Gestionar permisos comerciales limitados"),
+)
 
 
 def _money(value):
@@ -231,6 +251,15 @@ class QuoteRevision(models.Model):
     edit_version = models.PositiveIntegerField(default=1, editable=False)
     status = models.CharField(max_length=6, choices=Status.choices, default=Status.DRAFT)
     schema_version = models.PositiveSmallIntegerField(default=1, editable=False)
+    calculation_version = models.PositiveSmallIntegerField(null=True, blank=True, editable=False)
+    state_fingerprint = models.CharField(max_length=64, null=True, blank=True, editable=False)
+    exchange_context_id = models.UUIDField(null=True, blank=True)
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    sale_subtotal = models.DecimalField(max_digits=38, decimal_places=2, null=True, blank=True)
+    discount_amount = models.DecimalField(max_digits=38, decimal_places=2, null=True, blank=True)
+    known_cost_total = models.DecimalField(max_digits=38, decimal_places=2, null=True, blank=True)
+    costs_complete = models.BooleanField(null=True, blank=True)
+    gross_profit = models.DecimalField(max_digits=38, decimal_places=2, null=True, blank=True)
     header = models.JSONField()  # client/company/conditions; solo texto validado por el servicio.
     currency = models.CharField(max_length=3, default="MXN", editable=False)
     exchange_rate = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True)
@@ -253,6 +282,7 @@ class QuoteRevision(models.Model):
 
     class Meta:
         ordering = ["quote_id", "number"]
+        permissions = COMMERCIAL_PERMISSIONS
         constraints = [
             models.UniqueConstraint(fields=["quote", "number"], name="quote_revision_number_unique"),
             models.UniqueConstraint(fields=["quote", "request_id"], name="quote_revision_request_unique"),
@@ -266,6 +296,28 @@ class QuoteRevision(models.Model):
                      total__isnull=False, subtotal__gte=0, tax__gte=0, total__gte=0)
                    & ~Q(pdf="") & ~Q(pdf_sha256=""))
             ), name="quote_revision_seal_consistent"),
+            models.CheckConstraint(condition=(
+                (Q(schema_version=1) & Q(**{f"{f}__isnull": True for f in REVISION_COMMERCIAL_FIELDS}))
+                | (Q(schema_version=2, calculation_version=1, calculation_version__isnull=False, discount_percent__isnull=False,
+                     discount_percent__gte=0, discount_percent__lte=100, state_fingerprint__isnull=False)
+                   & Q(state_fingerprint__regex=r"^[0-9a-f]{64}$"))
+            ), name="quote_revision_commercial_version"),
+            models.CheckConstraint(condition=(Q(schema_version=1)
+                | Q(exchange_rate__isnull=True, exchange_context_id__isnull=True)
+                | Q(exchange_rate__isnull=False, exchange_context_id__isnull=False)
+            ), name="quote_revision_commercial_fx"),
+            models.CheckConstraint(condition=(Q(schema_version=1)
+                | Q(status="DRAFT", sale_subtotal__isnull=True, discount_amount__isnull=True,
+                    known_cost_total__isnull=True, costs_complete__isnull=True, gross_profit__isnull=True)
+                | (Q(status="ISSUED", sale_subtotal__isnull=False, discount_amount__isnull=False,
+                     known_cost_total__isnull=False, costs_complete__isnull=False,
+                     sale_subtotal__gte=0, discount_amount__gte=0, known_cost_total__gte=0,
+                     subtotal=F("sale_subtotal") - F("discount_amount"),
+                     discount_amount__lte=F("sale_subtotal"))
+                   & (Q(costs_complete=True, gross_profit__isnull=False,
+                        gross_profit=F("subtotal") - F("known_cost_total"))
+                      | Q(costs_complete=False, gross_profit__isnull=True)))
+            ), name="quote_revision_commercial_seal"),
         ]
 
     def clean(self):
@@ -280,14 +332,33 @@ class QuoteRevision(models.Model):
             raise ValidationError("No guardar procedencia de un tipo inexistente.")
         if self.based_on_id and self.based_on.quote_id != self.quote_id:
             raise ValidationError("La revisión de origen pertenece a otra cotización.")
+        if self.schema_version == 1:
+            if any(getattr(self, f) is not None for f in REVISION_COMMERCIAL_FIELDS):
+                raise ValidationError("Una revisión v1 no recibe campos comerciales v2.")
+        elif self.schema_version == 2:
+            if self.calculation_version != 1 or self.discount_percent is None:
+                raise ValidationError("Versión de cálculo/descuento comercial requeridos.")
+            if not isinstance(self.state_fingerprint, str) or len(self.state_fingerprint) != 64 or any(
+                    c not in "0123456789abcdef" for c in self.state_fingerprint):
+                raise ValidationError("Huella de estado comercial inválida.")
+            if (self.exchange_rate is None) != (self.exchange_context_id is None):
+                raise ValidationError("El FX comercial requiere identidad de contexto coherente.")
+        else:
+            raise ValidationError("Versión de esquema no soportada.")
 
     def clean_fields(self, exclude=None):
         self.tax_rate = decimal_limit(self.tax_rate, 5, 4, maximum=Decimal("1"))
         if self.exchange_rate is not None:
             self.exchange_rate = decimal_limit(self.exchange_rate, 18, 8, minimum=Decimal("0.00000001"))
-        for field in ("subtotal", "tax", "total"):
+        if self.discount_percent is not None:
+            self.discount_percent = decimal_limit(self.discount_percent, 5, 2, maximum=Decimal("100"))
+        for field in ("subtotal", "tax", "total", "sale_subtotal", "discount_amount", "known_cost_total"):
             if getattr(self, field) is not None:
                 setattr(self, field, decimal_limit(getattr(self, field), 38, 2))
+        if self.gross_profit is not None:
+            if not isinstance(self.gross_profit, Decimal):
+                raise ValidationError("La utilidad debe ser Decimal.")
+            decimal_limit(self.gross_profit.copy_abs(), 38, 2)
         super().clean_fields(exclude=exclude)
 
     def save(self, *args, _seal=False, **kwargs):
@@ -298,6 +369,7 @@ class QuoteRevision(models.Model):
                     raise ValidationError("La revisión emitida es inmutable; crea otra revisión.")
                 if any(getattr(previous, f) != getattr(self, f) for f in (
                     "quote_id", "number", "based_on_id", "request_id", "request_fingerprint", "schema_version",
+                    "calculation_version",
                 )):
                     raise ValidationError("No se cambia la identidad de una revisión.")
             if self.status != self.Status.DRAFT and not _seal:
@@ -323,13 +395,29 @@ class QuoteSnapshot(models.Model):
     brand = models.TextField(blank=True)
     model = models.TextField(blank=True)
     mpn = models.TextField(blank=True)
-    source_unit_price = models.DecimalField(max_digits=18, decimal_places=6)
-    source_currency = models.CharField(max_length=3, choices=[("MXN", "MXN"), ("USD", "USD")])
+    source_unit_price = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+    source_currency = models.CharField(max_length=3, choices=[("MXN", "MXN"), ("USD", "USD")], null=True, blank=True)
     quantity = models.DecimalField(max_digits=10, decimal_places=2)
     stock = models.PositiveBigIntegerField(null=True, blank=True)
     es_mejor_precio = models.BooleanField(default=False)
     amount = models.DecimalField(max_digits=38, decimal_places=2, null=True, blank=True)
     captured_at = models.DateTimeField(default=timezone.now)
+    line_key = models.UUIDField(null=True, blank=True)
+    source_kind = models.CharField(max_length=6, choices=[("API", "API"), ("MANUAL", "Manual")], null=True, blank=True)
+    cost_tax_rate_included = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    source_unit_label = models.CharField(max_length=80, null=True, blank=True)
+    sale_unit_label = models.CharField(max_length=80, null=True, blank=True)
+    conversion_factor = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+    unit_validated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+                                         null=True, blank=True, related_name="validated_quote_units")
+    unit_validated_at = models.DateTimeField(null=True, blank=True)
+    pricing_mode = models.CharField(max_length=6, choices=[("MARGIN", "Margen"), ("MANUAL", "Manual")], null=True, blank=True)
+    margin_percent = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    manual_unit_price = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+    manual_currency = models.CharField(max_length=3, choices=[("MXN", "MXN"), ("USD", "USD")], null=True, blank=True)
+    manual_tax_rate_included = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    sale_amount = models.DecimalField(max_digits=38, decimal_places=2, null=True, blank=True)
+    cost_amount = models.DecimalField(max_digits=38, decimal_places=2, null=True, blank=True)
 
     objects = RevisionQuerySet.as_manager()
 
@@ -340,37 +428,126 @@ class QuoteSnapshot(models.Model):
             models.CheckConstraint(condition=Q(source_unit_price__gte=0, quantity__gt=0, position__gte=1),
                                    name="quote_snapshot_values_positive"),
             models.CheckConstraint(condition=Q(source_currency__in=["MXN", "USD"]), name="quote_snapshot_currency_supported"),
+            models.UniqueConstraint(fields=["revision", "line_key"], name="quote_snapshot_line_unique"),
+            models.CheckConstraint(condition=(
+                (Q(**{f"{f.removesuffix('_id')}__isnull": True for f in SNAPSHOT_COMMERCIAL_FIELDS})
+                 & Q(source_unit_price__isnull=False, source_currency__isnull=False))
+                | Q(source_kind__in=["API", "MANUAL"], source_kind__isnull=False, line_key__isnull=False,
+                    source_unit_label__isnull=False, sale_unit_label__isnull=False,
+                    conversion_factor__isnull=False, conversion_factor__gt=0,
+                    pricing_mode__isnull=False,
+                    unit_validated_by__isnull=False, unit_validated_at__isnull=False,
+                    amount__isnull=True)
+            ), name="quote_snapshot_commercial_shape"),
+            models.CheckConstraint(condition=(Q(source_kind__isnull=True)
+                | Q(source_unit_price__isnull=False, source_currency__isnull=False)
+                | Q(source_kind="MANUAL", source_unit_price__isnull=True,
+                    source_currency__isnull=True, cost_tax_rate_included__isnull=True)
+            ), name="quote_snapshot_cost_presence"),
+            models.CheckConstraint(condition=(Q(source_kind__isnull=True)
+                | Q(source_kind="MANUAL", provider_code="", provider_name="", external_id="")
+                | (Q(source_kind="API", source_unit_price__isnull=False) & ~Q(provider_code="")
+                   & ~Q(provider_name="") & ~Q(external_id=""))
+            ), name="quote_snapshot_source_kind"),
+            models.CheckConstraint(condition=(Q(source_kind__isnull=True)
+                | Q(pricing_mode="MARGIN", margin_percent__isnull=False, margin_percent__gte=0,
+                    margin_percent__lte=Decimal("99.99"), source_unit_price__isnull=False,
+                    manual_unit_price__isnull=True, manual_currency__isnull=True, manual_tax_rate_included__isnull=True)
+                | Q(pricing_mode="MANUAL", margin_percent__isnull=True, manual_unit_price__isnull=False,
+                    manual_unit_price__gte=0, manual_currency__isnull=False, manual_currency__in=["MXN", "USD"])
+            ), name="quote_snapshot_pricing_mode"),
+            models.CheckConstraint(condition=(Q(cost_tax_rate_included__isnull=True)
+                | Q(cost_tax_rate_included__gte=0, cost_tax_rate_included__lte=1)
+            ), name="quote_snapshot_cost_tax_range"),
+            models.CheckConstraint(condition=(Q(manual_tax_rate_included__isnull=True)
+                | Q(manual_tax_rate_included__gte=0, manual_tax_rate_included__lte=1)
+            ), name="quote_snapshot_sale_tax_range"),
+            models.CheckConstraint(condition=(Q(source_kind__isnull=True)
+                | (Q(quantity=Floor(F("quantity")))
+                   & (Q(sale_amount__isnull=True, cost_amount__isnull=True)
+                      | (Q(sale_amount__isnull=False, sale_amount__gte=0)
+                         & (Q(source_unit_price__isnull=True, cost_amount__isnull=True)
+                            | Q(source_unit_price__isnull=False, cost_amount__isnull=False, cost_amount__gte=0)))))
+            ), name="quote_snapshot_commercial_amounts"),
         ]
 
     def clean(self):
-        self.source_unit_price = decimal_limit(self.source_unit_price, 18, 6)
+        if self.source_unit_price is not None:
+            self.source_unit_price = decimal_limit(self.source_unit_price, 18, 6)
         self.quantity = decimal_limit(self.quantity, 10, 2, minimum=Decimal("0.01"))
         if self.stock is not None and (type(self.stock) is not int or self.stock < 0):
             raise ValidationError("Stock debe ser entero no negativo o None.")
         if bool(self.provider_code) != bool(self.external_id) or (self.provider_code and not self.provider_name):
             raise ValidationError("La oferta requiere proveedor, nombre e ID externo coherentes.")
+        if self.revision.schema_version == 1:
+            if self.source_unit_price is None or self.source_currency is None or any(
+                    getattr(self, f) is not None for f in SNAPSHOT_COMMERCIAL_FIELDS):
+                raise ValidationError("Partida v1 requiere original y no admite campos v2.")
+        elif self.revision.schema_version == 2:
+            self.commercial_input()  # Valida la combinación sin redondear entradas.
+            if self.amount is not None or self.line_key is None or self.source_kind not in ("API", "MANUAL"):
+                raise ValidationError("Identidad/origen comercial inválidos.")
+            if not self.source_unit_label or not self.source_unit_label.strip() or not self.sale_unit_label or not self.sale_unit_label.strip():
+                raise ValidationError("Las unidades de referencia y venta son explícitas.")
+            if self.unit_validated_by_id is None or self.unit_validated_at is None or self.unit_validated_at.utcoffset() is None:
+                raise ValidationError("Validación de unidades sin actor/fecha válida.")
+            if self.source_kind == "API" and not self.provider_code:
+                raise ValidationError("Una captura API requiere proveedor.")
+            if self.source_kind == "MANUAL" and (self.provider_code or self.provider_name or self.external_id):
+                raise ValidationError("No se atribuye una captura manual a una API.")
+            if self.source_unit_price is None and (self.source_currency is not None or self.cost_tax_rate_included is not None):
+                raise ValidationError("No se inventa moneda/tasa para un costo desconocido.")
+        else:
+            raise ValidationError("Versión de partida no soportada.")
+
+    def commercial_input(self):
+        from .commercial import PartidaComercial, PrecioCapturado
+
+        if self.quantity is None or self.quantity != self.quantity.to_integral_value():
+            raise ValidationError("La cantidad comercial debe ser entera.")
+        if self.pricing_mode not in ("MARGIN", "MANUAL"):
+            raise ValidationError("Modalidad de venta requerida.")
+        return PartidaComercial(
+            str(self.line_key), int(self.quantity),
+            None if self.source_unit_price is None else PrecioCapturado(
+                self.source_unit_price, self.source_currency, self.cost_tax_rate_included),
+            margen=self.margin_percent,
+            venta_manual=None if self.manual_unit_price is None else PrecioCapturado(
+                self.manual_unit_price, self.manual_currency, self.manual_tax_rate_included),
+            factor_conversion=self.conversion_factor,
+        )
 
     def clean_fields(self, exclude=None):
-        self.source_unit_price = decimal_limit(self.source_unit_price, 18, 6)
+        if self.source_unit_price is not None:
+            self.source_unit_price = decimal_limit(self.source_unit_price, 18, 6)
         self.quantity = decimal_limit(self.quantity, 10, 2, minimum=Decimal("0.01"))
         if self.stock is not None and (type(self.stock) is not int or not 0 <= self.stock <= 9223372036854775807):
             raise ValidationError("Stock fuera de rango o no entero.")
         if type(self.es_mejor_precio) is not bool:
             raise ValidationError("es_mejor_precio debe ser bool.")
-        if self.amount is not None:
-            self.amount = decimal_limit(self.amount, 38, 2)
+        for field, digits, places, minimum, maximum in (
+            ("amount", 38, 2, Decimal("0"), None), ("sale_amount", 38, 2, Decimal("0"), None),
+            ("cost_amount", 38, 2, Decimal("0"), None), ("manual_unit_price", 18, 6, Decimal("0"), None),
+            ("margin_percent", 4, 2, Decimal("0"), Decimal("99.99")),
+            ("conversion_factor", 18, 6, Decimal("0.000001"), None),
+            ("cost_tax_rate_included", 5, 4, Decimal("0"), Decimal("1")),
+            ("manual_tax_rate_included", 5, 4, Decimal("0"), Decimal("1")),
+        ):
+            if getattr(self, field) is not None:
+                setattr(self, field, decimal_limit(getattr(self, field), digits, places, minimum=minimum, maximum=maximum))
         super().clean_fields(exclude=exclude)
 
     def save(self, *args, _seal=False, **kwargs):
         with transaction.atomic():
             parent = QuoteRevision.objects.select_for_update().get(pk=self.revision_id)
+            self._state.fields_cache["revision"] = parent
             if parent.status == QuoteRevision.Status.ISSUED:
                 raise ValidationError("No se modifica una partida emitida.")
             if self.pk and type(self).objects.get(pk=self.pk).revision_id != self.revision_id:
                 raise ValidationError("No se mueve una partida a otra revisión.")
-            if self.source_currency == "USD" and parent.exchange_rate is None:
+            if (self.source_currency == "USD" or self.manual_currency == "USD") and parent.exchange_rate is None:
                 raise ValidationError("USD requiere tipo de cambio explícito.")
-            if self.amount is not None and not _seal:
+            if any(getattr(self, f) is not None for f in ("amount", "sale_amount", "cost_amount")) and not _seal:
                 raise ValidationError("Solo la emisión guarda el importe congelado.")
             self.full_clean()
             return super().save(*args, **kwargs)
@@ -383,3 +560,51 @@ class QuoteSnapshot(models.Model):
             if parent.status == QuoteRevision.Status.ISSUED:
                 raise ValidationError("No se borra una partida emitida.")
             return super().delete(*args, **kwargs)
+
+
+class QuoteCommercialConfirmation(models.Model):
+    """Constancia inmutable; solo el servicio verifica acceso/huella/permisos."""
+
+    revision = models.ForeignKey(QuoteRevision, on_delete=models.PROTECT, related_name="commercial_confirmations")
+    edit_version = models.PositiveIntegerField()
+    state_fingerprint = models.CharField(max_length=64)
+    warning_code = models.CharField(max_length=32, choices=[(v, v) for v in (
+        "MARGEN_CERO", "COSTO_DESCONOCIDO", "VENTA_BAJO_COSTO", "VENTA_CERO", "TOTAL_CERO")])
+    scope_ref = models.CharField(max_length=36, blank=True, default="")
+    confirmed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+                                     related_name="commercial_confirmations")
+    confirmed_at = models.DateTimeField(default=timezone.now, editable=False)
+
+    objects = RevisionQuerySet.as_manager()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("revision", "edit_version", "state_fingerprint",
+            "warning_code", "scope_ref", "confirmed_by"), name="quote_commercial_confirmation_unique")]
+
+    def clean(self):
+        if self.revision.schema_version != 2 or self.revision.status != QuoteRevision.Status.DRAFT:
+            raise ValidationError("Solo se confirma un borrador comercial.")
+        if self.edit_version != self.revision.edit_version or self.state_fingerprint != self.revision.state_fingerprint:
+            raise ValidationError("La confirmación no corresponde al estado actual.")
+        if self.confirmed_at is None or self.confirmed_at.utcoffset() is None:
+            raise ValidationError("La constancia requiere una fecha con zona horaria.")
+        if self.scope_ref:
+            try:
+                key = UUID(self.scope_ref)
+            except (ValueError, TypeError):
+                raise ValidationError("Referencia de advertencia inválida.") from None
+            if str(key) != self.scope_ref or not self.revision.snapshots.filter(line_key=key).exists():
+                raise ValidationError("La partida no pertenece a la revisión.")
+
+    def save(self, *args, _confirm=False, **kwargs):
+        if self.pk or not _confirm:
+            raise ValidationError("Usa el servicio de confirmación; la constancia es inmutable.")
+        with transaction.atomic():
+            Quote.objects.select_for_update().get(pk=self.revision.quote_id)
+            parent = QuoteRevision.objects.select_for_update().get(pk=self.revision_id)
+            self._state.fields_cache["revision"] = parent
+            self.full_clean()
+            return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("No se borran constancias de confirmación.")

@@ -595,6 +595,7 @@ class SnapshotMigrationTests(TransactionTestCase):
         executor = MigrationExecutor(connection)
         old_target = [("quotes", "0001_initial")]
         new_target = [("quotes", "0002_quoterevision_quotesnapshot")]
+        latest_target = executor.loader.graph.leaf_nodes()
         try:
             executor.migrate(old_target)
             apps = executor.loader.project_state(old_target).apps
@@ -611,4 +612,4 @@ class SnapshotMigrationTests(TransactionTestCase):
             self.assertFalse(current.revisions.exists())
             self.assertFalse(QuoteSnapshot.objects.exists())
         finally:
-            MigrationExecutor(connection).migrate(new_target)
+            MigrationExecutor(connection).migrate(latest_target)
