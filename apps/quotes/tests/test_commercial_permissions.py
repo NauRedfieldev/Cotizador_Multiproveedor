@@ -17,7 +17,10 @@ from apps.quotes.permissions import (
     ADMIN_GROUP, DISCOUNT, FX, MANAGE, MANUAL_SALE, MARGIN, TAX, VIEW_COSTS,
     configure_commercial_groups, require_commercial_permission, set_commercial_permission,
 )
-from apps.quotes.snapshots import validar_confirmaciones_comerciales
+from apps.quotes.snapshots import (
+    emitir_revision, obtener_documento, previsualizar_comercial,
+    previsualizar_revision_comercial, validar_confirmaciones_comerciales,
+)
 from apps.quotes.tests.test_commercial import fx
 from apps.quotes.tests.test_commercial_persistence import CommercialFixtures, commercial_line
 
@@ -107,6 +110,11 @@ class CommercialPermissionsTests(CommercialFixtures, TestCase):
         p = commercial_line(kind="API", margin="40")
         r = self.commercial_draft([p], actor=self.other)
         self.grant(MARGIN, False)
+        preview = self.commercial_edit(r, [replace(p, quantity=D("2"))], actor=self.other, preview=True)
+        self.assertFalse(preview["persistida"])
+        self.assertEqual(preview["cliente"]["items"][0]["qty"], 2)
+        with self.assertRaises(PermissionDenied):
+            self.commercial_edit(r, [replace(p, margin_percent=D("45"))], actor=self.other, preview=True)
         edited = self.commercial_edit(r, [replace(p, quantity=D("2"))], actor=self.other)
         self.assertEqual(edited.edit_version, 2)
         with self.assertRaises(PermissionDenied):
@@ -172,3 +180,48 @@ class CommercialPermissionsTests(CommercialFixtures, TestCase):
         technical.groups.add(self.internal)
         technical = get_user_model().objects.get(pk=technical.pk)
         self.assertTrue(model_admin.has_view_permission(SimpleNamespace(user=technical)))
+
+    def test_preview_y_emision_no_abren_quote_ajena_con_capacidades(self):
+        p = commercial_line()
+        r = self.commercial_draft([p])
+        self.grant(MANUAL_SALE)
+        for action in (
+            lambda: previsualizar_comercial(self.quote.pk, [p], actor=self.other, company=r.header["company"], conditions=[]),
+            lambda: previsualizar_revision_comercial(r.pk, actor=self.other, expected_version=1),
+            lambda: emitir_revision(r.pk, actor=self.other, expected_version=1),
+            lambda: obtener_documento(self.quote.folio, actor=self.other),
+        ):
+            with self.subTest(action=action), self.assertRaises(PermissionDenied):
+                action()
+        self.assertFalse(self.files())
+
+    def test_staff_sin_lectura_financiera_no_previsualiza_emite_ni_descarga_v2(self):
+        r = self.commercial_draft()
+        self.staff.groups.remove(self.internal)
+        for action in (
+            lambda: previsualizar_revision_comercial(r.pk, actor=self.staff, expected_version=1),
+            lambda: emitir_revision(r.pk, actor=self.staff, expected_version=1),
+            lambda: obtener_documento(self.quote.folio, actor=self.staff),
+        ):
+            with self.subTest(action=action), self.assertRaises(PermissionDenied):
+                action()
+
+    def test_preview_sin_guardar_aplica_facultades_de_creacion(self):
+        self.other_quote()
+        p = commercial_line(kind="API", margin="40")
+        with self.assertRaises(PermissionDenied):
+            previsualizar_comercial(self.quote.pk, [p], actor=self.other,
+                company={"name": "QA"}, conditions=[])
+        self.grant(MARGIN)
+        output = previsualizar_comercial(self.quote.pk, [p], actor=self.other,
+            company={"name": "QA"}, conditions=[])
+        self.assertEqual(output["cliente"]["total"], D("193.34"))
+
+    def test_inactivo_en_bd_no_pasa_emision_con_actor_cacheado_activo(self):
+        r = self.commercial_draft()
+        current = get_user_model().objects.get(pk=self.actor.pk)
+        current.is_active = False
+        current.save(update_fields=["is_active"])
+        self.assertTrue(self.actor.is_active)
+        with self.assertRaises(PermissionDenied):
+            emitir_revision(r.pk, actor=self.actor, expected_version=1)

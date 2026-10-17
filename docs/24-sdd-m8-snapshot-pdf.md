@@ -1,7 +1,8 @@
 # 24 · SDD M8: revisiones, snapshots y PDF original
 
 **Versionado:** §§1–7 describen el esquema histórico v1. La ampliación comercial
-v2/P2 está en §8; no habilita emisión/render/API v2 todavía. No reinterpretar los
+v2/P2 está en §8; preview/render/emisión de servicio P3 en §9. API/UI v2 pendientes.
+No reinterpretar los
 campos históricos usando reglas comerciales nuevas.
 
 ## 1. Alcance y decisiones
@@ -262,10 +263,9 @@ Código: `commercial.py`, `models.py`, `permissions.py`, servicios comerciales e
   con entradas revisadas, permisos comerciales y constancias de confirmación.
 - No cambia el default `schema_version=1` de consumidores anteriores. No migra
   datos comerciales ni asigna margen, unidades, moneda o FX al histórico.
-- **No implementa emisión/documento comercial v2 ni API/UI v2.** `emitir_revision`
-  rechaza borradores v2 antes de generar archivos. `contexto_revision` sigue siendo
-  contexto v1; no consumirlo como vista previa comercial. P3 integrará motor y
-  confirmaciones con la transacción durable y el renderer de salida cliente.
+- Al cerrar P2, emisión/documento comercial v2 estaban bloqueados. **P3 (§9)**
+  conecta motor, confirmaciones, sellado y renderer cliente a nivel de servicio.
+  No hay aún adaptación comercial de endpoints/UI M7a ni habilitación de uso real.
 - Los resultados del motor y de la validación P2 son INTERNOS, contienen costos:
   no serializarlos directamente al cliente ni ponerlos en el documento externo.
 
@@ -290,7 +290,7 @@ Defaults para entradas NUEVAS: margen35%, IVA16%, descuento0. Se centralizan en
 el 35% si faltan. Instalación/flete se representan como manual sin margen automático;
 aplicarlo es elección autorizada explícita. El modo margen no admite 100% ni negativos
 (máximo99.99 con 2 decimales); descuento sí admite100%, con aviso TOTAL_CERO y
-confirmación autorizada futura al emitir. Costo ausente exige venta manual y aviso.
+  confirmación autorizada al emitir. Costo ausente exige venta manual y aviso.
 
 ### 8.2 Cabecera `QuoteRevision`
 
@@ -425,9 +425,9 @@ los datos deja anteriores constancias conservadas pero obsoletas; clonar no las 
 constancia para CADA aviso vigente. Reconsulta actividad, permiso y acceso actual
 del confirmante. Una revocación exige otra aceptación autorizada. TOTAL_CERO por
 descuento exige permiso de descuento; sin descuento, capacidad de venta manual.
-Un borrador pendiente puede guardarse sin aceptar aún. Estas operaciones P2 NO
-emiten: P3 las integrará dentro de la transacción durable, sin reducir garantías
-de archivo/commit de §5 ni regenerar originales existentes.
+Un borrador pendiente puede guardarse sin aceptar aún. Confirmar/validar por sí solos
+NO emiten: P3 integra la misma validación dentro de la transacción durable (§9), sin
+reducir garantías de archivo/commit de §5 ni regenerar originales existentes.
 
 ### 8.7 Pruebas y operación
 
@@ -442,17 +442,115 @@ después de usar v2 en datos reales perdería datos/constancias y no es rollback
 El código nuevo requiere 0003 antes de usar sus modelos contra una BD: no se aplica
 automáticamente. No confundir pruebas UUID con migración de la BD de trabajo.
 
-## 9. Presentación cliente P3 · Requisitos confirmados, aún no implementados
+## 9. P3 · Preview, contexto cliente y emisión comercial v2
 
 - Proveedor elegido: únicamente interno, no mostrarlo en el documento/salida cliente.
 - Tipo de cambio: conservar como evidencia interna; no mostrarlo al cliente.
 - Mantener costos, porcentajes y utilidad fuera del contexto cliente. Marca/modelo
   de producto no equivale al distribuidor elegido; no añadir procedencia interna.
-- Precio unitario periódico: presentación aprobada, sin alterar la regla
+- Precio unitario periódico: presentación aprobada e implementada, sin alterar la regla
   acordada de calcular partida con precisión y redondear el importe final. Ejemplo
   sintético: unitario 33.333333… × 3 → importe 100.00; mostrar solo 33.33 puede hacer
   que parezca 99.99. Mostrar más decimales cuando haga falta y leyenda de unitario
   aproximado; importes/totales a dos decimales. No se eligió una precisión fija.
-- Esta sección NO significa que el renderer actual ya cumpla P3. Originales v1
-  siguen inmutables; no regenerarlos para eliminar datos ni enviarlos como una
-  nueva salida comercial v2 saneada. La política externa se aplicará en P3.
+- Los originales v1 siguen inmutables. La nueva presentación corresponde a v2:
+  no regenerar v1 para eliminar datos ni tratarlos como salida comercial saneada.
+
+### 9.1 Preview y separación de información
+
+Servicios tipados, sin HTTP/proveedores/SMTP:
+
+- `previsualizar_comercial`: captura nueva todavía no guardada, ligada a una Quote
+  accesible existente para autorización. No crea Quote/revisión/constancia/PDF.
+  Valida cabecera, fechas/vigencia, cantidades, unidades, origen y modo comercial,
+  FX/identidad y capacidades como creación. No firma precios del browser.
+- `previsualizar_edicion_comercial`: reemplazo propuesto de un borrador v2 con
+  expected_version y todos los campos de guardar explícitos. Mismo motor y controles
+  que guardar; conservar valores ya autorizados no exige permiso para cambiarlos.
+  No recaptura originales API bajo el mismo line_key ni modifica capturas/huella/versión.
+- `previsualizar_revision_comercial`: lectura consistente de borrador guardado por
+  PK y expected_version, bloqueando Quote→revisión. Versión obsoleta o emitida produce
+  RevisionConflict. Una emisión se consulta como documento archivado, no preview nuevo.
+
+Devuelven contenedor INTERNO: `persistida`, `edit_version`, `state_fingerprint`,
+`resultado` (incluye costos/avisos) y `cliente` (allowlist de salida). El preview de
+edición añade `base_state_fingerprint` de la revisión guardada. Su huella propuesta
+NO sirve para aceptar cambios aún no guardados: guardar primero, recargar versión
+y confirmar avisos de ese estado. Los previews permiten avisos sin confirmarlos.
+
+`cliente` contiene empresa/asesor, cliente, condiciones explícitamente externas,
+folio/revisión/fechas, producto/marca/modelo, unidad vendida y cantidad, precio de
+VENTA en MXN y sus importes; cabecera con venta antes de descuento, descuento global,
+subtotal neto, IVA y total. No contiene proveedor/nombre/ID de distribuidor, originales
+de costo/moneda, stock, conversiones/validadores, FX, margen, utilidad ni avisos internos.
+No se serializa `resultado` ni se envía una copia filtrada a posteriori del snapshot.
+El contexto se construye por allowlist antes del renderer.
+
+Código/nombre/descripción/condiciones son textos externos de producto validados por
+el consumidor. El servicio no es un detector/redactor de secretos escritos dentro
+de texto libre: no copiar a esos campos datos de proveedor o notas internas. La
+identificación/API/código comercial confiable se cerrará en P4. No usar external_id
+como fallback automático para el código cliente de v2.
+
+### 9.2 Renderer y precisión visible
+
+Se amplía el único renderer `pdf.py`; la vía histórica v1 conserva su contrato.
+V2 muestra Marca/Modelo en vez de Marca/Dist., unidad de venta y desglose global
+antes de IVA; no usa fallback de proveedor, stock ni etiqueta FX. Se escapa marcado
+de todos los textos igual que v1. No se reescriben originales emitidos.
+
+`commercial_unit_money` elige 2–12 decimales de presentación: aumenta mientras la
+multiplicación del unitario mostrado por cantidad no reconcilie a centavos con el
+importe, evitando mostrar cero positivo mientras alcance ese límite. El tope12 es técnico,
+no nueva precisión de datos ni regla comercial. Si acorta el unitario se etiqueta
+`(aprox.)` y se explica que prevalece el importe calculado con precisión completa.
+Empates periódicos pueden no reconciliar ni con más decimales; no corregir la partida
+para forzar la multiplicación visible. Unitarios largos pasan a detalle sin truncarse.
+Importes/totales siguen a dos decimales; descuento no se distribuye entre líneas.
+
+### 9.3 Emisión y revocación concurrente
+
+`emitir_revision` conserva operación durable propia (§5) y admite v1/v2. En v2:
+
+1. Bloquea Quote→revisión, verifica expected_version, acceso y usuario interno fresco.
+2. Si ya está emitida, verifica SHA-256 y devuelve original. No ejecuta motor,
+   renderer ni pide volver a aceptar avisos históricos.
+3. Para DRAFT, reconstruye estado/cálculo versión1 y exige huella exacta. Valida
+   todas las confirmaciones vigentes y sus confirmantes activos/autorizados dentro
+   de la misma transacción; una comprobación informativa anterior no sustituye esto.
+4. Bloquea en orden por PK las filas User de emisor/confirmantes, y vuelve a consultar
+   permisos. El gestor limitado de P2 usa las mismas filas: no puede revocar una
+   capacidad entre validación y commit. Cambios de roles por SQL/herramientas técnicas
+   fuera de ese gestor siguen sujetos a la frontera de confianza de §2.
+5. Renderiza solo contexto cliente, guarda/verifica bytes privados y sella cabecera
+   comercial/partidas, sin sobrescribir originales ni asignar `amount` de v1.
+6. Marca ISSUED y confirma la transacción. Fallo recuperable limpia solo archivo propio;
+   commit incierto conserva archivo para recuperación, igual que v1. SMTP fuera.
+
+Resultado completo: `costs_complete=True`, `gross_profit` firmado; con cualquier
+costo ausente conserva costo parcial, `costs_complete=False` y utilidad NULL, incluso
+si la venta es conocida. Total0/pérdida/costo ausente se emiten solo tras TODAS las
+aceptaciones autorizadas. Reintento no crea constancias, revisión ni PDF nuevos.
+
+### 9.4 Lectura del documento original
+
+`obtener_documento` mantiene selección explícita por número o última emisión. Para
+v2 exige usuario interno fresco con acceso a Quote; borrador obtiene contexto cliente
+y PDF temporal sin archivar. Emitida devuelve metadatos cliente de importes sellados
+y bytes del original verificados por SHA-256, **sin motor ni renderer**.
+Se comprueba coherencia de suma de partidas/subtotal/IVA/total sellados sin aplicar
+una política comercial nueva. No se deriva un unitario distinto para sustituir el
+que aparece en el original: ese contexto de metadatos incluye `archived_only=True`,
+no lleva unitarios renderizables y el renderer lo rechaza expresamente.
+
+Descarga/correo existentes pueden reutilizar esos bytes de la misma revisión; las
+pruebas usan correo en memoria. Archivo ausente/corrupto requiere restauración exacta,
+nunca regeneración. Una revisión nueva no modifica el original v1 ni v2 de su origen.
+
+### 9.5 Alcance operativo
+
+No se crean archivos de aplicación nuevos ni otra migración en P3. 0003 sigue
+pendiente de autorización para BD de trabajo. No se asignan usuarios/grupos reales,
+no se habilita emisión HTTP, no se conectan frontend/mocks ni contratos API comerciales.
+Falta P4/P5 y aceptación visual/comercial final con datos oficiales. Los fixtures y
+pruebas sintéticos no certifican semántica real de IVA/stock de Exel ni uso con clientes.

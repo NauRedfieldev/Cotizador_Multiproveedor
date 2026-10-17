@@ -255,7 +255,8 @@ y servicios/roles en [25 §7](25-m8-snapshot-pdf-integracion.md#7-servicios-come
 en costo manual desconocido v2. Cantidad entera para v2 sin eliminar decimales v1.
 Constancia única por revisión/versión/huella/código/alcance/actor, inmutable. No hay
 descuento por partida ni duplicación del usuario/roles: se reutiliza auth.Group/Permission.
-P2 todavía no emite documento comercial v2 ni cambia endpoints/UI de M7a.
+P3 usa ese mismo esquema para preview, sellado y archivo comercial v2: [24 §9](24-sdd-m8-snapshot-pdf.md#9-p3--preview-contexto-cliente-y-emisión-comercial-v2).
+No añade columnas ni convierte históricos; endpoints/UI comerciales M7a pendientes.
 
 ## Notas de diseño
 

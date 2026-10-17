@@ -282,9 +282,9 @@ de rama requieren autorización separada.
 ## 7. Servicios comerciales v2 (P2)
 
 Esquema/precisión/permisos: [24 §8](24-sdd-m8-snapshot-pdf.md#8-ampliación-comercial-v2--p1p2).
-No sustituyen los servicios v1 de §§1–6. M7a actual sigue creando v1; API, preview
-pública, documento y emisión v2 siguen pendientes de P3/P4. **No basta habilitar
-COTIZACIONES_EMISION_HABILITADA:** el servicio rechaza emisión v2 antes de escribir PDF.
+No sustituyen los servicios v1 de §§1–6. M7a actual sigue creando v1; API/UI comerciales
+siguen pendientes. P3 añade preview/documento/emisión v2 en servicios (§8), sin activar
+COTIZACIONES_EMISION_HABILITADA ni certificar uso real.
 
 ### 7.1 Entrada tipada y escritura
 
@@ -378,9 +378,9 @@ genérico a un asesor comercial para suplir esa ausencia.
 Wrappers con thread_sensitive=True sobre la operación completa:
 `acrear_borrador_comercial`, `aguardar_borrador_comercial`,
 `acrear_revision_comercial`, `aconfirmar_advertencias_comerciales`.
-No consultar relaciones lazy en event loop. La validación previa a emitir se
-integrará en P3 dentro de la operación durable, no como comprobación independiente
-que una vista pueda usar después sobre datos modificados.
+No consultar relaciones lazy en event loop. P3 valida confirmaciones dentro de la
+operación durable de emitir, no como comprobación independiente que una vista
+pueda usar después sobre datos modificados.
 
 La migración 0003 no contiene backfill ni asignación de usuarios. Crear el archivo
 no significa haberlo aplicado a la BD de trabajo: pedir autorización, respaldar y
@@ -391,3 +391,90 @@ Validación P2: **604 pruebas Django + 6 de terminal correctas**, con BD UUID
 exclusiva creada/destruida, PDFs temporales, correo en memoria y red/SMTP reales
 bloqueados. Incluye regresión v1 y forward/backward de migración con fixtures.
 No se aplicó 0003 a la BD de trabajo ni se certificó API real/SMTP o emisión v2.
+
+## 8. Consumo P3 · Preview y emisión comercial
+
+Reglas completas: [24 §9](24-sdd-m8-snapshot-pdf.md#9-p3--preview-contexto-cliente-y-emisión-comercial-v2).
+
+| Servicio | Contrato/resultado |
+| --- | --- |
+| `previsualizar_comercial(quote_id, partidas, ...)` | Mismos campos de nueva captura que crear_borrador_comercial, sin request_id; Quote accesible existente, no crea nada |
+| `previsualizar_edicion_comercial(revision_id, partidas, ...)` | Mismos campos explícitos de guardar_borrador_comercial, con expected_version; no guarda cambios ni acepta avisos |
+| `previsualizar_revision_comercial(revision_id, actor=..., expected_version=...)` | Solo borrador v2, lectura consistente; no requiere confirmar avisos |
+| `emitir_revision(revision_id, actor=..., expected_version=...)` | V1/v2; bloqueos, validación comercial/confirmaciones v2, renderer cliente y sellado/archivo durable; reintento recupera original |
+| `obtener_documento(folio, actor=..., number=..., allow_draft=...)` | Revisión exacta o preferencia histórica por última emitida; v2 cliente sin datos internos; emitida solo metadatos+bytes archivados |
+
+### 8.1 Separar preview interno y salida cliente
+
+```python
+preview = previsualizar_revision_comercial(
+    revision_id, actor=asesor_interno, expected_version=version_leida,
+)
+finanzas_internas = preview["resultado"]  # costos/utilidad/avisos, NO salida cliente
+contexto_cliente = preview["cliente"]    # allowlist apta para el renderer
+pdf_borrador = generate_quote_pdf(contexto_cliente)  # temporal, no emisión
+```
+
+`persistida=True` identifica lectura de borrador guardado. En simulación de nueva
+captura es False, edit_version/revision son None; en edición propuesta es False,
+edit_version es la BASE y base_state_fingerprint su huella guardada. No asigna una
+versión nueva ni acepta confirmaciones de una huella propuesta. Guardar, recargar y
+confirmar usando versión/huella guardadas antes de emitir.
+
+Precio y costos originales llegan de selección API confiable/captura manual
+autorizada; no son un contrato JSON para aceptarlos del browser. Nada de llamar a
+proveedores desde preview, editar o emitir. La simulación de edición conserva ajustes
+previos sin exigir permiso de volver a introducirlos, pero sí lo exige al cambiarlos.
+
+El contexto cliente excluye proveedor/costo/moneda de origen/FX/stock/margen/utilidad.
+Solo marca/modelo de producto, código externo al cliente validado, unidad/cantidad y
+venta MXN; no copiar external_id de distribuidor ni notas internas a textos públicos.
+Los textos libres deben validarse por intención comercial en el consumidor: esta
+allowlist no elimina secretos que un usuario escriba en una descripción/condición.
+
+### 8.2 Emitir y recuperar
+
+```python
+# Primero confirmar TODOS los avisos del borrador guardado según §7.2.
+emitida = emitir_revision(
+    revision_id, actor=asesor_interno, expected_version=version_leida,
+)
+contexto, original, filename = obtener_documento(
+    folio, actor=asesor_interno, number=emitida.number, allow_draft=False,
+)
+# original son los bytes archivados verificados. No llamar al renderer otra vez.
+```
+
+No envolver emitir_revision en atomic real ni enviar SMTP dentro. Se validan huella,
+versión, acceso/capacidades y confirmantes vigentes dentro de la transacción durable.
+Emisor/confirmantes User quedan bloqueados contra el gestor de revocaciones hasta
+el commit. La emisión guarda sale_amount/cost_amount, resultados globales y PDF;
+amount v1 y los originales capturados no se reinterpretan ni se sobrescriben.
+
+Una vez emitida, recuperar original/reintentar NO pide confirmar de nuevo ni ejecuta
+el motor. Metadatos v2 tienen archived_only=True y los unitarios son los del PDF,
+no de un cálculo actual. El renderer rechaza esos metadatos para impedir usar esa
+lectura como regeneración. Preview de emitida se rechaza: consultar el original.
+Avisos/confirmaciones siguen accesibles como auditoría interna, no se envían al cliente.
+
+La presentación usa 2–12 decimales adaptativos y `(aprox.)` cuando el unitario se
+acorta; importes definitivos a centavos. El límite12 es visual, no precisión guardada.
+El PDF explica la diferencia y presenta descuento global antes de IVA sin reparto.
+
+### 8.3 Async y límites de esta entrega
+
+Wrappers materializados con thread_sensitive=True:
+`aprevisualizar_comercial`, `aprevisualizar_edicion_comercial`,
+`aprevisualizar_revision_comercial`; emisión y documentos usan los existentes
+`aemitir_revision` / `aobtener_documento`. No hay un segundo renderer ni endpoints
+duplicados. API/UI comerciales aún pendientes P4/P5; no habilitar mocks ni emisión
+HTTP por asumir que tener servicios equivale a despliegue aceptado.
+
+Pruebas nuevas amplían test_commercial_persistence.py/test_commercial_permissions.py:
+simulación sin INSERT/UPDATE/DELETE, edición propuesta, huellas/versiones, privacidad
+de contexto/PDF, redondeo periódico, avisos/costos ausentes/total0, revocación,
+emisión/edición/preview concurrentes, usuarios bloqueados, fallos de renderer/storage/
+commit incierto, descarga/correo con bytes idénticos y conservación de originales v1.
+
+Validación P3: **640 pruebas Django + 6 terminal correctas**, recursos UUID/PDF/correo
+aislados y APIs/SMTP reales bloqueados. 0003 no aplicada a BD de trabajo; uso real no habilitado.

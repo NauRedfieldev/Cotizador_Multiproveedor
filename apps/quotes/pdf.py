@@ -11,7 +11,7 @@ fallback por folio inexistente o fallo de BD.
 import io
 import re
 from copy import deepcopy
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -29,7 +29,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from .snapshot_values import amount
+from .snapshot_values import MONEY_CONTEXT, amount
 
 NAVY = colors.HexColor("#111638")
 PURPLE = colors.HexColor("#7311F5")
@@ -65,6 +65,26 @@ def unit_money(value):
     text = f"{value:,.14f}".rstrip("0")
     integer, _, fraction = text.partition(".")
     return "$" + integer + "." + fraction.ljust(2, "0")
+
+
+def commercial_unit_money(value, quantity, line_amount):
+    """Presentación, nunca cálculo: 2–12 decimales, aproximado si se acorta.
+
+    Se amplía hasta reconciliar el importe visible a centavos, si es posible.
+    Los empates periódicos pueden no reconciliar: manda el importe del motor.
+    """
+    with localcontext(MONEY_CONTEXT):
+        for places in range(2, 13):
+            shown = value.quantize(Decimal(1).scaleb(-places))
+            if amount(shown * quantity) == line_amount and (shown or not value):
+                break
+        approximate = shown != value
+        text = f"{shown:,.{places}f}"
+        if places > 2:
+            text = text.rstrip("0")
+            integer, _, fraction = text.partition(".")
+            text = integer + "." + fraction.ljust(2, "0")
+        return "$" + text + (" (aprox.)" if approximate else ""), approximate
 
 
 def _escaped(value):
@@ -262,6 +282,9 @@ def generate_quote_pdf(quote):
     `quote` es un contexto materializado de snapshots, histórico o demo.
     La emisión archiva este resultado; los borradores pueden regenerarse.
     """
+    if quote.get("archived_only"):
+        raise ValueError("Una emisión comercial se lee del archivo; no se vuelve a renderizar.")
+    commercial = quote.get("commercial_client", False)
     original_folio, original_company = quote["folio"], quote["company"]["name"]
     quote = _escaped(deepcopy(quote))
     st = _styles()
@@ -378,7 +401,7 @@ def generate_quote_pdf(quote):
         Paragraph("#", st["th_center"]),
         Paragraph("Código / Clave", st["th"]),
         Paragraph("Descripción Detallada", st["th"]),
-        Paragraph("Marca / Dist.", st["th_center"]),
+        Paragraph("Marca / Modelo" if commercial else "Marca / Dist.", st["th_center"]),
         Paragraph("Cant.", st["th_center"]),
         Paragraph("P. Unitario", st["th_right"]),
         Paragraph("Importe histórico" if quote.get("legacy_unknown_currency") else "Importe MXN", st["th_right"]),
@@ -386,8 +409,13 @@ def generate_quote_pdf(quote):
     rows = [head]
     for i, item in enumerate(quote["items"], start=1):
         source_label = ""
-        unit_text = money(item["unit_price"]) if not quote.get("precision_units") else unit_money(item["unit_price"])
-        if quote.get("precision_units"):
+        unit_text = item["unit_price_label"] if commercial else money(item["unit_price"]) if not quote.get("precision_units") else unit_money(item["unit_price"])
+        if commercial:
+            source_label = f"<br/>Unidad: {item['unit_label']}"
+            if stringWidth(unit_text, st["cell_right"].fontName, st["cell_right"].fontSize) > 2.1 * cm - 12:
+                source_label += f"<br/>Unitario MXN: {unit_text}"
+                unit_text = "Ver detalle"
+        elif quote.get("precision_units"):
             stock = item["stock"]
             stock_label = "desconocido" if stock is None else "sin existencias" if stock == 0 else str(stock)
             source_label = (f"<br/>Origen: {unit_money(item['source_unit_price'])} {item['source_currency']}"
@@ -400,7 +428,7 @@ def generate_quote_pdf(quote):
                 Paragraph(f"<b>{i}</b>", st["cell_center"]),
                 Paragraph(item["code"], st["cell_mono"]),
                 Paragraph(f"<b>{item['name']}</b><br/><font color=\"#5A5F7A\">{item['description']}{source_label}</font>", st["cell"]),
-                Paragraph(item["provider"], st["cell_center"]),
+                Paragraph(" / ".join(v for v in (item["brand"], item["model"]) if v) or "—", st["cell_center"]) if commercial else Paragraph(item["provider"], st["cell_center"]),
                 Paragraph(f"<b>{item['qty']}</b>", st["cell_center"]),
                 Paragraph(unit_text, st["cell_right"]),
                 Paragraph(f"<b>{money(item['amount'])}</b>", st["cell_right"]),
@@ -423,9 +451,11 @@ def generate_quote_pdf(quote):
     )
     story.append(items_table)
     story.append(Spacer(1, 0.4 * cm))
-    if quote.get("exchange_rate_label"):
+    if not commercial and quote.get("exchange_rate_label"):
         story.append(Paragraph(quote["exchange_rate_label"], st["small"]))
-    if any(item.get("stock") in (0, None) for item in quote["items"]) and not quote.get("legacy_unknown_currency"):
+    if commercial and any(item["unit_price_approximate"] for item in quote["items"]):
+        story.append(Paragraph("Unitarios indicados como aprox. son aproximados. Los importes de partida se calculan con precisión completa y se redondean a dos decimales; prevalecen sobre la multiplicación del unitario mostrado.", st["small"]))
+    if not commercial and any(item.get("stock") in (0, None) for item in quote["items"]) and not quote.get("legacy_unknown_currency"):
         story.append(Paragraph("Hay partidas sin existencias o con disponibilidad desconocida. Confirmar entrega; el precio no garantiza stock.", st["small"]))
 
     # ---- Condiciones + totales ----
@@ -433,12 +463,18 @@ def generate_quote_pdf(quote):
     for cond in quote["conditions"]:
         conditions.append(Paragraph(f"• {cond}", st["small_dark"]))
     currency_label = "moneda no registrada" if quote.get("legacy_unknown_currency") else "MXN"
-    totals = Table(
-        [
+    total_rows = [
             [Paragraph("Subtotal:", st["cell"]), Paragraph(f"<b>{money(quote['subtotal'])} {currency_label}</b>", st["cell_right"])],
             [Paragraph(f"I.V.A. ({quote['iva_rate_label']}):", st["cell"]), Paragraph(f"<b>{money(quote['iva'])} {currency_label}</b>", st["cell_right"])],
             [Paragraph("<b>Total estimado:</b>", st["cell_bold"]), Paragraph(f"<b><font color=\"#7311F5\">{money(quote['total'])} {currency_label}</font></b>", st["cell_right"])],
-        ],
+        ]
+    if commercial:
+        total_rows[:0] = [
+            [Paragraph("Venta antes de descuento:", st["cell"]), Paragraph(f"<b>{money(quote['sale_subtotal'])} MXN</b>", st["cell_right"])],
+            [Paragraph(f"Descuento global ({quote['discount_percent_label']}):", st["cell"]), Paragraph(f"<b>-{money(quote['discount_amount'])} MXN</b>", st["cell_right"])],
+        ]
+    totals = Table(
+        total_rows,
         colWidths=[3.0 * cm, 3.6 * cm],
     )
     totals.setStyle(
@@ -446,7 +482,7 @@ def generate_quote_pdf(quote):
             [
                 ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
                 ("BOX", (0, 0), (-1, -1), 0.5, LIGHT_BORDER),
-                ("LINEABOVE", (0, 2), (-1, 2), 0.7, LIGHT_BORDER),
+                ("LINEABOVE", (0, len(total_rows) - 1), (-1, len(total_rows) - 1), 0.7, LIGHT_BORDER),
                 ("TOPPADDING", (0, 0), (-1, -1), 3),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
                 ("LEFTPADDING", (0, 0), (-1, -1), 8),
