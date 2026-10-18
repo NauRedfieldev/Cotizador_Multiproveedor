@@ -305,7 +305,7 @@ Los mensajes de error nunca llevan tokens, credenciales ni el contenido de las r
 
 ## 8. Pruebas (Fase 4)
 
-Runner de Django, **sin red y sin credenciales reales** (AGENTS.md §Pruebas). Se reutiliza `apps/providers/tests/soporte.py`; no hace falta crear utilidades nuevas.
+Runner de Django, **sin red y sin credenciales reales**. Se reutiliza `apps/providers/tests/soporte.py`; no hace falta crear utilidades nuevas.
 
 | Utilidad | Para qué |
 |---|---|
@@ -439,7 +439,7 @@ Cada proveedor nuevo responde estas preguntas en su SDD, con alternativas y una 
 | `python manage.py check` | Sin errores; el `code` aparece en `registered_codes()` |
 | `python manage.py makemigrations --check --dry-run` | Sin cambios |
 | `python manage.py test` | Todo en OK, incluidas las reglas G1–G9 (sin `float(`, sin `TaskGroup`, snake_case, `providers` no importa de `catalog`/`quotes`…) |
-| Cobertura del adaptador | 100 % de líneas y ramas (comandos en AGENTS.md §Pruebas) |
+| Cobertura del adaptador | 100 % de líneas y ramas (comandos en [02 §7](02-modelo-de-datos.md#7-pruebas-que-lo-respaldan)) |
 | Mutaciones | Cada regla de §4, §6 y cada decisión del SDD tiene una prueba que falla si se rompe |
 | Verificación real | `search_all` devuelve ofertas del proveedor en `Decimal`, con los campos confirmados y 0 tokens extra |
 | Documentación | SDD con el registro de llamadas reales y documento final de funcionamiento y conexiones |

@@ -163,7 +163,7 @@ python manage.py test                                               # todo, incl
 - todo ocurre en la BD de pruebas;
 - la API se simula con `ApiFalsa` y las muestras de `tests/muestras/`.
 
-**Cobertura y mutaciones:** los comandos están en AGENTS.md §Pruebas. Las mutaciones se hacen con un script que restaura los bytes desde memoria, nunca con `git restore`.
+**Cobertura y mutaciones:** los comandos de cobertura están en [02 §7](02-modelo-de-datos.md#7-pruebas-que-lo-respaldan) (cambiar `--source` al módulo). Las mutaciones se hacen con un script que restaura los bytes desde memoria, nunca con `git restore`.
 
 ## 9. Llamadas reales hechas (2026-10-05)
 
