@@ -325,7 +325,7 @@ const INITIAL_MOCK_QUOTES = [
 
 // Inicializar almacenamiento local si no existe
 function initMockStorage() {
-    if (!USE_MOCKS || document.getElementById('commercialQuoteApp')) return;
+    if (!USE_MOCKS || document.getElementById('commercialQuoteApp') || document.getElementById('commercialSummaryApp')) return;
     if (!localStorage.getItem(STORAGE_KEYS.QUOTES)) {
         localStorage.setItem(STORAGE_KEYS.QUOTES, JSON.stringify(INITIAL_MOCK_QUOTES));
     }
@@ -549,8 +549,8 @@ const apiClient = {
     }
 };
 
-// P5: flujo comercial siempre conectado. No cambiar USE_MOCKS globalmente:
-// historial/resumen antiguos siguen separados, nunca se usan en una propuesta v2.
+// P5/P6: flujo comercial siempre conectado. No cambiar USE_MOCKS globalmente:
+// los mocks restantes no se usan en una propuesta comercial v2 ni en documentos.
 class CommercialHTTPError extends Error {
     constructor(message, status = 0, code = '', uncertain = false) {
         super(message);
@@ -561,10 +561,10 @@ class CommercialHTTPError extends Error {
     }
 }
 
-async function commercialRequest(path, { method = 'GET', data, signal, mutation = false } = {}) {
+async function commercialRequest(path, { method = 'GET', data, signal, mutation = false, root = API_BASE_URL } = {}) {
     let response;
     try {
-        response = await fetch(`${API_BASE_URL}${path}`, {
+        response = await fetch(`${root}${path}`, {
             method, signal, credentials: 'same-origin', cache: 'no-store',
             headers: { 'Accept': 'application/json', ...(data === undefined ? {} : {
                 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken()
@@ -596,6 +596,12 @@ apiClient.commercial = Object.freeze({
     previewNew: (data, signal) => commercialRequest('/quotes/preview/', { method: 'POST', data, signal }),
     create: data => commercialRequest('/quotes/', { method: 'POST', data, mutation: true }),
     revision: (folio, number) => commercialRequest(revisionPath(folio, number)),
+    list: (filters, signal) => commercialRequest(`/quotes/?${new URLSearchParams(filters)}`, { signal }),
+    summary: (folio, number, signal) => commercialRequest(`${revisionPath(folio, number)}resumen/`, { signal }),
+    emit: (folio, number, data) => commercialRequest(`${revisionPath(folio, number)}emitir/`, { method: 'POST', data, mutation: true }),
+    clone: (folio, number, data) => commercialRequest(`${revisionPath(folio, number)}nueva/`, { method: 'POST', data, mutation: true }),
+    previewTransition: (folio, number, data, signal) => commercialRequest(`${revisionPath(folio, number)}nueva/preview/`, { method: 'POST', data, signal }),
+    email: (folio, data) => commercialRequest(`/api/cotizaciones/${encodeURIComponent(folio)}/enviar-correo/`, { root: '', method: 'POST', data, mutation: true }),
     previewEdit: (folio, number, data, signal) => commercialRequest(`${revisionPath(folio, number)}preview/`, { method: 'POST', data, signal }),
     update: (folio, number, data) => commercialRequest(revisionPath(folio, number), { method: 'PUT', data, mutation: true }),
     confirm: (folio, number, data) => commercialRequest(`${revisionPath(folio, number)}confirmaciones/`, { method: 'POST', data, mutation: true }),

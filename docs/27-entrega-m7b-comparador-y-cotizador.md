@@ -1,5 +1,8 @@
 # Entrega a frontend (M7b): comparador, cotizador y retiro de Clientes
 
+> **Nota de vigencia:** los pendientes de §0 y parte E ya se resolvieron con M8 y la
+> integración M7a/P4–P6. El contrato actual está en [docs/28](28-m7a-integracion-vistas-y-m8.md).
+
 | | |
 |---|---|
 | **Para** | Quien hace las plantillas y el JavaScript (M7b) |

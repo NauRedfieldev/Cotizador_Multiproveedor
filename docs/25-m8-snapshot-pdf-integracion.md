@@ -105,7 +105,9 @@ otro día; una clave de otra operación/origen genera conflicto. Después editar
 ### Documento
 
 ```python
-obtener_documento(folio, *, actor, number=None, allow_draft=True)
+obtener_documento(folio, *, actor, number=None, allow_draft=True,
+                  expected_version=None, state_fingerprint=None,
+                  expected_status=None, customer_only=False)
 ```
 
 - Número explícito: esa revisión, nunca otra por fallback.
@@ -114,6 +116,9 @@ obtener_documento(folio, *, actor, number=None, allow_draft=True)
 - DRAFT: PDF marcado, no escribe archivo; `allow_draft=False` da conflicto.
 - ISSUED: lee original/verifica SHA-256, sin ejecutar renderer.
 - Quote sin revisiones: representación histórica etiquetada, sin inferir moneda.
+- P6: expected_version exige número explícito/capacidad interna; para v2 exige huella.
+  Versión/estado/huella se comprueban bajo bloqueo antes de materializar el documento.
+  customer_only=True rechaza v1/sin revisión para salidas al cliente; ver §11.
 
 `contexto_revision` y `leer_pdf_emitido` son helpers internos **sin autorización**.
 No exponerlos en endpoints; usar `obtener_documento`. No llamar `get_quote_context`
@@ -183,18 +188,18 @@ no duplicar renderer ni transacción en la vista.
 | Ruta | Contrato |
 | --- | --- |
 | GET `/cotizaciones/<folio>/pdf/?revision=N` | Propietario/staff, original ISSUED o borrador marcado |
-| POST `/api/cotizaciones/<folio>/enviar-correo/` | Propietario/staff; email, subject?, message?, attach_pdf?, revision? |
+| POST `/api/cotizaciones/<folio>/enviar-correo/` | P6: interno autorizado/propietario o staff; email, revision obligatorios; solo v2 emitida; §11 |
 | GET `/demo/cotizaciones/<folio>/pdf/` | Demo explícito solo DEBUG, sin consultar BD |
 
 Correo no emite ni regenera original. `attach_pdf=false` no evita autorización ni
-permite borradores: verifica original incluso sin adjunto. Legacy puede enviarse
-etiquetado, sin afirmar MXN/original archivado. No hay auditoría/idempotencia SMTP:
+permite borradores: verifica original incluso sin adjunto. Desde P6, v1/legacy son
+consulta interna y no se envían al cliente; exigir revisión v2 revisada. No hay auditoría/idempotencia SMTP:
 dos POST pueden mandar dos correos. Mantiene CSRF Django; descarga no se cachea
 (`private, no-store`). La plantilla identifica revisión y total real.
 
 Sin sesión Django, `login_required` redirige (302). M7 debe conectar login real y
 configurar LOGIN_URL; mocks/localStorage no equivalen a autenticación de servidor.
-Los endpoints de creación/emisión todavía no existen: M7 integra estos servicios.
+Los endpoints de creación/emisión P4 y consumidor P6 se documentan en doc28 §§13/15.
 
 | Situación | Servicio | HTTP actual |
 | --- | --- | --- |
@@ -513,4 +518,28 @@ detectar cambios de sesión antes de reenviar una intención. No hay esquema nue
 
 Distribución de controles, recuperación y QA en [28 §14](28-m7a-integracion-vistas-y-m8.md#14-p5--cotizador-conectado-al-cálculo-comercial).
 La UI no habilita emisión, migraciones o roles reales. Resumen/PDF/correo exactos se
-conectan en P6; no reemplazar originales ni navegar a un mock como resultado real.
+conectan en P6 (§11); no reemplazar originales ni navegar a un mock como resultado real.
+
+## 11. Consumidor P6 y guardas de documento
+
+Contrato completo en [28 §15](28-m7a-integracion-vistas-y-m8.md#15-p6--mis-cotizaciones-resumen-y-documentos-exactos).
+Listado propio paginado y resumen de revisión exacta se consumen desde UI conectada;
+la lectura documental agrega guardas opcionales sin cambiar snapshots o sellos.
+La UI usa número/versión/estado/huella, nunca preferencia implícita por última emitida.
+Una carrera con edición/emisión da409 y recarga explícita; no selecciona otra revisión.
+
+Emitidas se muestran/imprimen desde el PDF original, sin reconstruir unitarios ni
+usar el renderer en archived_only. Borradores PDF identificados, sin archivo de emisión.
+Correo exige revisión v2 emitida y número explícito; el modo exacto adjunta siempre
+su original, permite editar destinatario/asunto/mensaje sin modificar datos guardados
+y solicita confirmación. Resultado SMTP desconocido no autoriza reintento automático.
+La aceptación SMTP no garantiza entrega. No se añadió recibo/auditoría de envíos.
+
+V1 mantiene consulta original interna; transición requiere nuevas entradas revisadas
+y source_edit_version. El preview no escribe; alta de otra revisión conserva UUID
+y cabecera de origen, sin copiar datos financieros con porcentajes supuestos. Cliente/
+condiciones se revisan en el nuevo borrador antes de emitir. No alterar PDFs anteriores.
+
+P6 amplía pruebas existentes, sin archivo de aplicación, formato persistido, modelo
+o migración nuevos. La emisión normal sigue OFF y las pruebas usan solo BD/PDF/mail
+aislados; no activar producción por ver habilitado un botón en QA sintético.

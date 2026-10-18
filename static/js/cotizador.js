@@ -78,7 +78,7 @@
         const initialIssueDate = $('issueDate').value;
         const state = { caps: null, lines: [], products: [], saved: null, fx: null, dirty: false, busy: false,
             readonly: false, preview: null, epoch: 0, pending: null, fxPending: null, conflict: false };
-        let previewTimer, previewAbort, searchTimer, searchAbort, searchVersion = 0;
+        let previewTimer, previewAbort, searchTimer, searchAbort, searchVersion = 0, searchError = '';
         const has = code => !!state.caps?.[code];
         const canEdit = () => !!state.caps && !state.readonly;
         const editable = () => canEdit() && !state.busy && !state.pending;
@@ -102,8 +102,9 @@
             if (state.busy || state.pending) for (const control of $('quoteWarnings').querySelectorAll('button')) control.disabled = true;
             for (const control of $('resultsList').querySelectorAll('button')) control.disabled = !allowed || control.dataset.verified !== 'true';
             $('refreshPermissionsBtn').disabled = state.busy;
-            $('quoteHeader').disabled = !allowed;
-            $('quoteNotes').disabled = !allowed || !!state.saved;
+            $('quoteHeader').disabled = !allowed || !!state.transition;
+            $('quoteNotes').disabled = !allowed || !!state.saved || !!state.transition;
+            $('viewSummaryBtn').disabled = state.busy || !!state.pending || !!state.fxPending || !state.saved || state.dirty || !state.caps;
             for (const id of ['saveQuoteBtn', 'clearTableBtn', 'addManualBtn', 'searchProductBtn', 'productSearchInput', 'newQuoteBtn', 'openQuoteBtn', 'applyFxBtn', 'clearFxBtn', 'newExchangeRate', 'taxRate', 'discountPercent']) {
                 $(id).disabled = !allowed;
             }
@@ -168,7 +169,10 @@
         }
         function payload() {
             if (!state.lines.length) fail('Agrega al menos una partida.');
-            const body = { ...header(), items: state.lines.map(line => {
+            const inputs = state.transition ? { schema_version: 2, source_edit_version: state.transition.edit_version,
+                tax_rate: decimal($('taxRate').value, 5, 4, { max: '10000' }),
+                discount_percent: decimal($('discountPercent').value, 5, 2, { max: '10000' }), fx_context_id: state.fx?.id || null } : header();
+            const body = { ...inputs, items: state.lines.map(line => {
                 try { return item(line); } catch (err) { fail(`Partida ${state.lines.indexOf(line) + 1}: ${err.message}`); }
             }) };
             if (state.saved) body.edit_version = state.saved.edit_version;
@@ -226,7 +230,8 @@
             clearSummary('Calculando en el servidor…');
             try {
                 const body = payload();
-                const response = state.saved ? await api.previewEdit(state.saved.folio, state.saved.revision, body, controller.signal) : await api.previewNew(body, controller.signal);
+                const response = state.transition ? await api.previewTransition(state.transition.folio, state.transition.revision, body, controller.signal) :
+                    state.saved ? await api.previewEdit(state.saved.folio, state.saved.revision, body, controller.signal) : await api.previewNew(body, controller.signal);
                 if (epoch !== state.epoch || controller.signal.aborted) return null;
                 error();
                 summary(response.data, false);
@@ -368,11 +373,15 @@
                 text('searchStatus', state.products.length ? `${state.products.length} ofertas capturadas. No se reemplazaron las partidas anteriores.` : 'Sin coincidencias.');
                 text('searchWarning', response.proveedores_caidos_nombres?.length ? 'No respondieron: ' + response.proveedores_caidos_nombres.join(', ') : '');
                 $('searchWarning').classList.toggle('d-none', !response.proveedores_caidos_nombres?.length);
+                // Solo retira el aviso de una búsqueda fallida anterior, nunca otro error vigente.
+                if (searchError && $('quoteError').textContent === searchError) error();
+                searchError = '';
                 renderProducts();
             } catch (err) {
                 if (err.name === 'AbortError' || version !== searchVersion) return;
                 state.products = []; text('searchStatus', err.message + ' Para USD se necesita un contexto FX autorizado.');
                 showError(err);
+                searchError = $('quoteError').textContent;
             }
         }
         function fxDisplay() {
@@ -396,6 +405,8 @@
             return line;
         }
         function loadDetail(detail) {
+            state.transition = null;
+            $('transitionNotice').classList.add('d-none');
             state.loadedDetail = detail;
             state.caps = detail.capabilities;
             state.saved = { folio: detail.folio, revision: detail.revision, edit_version: detail.edit_version, state_fingerprint: detail.state_fingerprint };
@@ -451,8 +462,12 @@
                     const preview = await calculate();
                     if (!preview) return;
                     const body = payload();
-                    if (!state.saved) Object.assign(body, { request_id: crypto.randomUUID(), notes: $('quoteNotes').value.trim() });
+                    if (!state.saved) {
+                        body.request_id = crypto.randomUUID();
+                        if (!state.transition) body.notes = $('quoteNotes').value.trim();
+                    }
                     state.pending = { body: JSON.parse(JSON.stringify(body)), saved: state.saved ? { ...state.saved } : null,
+                        transition: state.transition ? { ...state.transition } : null,
                         actor: state.actor, version: state.saved?.edit_version, baseFingerprint: state.saved?.state_fingerprint, fingerprint: preview.state_fingerprint };
                 }
                 const intent = state.pending;
@@ -463,10 +478,12 @@
                     if (outcome === 'SAVED') saved = detail;
                     else if (outcome === 'RETRY') saved = (await api.update(intent.saved.folio, intent.saved.revision, intent.body)).data;
                     else { state.conflict = true; state.pending = null; fail('La revisión cambió. Abre explícitamente la versión del servidor; no se sobrescribieron datos.'); }
-                } else saved = (await api.create(intent.body)).data;
+                } else saved = (await (intent.transition ? api.clone(intent.transition.folio, intent.transition.revision, intent.body) : api.create(intent.body))).data;
                 // El resultado de escritura ya es conocido, aunque falle la lectura posterior.
                 state.saved = { folio: saved.folio, revision: saved.revision, edit_version: saved.edit_version, state_fingerprint: saved.state_fingerprint };
                 state.pending = null;
+                // La copia v2 ya existe: no volver a usar el v1 de origen aunque falle el GET.
+                state.transition = null; $('transitionNotice').classList.add('d-none');
                 $('quoteFolio').value = saved.folio; $('quoteRevision').value = `${saved.revision} / ${saved.edit_version}`;
                 $('openFolio').value = saved.folio; $('openRevision').value = saved.revision;
                 state.conflict = true; // Si falla GET, exigir recarga y nunca otra alta.
@@ -514,6 +531,10 @@
         $('addManualBtn').addEventListener('click', () => { state.lines.push(blankLine()); renderLines(); changed(); });
         $('clearTableBtn').addEventListener('click', () => { if (window.confirm('Vaciar partidas de este borrador? No se borra historial.')) { state.lines = []; renderLines(); changed(); } });
         $('saveQuoteBtn').addEventListener('click', save);
+        $('viewSummaryBtn').addEventListener('click', () => {
+            if (!state.saved || state.dirty || state.pending || state.busy) return;
+            window.location.assign(`/resumen/?${new URLSearchParams({ folio: state.saved.folio, revision: state.saved.revision })}`);
+        });
         $('refreshPermissionsBtn').addEventListener('click', capabilities);
         $('searchProductBtn').addEventListener('click', search);
         $('providerFilter').addEventListener('change', renderProducts);
@@ -553,7 +574,8 @@
         });
         $('newQuoteBtn').addEventListener('click', () => {
             if (state.dirty && !window.confirm('Descartar cambios no guardados y preparar otra cotización?')) return;
-            state.saved = null; state.loadedDetail = null; state.readonly = false; state.conflict = false; state.lines = []; state.fx = null;
+            state.saved = null; state.transition = null; state.loadedDetail = null; state.readonly = false; state.conflict = false; state.lines = []; state.fx = null;
+            $('transitionNotice').classList.add('d-none');
             for (const id of ['clientName', 'clientRfc', 'clientEmail', 'clientContact', 'clientPhone', 'clientProject', 'quoteNotes', 'quoteConditions', 'newExchangeRate']) $(id).value = '';
             $('quoteFolio').value = 'Se asigna al guardar'; $('quoteRevision').value = 'Sin guardar';
             $('taxRate').value = '0.16'; $('discountPercent').value = '0'; $('validDays').value = '15';
@@ -567,6 +589,27 @@
             $('productSearchInput').value = requestedModel;
             text('searchStatus', 'Modelo recibido del comparador: busca y elige la oferta exacta. No se importaron precios ni FX de la URL.');
         }
-        fxDisplay(); locks(); capabilities();
+        async function initialize() {
+            await capabilities();
+            const query = new URLSearchParams(window.location.search);
+            const folio = query.get('transition_folio') || query.get('folio');
+            if (!folio || !state.caps) return;
+            state.busy = true; locks();
+            try {
+                const detail = (await api.revision(folio, integer(query.get('transition_revision') || query.get('revision'), 2147483647))).data;
+                loadDetail(detail);
+                if (query.has('transition_folio')) {
+                    if (detail.schema_version !== 1) fail('Esta preparación es solo para un histórico v1.');
+                    state.transition = { folio: detail.folio, revision: detail.revision, edit_version: detail.edit_version };
+                    state.saved = null; state.loadedDetail = null; state.readonly = false; state.lines = []; state.fx = null;
+                    $('quoteRevision').value = 'Nueva revisión: se asigna al guardar';
+                    $('issueDate').value = initialIssueDate; $('taxRate').value = '0.16'; $('discountPercent').value = '0';
+                    $('transitionNotice').classList.remove('d-none');
+                    error(); fxDisplay(); clearSummary('Captura y revisa explícitamente las nuevas partidas. No se copiaron entradas financieras del histórico.');
+                }
+            } catch (err) { showError(err); }
+            finally { state.busy = false; locks(); renderLines(); }
+        }
+        fxDisplay(); locks(); initialize();
     });
 }());

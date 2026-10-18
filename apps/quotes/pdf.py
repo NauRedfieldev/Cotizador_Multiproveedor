@@ -314,20 +314,24 @@ def generate_quote_pdf(quote):
     if logo:
         left_header.append(logo)
         left_header.append(Spacer(1, 0.15 * cm))
-    left_header.append(
-        Paragraph(
-            f"<b>{c['name']}</b><br/>RFC: {c['rfc']}<br/>{c['tagline']}<br/>"
-            f"Tel: {c['phone']} &nbsp;|&nbsp; {c['email']}",
-            st["small"],
-        )
-    )
+    if commercial:
+        # V2: omitir datos vacíos en vez de imprimir "RFC:" o "Tel: |" sin valor.
+        contact = " &nbsp;|&nbsp; ".join(v for v in (f"Tel: {c['phone']}" if c["phone"] else "", c["email"]) if v)
+        company_lines = [f"<b>{c['name']}</b>", f"RFC: {c['rfc']}" if c["rfc"] else "", c["tagline"], contact]
+        company_text = "<br/>".join(line for line in company_lines if line)
+    else:
+        company_text = (f"<b>{c['name']}</b><br/>RFC: {c['rfc']}<br/>{c['tagline']}<br/>"
+                        f"Tel: {c['phone']} &nbsp;|&nbsp; {c['email']}")
+    left_header.append(Paragraph(company_text, st["small"]))
+    draft = quote.get("document_label") == "BORRADOR — SIN EMITIR"
+    date_label = "Fecha de propuesta" if commercial and draft else "Fecha de Emisión"
     folio_box = Table(
         [
             [Paragraph("Folio de Cotización:", st["small"])],
             [Paragraph(quote["folio"], st["folio"])],
             [
                 Paragraph(
-                    f"Fecha de Emisión: <b>{quote['issue_date']}</b><br/>"
+                    f"{date_label}: <b>{quote['issue_date']}</b><br/>"
                     f"Válido hasta: <b><font color=\"#C62828\">{quote['valid_until']} "
                     f"({quote['validity_label']})</font></b><br/>"
                     f"Asesor Técnico: <b>{c['advisor']}</b>",
@@ -412,9 +416,13 @@ def generate_quote_pdf(quote):
         unit_text = item["unit_price_label"] if commercial else money(item["unit_price"]) if not quote.get("precision_units") else unit_money(item["unit_price"])
         if commercial:
             source_label = f"<br/>Unidad: {item['unit_label']}"
-            if stringWidth(unit_text, st["cell_right"].fontName, st["cell_right"].fontSize) > 2.1 * cm - 12:
+            # Medir solo la cifra: la marca "(aprox.)" va en su propio renglón de la celda.
+            figure = unit_text.removesuffix(" (aprox.)")
+            if stringWidth(figure, st["cell_right"].fontName, st["cell_right"].fontSize) > 2.1 * cm - 12:
                 source_label += f"<br/>Unitario MXN: {unit_text}"
                 unit_text = "Ver detalle"
+            elif item.get("unit_price_approximate"):
+                unit_text = f"{figure}<br/>(aprox.)"
         elif quote.get("precision_units"):
             stock = item["stock"]
             stock_label = "desconocido" if stock is None else "sin existencias" if stock == 0 else str(stock)
@@ -428,13 +436,17 @@ def generate_quote_pdf(quote):
                 Paragraph(f"<b>{i}</b>", st["cell_center"]),
                 Paragraph(item["code"], st["cell_mono"]),
                 Paragraph(f"<b>{item['name']}</b><br/><font color=\"#5A5F7A\">{item['description']}{source_label}</font>", st["cell"]),
-                Paragraph(" / ".join(v for v in (item["brand"], item["model"]) if v) or "—", st["cell_center"]) if commercial else Paragraph(item["provider"], st["cell_center"]),
+                Paragraph("<br/>".join(v for v in (item["brand"], item["model"]) if v) or "—", st["cell_center"]) if commercial else Paragraph(item["provider"], st["cell_center"]),
                 Paragraph(f"<b>{item['qty']}</b>", st["cell_center"]),
                 Paragraph(unit_text, st["cell_right"]),
                 Paragraph(f"<b>{money(item['amount'])}</b>", st["cell_right"]),
             ]
         )
-    col_widths = [0.9 * cm, 2.4 * cm, usable - 11.9 * cm, 2.2 * cm, 1.2 * cm, 2.1 * cm, 2.1 * cm]
+    if commercial:
+        # V2: Marca/Modelo más ancha para no partir modelos; Código cede espacio.
+        col_widths = [0.9 * cm, 2.0 * cm, usable - 12.3 * cm, 3.0 * cm, 1.2 * cm, 2.1 * cm, 2.1 * cm]
+    else:
+        col_widths = [0.9 * cm, 2.4 * cm, usable - 11.9 * cm, 2.2 * cm, 1.2 * cm, 2.1 * cm, 2.1 * cm]
     items_table = Table(rows, colWidths=col_widths, repeatRows=1, splitInRow=1)
     items_table.setStyle(
         TableStyle(
@@ -469,9 +481,10 @@ def generate_quote_pdf(quote):
             [Paragraph("<b>Total estimado:</b>", st["cell_bold"]), Paragraph(f"<b><font color=\"#7311F5\">{money(quote['total'])} {currency_label}</font></b>", st["cell_right"])],
         ]
     if commercial:
+        discount_sign = "-" if Decimal(quote["discount_amount"]) else ""  # Sin "-$0.00".
         total_rows[:0] = [
             [Paragraph("Venta antes de descuento:", st["cell"]), Paragraph(f"<b>{money(quote['sale_subtotal'])} MXN</b>", st["cell_right"])],
-            [Paragraph(f"Descuento global ({quote['discount_percent_label']}):", st["cell"]), Paragraph(f"<b>-{money(quote['discount_amount'])} MXN</b>", st["cell_right"])],
+            [Paragraph(f"Descuento global ({quote['discount_percent_label']}):", st["cell"]), Paragraph(f"<b>{discount_sign}{money(quote['discount_amount'])} MXN</b>", st["cell_right"])],
         ]
     totals = Table(
         total_rows,

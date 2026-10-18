@@ -323,7 +323,7 @@ class ApiCotizacionesTests(TestCase):
         self.assertEqual((repetida.status_code, otra["data"]["revision"]), (201, 2))
 
     async def test_c12_metodos_no_permitidos(self):
-        self.assertEqual((await self.async_client.get(reverse("api_crear_cotizacion"))).status_code, 405)
+        self.assertEqual((await self.async_client.patch(reverse("api_crear_cotizacion"))).status_code, 405)
         self.assertEqual((await self.async_client.delete(self.url_revision("X", 1))).status_code, 405)
 
     async def test_c13_errores_inesperados_dan_500_generico_y_quedan_en_el_log(self):
@@ -733,7 +733,7 @@ class CommercialAPITests(CommercialFixtures, TestCase):
             self.assertContains(response, text)
         for demo in ("SYS-PRO-CAT6", "CT-DELL-P2422H", "$64,335.90", 'value="17.50"', "Openpay / Stripe"):
             self.assertNotContains(response, demo)
-        self.assertContains(response, "pendientes de P6")
+        self.assertContains(response, "viewSummaryBtn")
 
     def test_json_ambiguo_no_se_acepta(self):
         for body in ('{"schema_version":2,"schema_version":2}', '{"schema_version":NaN}'):
@@ -756,6 +756,229 @@ class CommercialAPITests(CommercialFixtures, TestCase):
         with self.assertRaises((IntegrityError, ValidationError)), transaction.atomic():
             copy.save()
         self.assertEqual(QuoteAPIRequest.objects.get().request_id, old.request_id)
+
+
+@override_settings(CCONOR_EMPRESA=EMPRESA_QA, COTIZACIONES_EMISION_HABILITADA=True)
+class DocumentalAPITests(CommercialFixtures, TestCase):
+    send = CommercialAPITests.send
+    create = CommercialAPITests.create
+    detail = CommercialAPITests.detail
+    confirm_and_issue = CommercialAPITests.confirm_and_issue
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.actor)
+
+    def summary(self, created):
+        return self.send("api_resumen_documental", method="get", args=(created["folio"], created["revision"]))
+
+    def document_params(self, created):
+        return {"exact": "1", "revision": created["revision"], "edit_version": created["edit_version"],
+                "state_fingerprint": created["state_fingerprint"], "expected_status": created.get("status", "DRAFT")}
+
+    def test_listado_solo_propias_incluso_staff_y_sin_costos(self):
+        first = self.create(alta_comercial(client_name="QA propietario"))
+        other = self.create(alta_comercial(client_name="QA ajena"))
+        quote = Quote.objects.get(folio=other["folio"])
+        quote.advisor = self.other
+        quote.save(update_fields=["advisor"])
+        response = self.client.get(reverse("api_crear_cotizacion"))
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual([r["folio"] for r in result["data"]], [first["folio"]])
+        self.assertIsNone(result["data"][0]["total"])
+        for internal in ("source_unit_price", "provider", "state_fingerprint", "notes", "known_cost_total"):
+            self.assertNotIn(internal, response.content.decode())
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+        self.client.force_login(self.staff)
+        self.assertEqual(self.client.get(reverse("api_crear_cotizacion")).json()["data"], [])
+
+    def test_listado_paginado_y_filtros_rechazan_entradas_ambiguas(self):
+        for i in range(21):
+            self.create(alta_comercial(client_name=f"QA cliente {i}"))
+        url = reverse("api_crear_cotizacion")
+        first = self.client.get(url).json()
+        self.assertEqual(len(first["data"]), 20)
+        self.assertEqual(first["pagination"], {"page": 1, "pages": 2, "count": 21})
+        self.assertEqual(len(self.client.get(url, {"page": 2}).json()["data"]), 1)
+        self.assertEqual(len(self.client.get(url, {"q": "QA cliente 20"}).json()["data"]), 1)
+        self.assertEqual(self.client.get(url, {"status": "ISSUED"}).json()["data"], [])
+        for query in ("page=0", "page=3", "page=1&page=2", "status=enviada", "advisor=1", "page=1.5"):
+            self.assertEqual(self.client.get(url + "?" + query).status_code, 400)
+
+    def test_listado_busca_cabecera_de_ultima_revision_no_cliente_antiguo(self):
+        original = self.issue(self.commercial_draft())
+        from apps.quotes.snapshots import crear_revision_comercial
+        from apps.quotes.tests.test_commercial_persistence import commercial_line
+        draft = crear_revision_comercial(original.pk, [commercial_line()], actor=self.actor, request_id=uuid4(),
+            tax_rate=Decimal(".16"), discount_percent=Decimal("0"), tipo_cambio=None, exchange_context_id=None)
+        self.commercial_edit(draft, client={**draft.header["client"], "business_name": "Cliente nuevo revisado"})
+        result = self.client.get(reverse("api_crear_cotizacion"), {"q": "nuevo revisado"}).json()["data"]
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["revision"], 2)
+        self.assertIsNone(result[0]["total"])
+
+    def test_listado_sesion_y_revocacion(self):
+        url = reverse("api_crear_cotizacion")
+        self.client.logout()
+        self.assertEqual(self.client.get(url).status_code, 401)
+        self.client.force_login(self.actor)
+        self.actor.groups.clear()
+        self.assertEqual(self.client.get(url).status_code, 403)
+
+    def test_resumen_borrador_cliente_allowlist_y_sin_escrituras(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        created = self.create()
+        with CaptureQueriesContext(connection) as queries:
+            result = self.summary(created)
+        self.assertFalse(any(q["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for q in queries))
+        self.assertEqual(result["cliente"]["total"], "116.00")
+        self.assertEqual(result["warnings"][0]["code"], "COSTO_DESCONOCIDO")
+        self.assertEqual(result["revision"], 1)
+        wire = json.dumps(result["cliente"])
+        for key in ("provider", "source_currency", "source_unit_price", "margin_percent", "utilidad", "exchange_rate"):
+            self.assertNotIn(key, wire)
+        self.assertFalse(self.files())
+
+    def test_resumen_emitida_sin_motor_ni_renderer_y_revision_explicita(self):
+        created = self.create()
+        self.confirm_and_issue(created)
+        with mock.patch("apps.quotes.snapshots._commercial_calculate", side_effect=AssertionError("Sin motor")), mock.patch("apps.quotes.pdf.generate_quote_pdf", side_effect=AssertionError("Sin renderer")):
+            summary = self.summary(created)
+        self.assertTrue(summary["cliente"]["archived_only"])
+        self.assertEqual(summary["cliente"]["total"], "116.00")
+        self.send("api_nueva_revision", {"schema_version": 2, "request_id": str(uuid4())}, args=(created["folio"], 1), status=201)
+        self.assertEqual(self.summary(created)["revision"], 1)
+        self.assertEqual(len(self.summary(created)["revisiones"]), 2)
+
+    def test_resumen_ajeno_y_revocacion_no_exponen_documento(self):
+        created = self.create()
+        self.client.force_login(self.other)
+        self.send("api_resumen_documental", method="get", args=(created["folio"], 1), status=403)
+        self.client.force_login(self.actor)
+        self.actor.groups.clear()
+        self.send("api_resumen_documental", method="get", args=(created["folio"], 1), status=403)
+
+    def test_pdf_borrador_exacto_rechaza_version_estado_y_huella_obsoletos(self):
+        created = self.create()
+        url = reverse("descargar_pdf_cotizacion", args=[created["folio"]])
+        params = self.document_params(created)
+        response = self.client.get(url, params)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.content.startswith(b"%PDF-"))
+        self.assertFalse(self.files())
+        for changes in ({"edit_version": 2}, {"state_fingerprint": "b" * 64}, {"expected_status": "ISSUED"}):
+            self.assertEqual(self.client.get(url, {**params, **changes}).status_code, 409)
+        for key in ("revision", "edit_version", "state_fingerprint"):
+            self.assertEqual(self.client.get(url, {k: v for k, v in params.items() if k != key}).status_code, 400)
+
+    def test_pdf_estado_cambia_entre_resumen_y_descarga_no_cambia_documento_silenciosamente(self):
+        created = self.create()
+        self.confirm_and_issue(created)
+        url = reverse("descargar_pdf_cotizacion", args=[created["folio"]])
+        self.assertEqual(self.client.get(url, self.document_params(created)).status_code, 409)
+        issued = {**created, "status": "ISSUED"}
+        response = self.client.get(url, self.document_params(issued))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["X-Quote-Document"], "original")
+
+    def test_correo_exacto_envia_original_no_cambia_destinatario_guardado(self):
+        from django.core import mail
+        from apps.quotes.snapshots import leer_pdf_emitido
+        created = self.create()
+        self.confirm_and_issue(created)
+        r = QuoteRevision.objects.get(quote__folio=created["folio"], number=1)
+        original = leer_pdf_emitido(r)
+        body = {**self.document_params({**created, "status": "ISSUED"}), "exact": True,
+            "email": "otro@qa.example.invalid", "subject": "QA asunto", "message": "QA mensaje", "attach_pdf": True}
+        with mock.patch("apps.quotes.pdf.generate_quote_pdf", side_effect=AssertionError("Sin regenerar")):
+            result = self.client.post(reverse("enviar_cotizacion_correo", args=[created["folio"]]), json.dumps(body), content_type="application/json")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(mail.outbox[0].attachments[0][1], original)
+        self.assertEqual(mail.outbox[0].to, [body["email"]])
+        self.assertNotEqual(r.header["client"]["email"], body["email"])
+
+    def test_correo_sin_revision_sin_adjunto_o_estado_obsoleto_no_envia(self):
+        from django.core import mail
+        created = self.create()
+        self.confirm_and_issue(created)
+        body = {**self.document_params({**created, "status": "ISSUED"}), "exact": True, "email": "qa@example.invalid", "attach_pdf": True}
+        url = reverse("enviar_cotizacion_correo", args=[created["folio"]])
+        for changes, status in (({"revision": None}, 400), ({"attach_pdf": False}, 400), ({"expected_status": "DRAFT"}, 409), ({"state_fingerprint": "c" * 64}, 409)):
+            self.assertEqual(self.client.post(url, json.dumps({**body, **changes}), content_type="application/json").status_code, status)
+        self.assertEqual(len(getattr(mail, "outbox", [])), 0)
+
+    def test_correo_exacto_sin_attach_pdf_adjunta_original(self):
+        from django.core import mail
+        from apps.quotes.snapshots import leer_pdf_emitido
+        created = self.create()
+        self.confirm_and_issue(created)
+        original = leer_pdf_emitido(QuoteRevision.objects.get(quote__folio=created["folio"], number=1))
+        body = {**self.document_params({**created, "status": "ISSUED"}), "exact": True, "email": "qa@example.invalid"}
+        result = self.client.post(reverse("enviar_cotizacion_correo", args=[created["folio"]]), json.dumps(body), content_type="application/json")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].attachments[0][1], original)
+
+    def test_v1_original_interno_intacto_sin_contexto_cliente_ni_correo(self):
+        from apps.quotes.snapshots import leer_pdf_emitido
+        original = self.issue(self.draft())
+        expected = leer_pdf_emitido(original)
+        data = {"folio": self.quote.folio, "revision": 1}
+        summary = self.summary(data)
+        self.assertEqual(summary["schema_version"], 1)
+        self.assertIsNone(summary["cliente"])
+        self.assertFalse(summary["emission_enabled"])
+        url = reverse("descargar_pdf_cotizacion", args=[self.quote.folio])
+        self.assertEqual(self.client.get(url, {"exact": 1, "revision": 1, "edit_version": 1, "expected_status": "ISSUED"}).content, expected)
+        sent = self.client.post(reverse("enviar_cotizacion_correo", args=[self.quote.folio]), json.dumps({"email": "qa@example.invalid", "revision": 1}), content_type="application/json")
+        self.assertEqual(sent.status_code, 409)
+        self.assertIn("histórico interno", sent.json()["error"])  # Motivo explícito, no conflicto genérico.
+
+    def test_preview_transicion_no_crea_revision_ni_reinterpreta_original(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        original = self.issue(self.draft())
+        body = {"schema_version": 2, "source_edit_version": 1, "items": [partida_api_manual()],
+                "tax_rate": "0.16", "discount_percent": "0", "fx_context_id": None}
+        with CaptureQueriesContext(connection) as queries:
+            preview = self.send("api_preview_transicion", body, args=(self.quote.folio, 1))
+        self.assertFalse(any(q["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for q in queries))
+        self.assertFalse(preview["persistida"])
+        self.assertEqual(preview["cliente"]["total"], "116.00")
+        body["source_edit_version"] = 2
+        self.send("api_preview_transicion", body, args=(self.quote.folio, 1), status=409)
+        body["source_edit_version"] = 1
+        created = self.send("api_nueva_revision", {**body, "request_id": str(uuid4())}, args=(self.quote.folio, 1), status=201)
+        self.assertEqual(created["revision"], 2)
+        original.refresh_from_db()
+        self.assertEqual(original.schema_version, 1)
+
+    def test_plantilla_resumen_no_demo_ni_totales_proveedor_o_cuentas_ficticias(self):
+        response = self.client.get(reverse("resumen"))
+        for text in ("commercialSummaryApp", "Mis cotizaciones", "BORRADOR", "revisionSelector"):
+            self.assertContains(response, text)
+        for text in ("COT-2026-0048", "BBVA", "Constructora e Inmobiliaria", "Marca / Dist.", "apiClient.quotes.getAll"):
+            self.assertNotContains(response, text)
+
+    def test_identidad_documental_ambigua_y_campos_extra_de_correo_rechazados(self):
+        created = self.create()
+        url = reverse("descargar_pdf_cotizacion", args=[created["folio"]])
+        self.assertEqual(self.client.get(url + "?exact=1&revision=1&revision=2&edit_version=1&expected_status=DRAFT").status_code, 400)
+        email_url = reverse("enviar_cotizacion_correo", args=[created["folio"]])
+        for body in ('{"email":"qa@example.invalid","revision":1,"revision":2}', '{"email":"qa@example.invalid","revision":1,"cost":"1"}'):
+            self.assertEqual(self.client.post(email_url, body, content_type="application/json").status_code, 400)
+
+    def test_fallo_correo_no_reintenta_ni_promete_entrega(self):
+        created = self.create()
+        self.confirm_and_issue(created)
+        url = reverse("enviar_cotizacion_correo", args=[created["folio"]])
+        for outcome in (RuntimeError("QA corte"), 0):
+            with self.subTest(outcome=type(outcome).__name__), mock.patch("apps.quotes.views.EmailMultiAlternatives.send", **({"side_effect": outcome} if isinstance(outcome, Exception) else {"return_value": outcome})) as send, self.assertLogs("apps.quotes.views", level="ERROR"):
+                response = self.client.post(url, json.dumps({"email": "qa@example.invalid", "revision": 1}), content_type="application/json")
+                self.assertEqual(response.status_code, 500)
+                self.assertEqual(send.call_count, 1)
 
 
 @override_settings(CCONOR_EMPRESA=EMPRESA_QA)

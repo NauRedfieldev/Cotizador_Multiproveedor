@@ -21,7 +21,9 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied, ValidationError
 from django.core.validators import validate_email
+from django.core.paginator import Paginator
 from django.db import IntegrityError, connection, transaction
+from django.db.models import Count, F, OuterRef, Q, Subquery
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods
@@ -267,9 +269,12 @@ def _respuesta_de_error(exc):
     return JsonResponse({"success": False, "error": mensaje, "code": codes[status], "details": details}, status=status)
 
 
-@_api("POST")
+@_api("GET POST")
 async def crear_cotizacion(request):
-    """POST /api/v1/quotes/ → Quote + primer borrador (M8 crear_borrador). Idempotente por request_id."""
+    """GET listado propio; POST Quote + borrador. Alta idempotente por request_id."""
+    if request.method == "GET":
+        output = await sync_to_async(_listado_propio, thread_sensitive=True)(await request.auser(), request.GET)
+        return JsonResponse({"success": True, **output}, headers={"Cache-Control": "private, no-store"})
     datos = _leer_json(request, _CAMPOS_ALTA | _COMMERCIAL_HEADER | {"schema_version"})
     if "schema_version" in datos:
         _schema_v2(datos)
@@ -332,7 +337,7 @@ async def emitir(request, folio, numero):
 @_api("POST")
 async def nueva_revision(request, folio, numero):
     """POST …/revisiones/<n>/nueva/ → borrador nuevo desde una emisión (M8 crear_revision)."""
-    datos = _leer_json(request, {"request_id", "schema_version", "items", "tax_rate", "discount_percent", "fx_context_id"})
+    datos = _leer_json(request, {"request_id", "schema_version", "items", "tax_rate", "discount_percent", "fx_context_id", "source_edit_version"})
     if datos.get("schema_version") == 2:
         output = await sync_to_async(_commercial_clone, thread_sensitive=True)(folio, numero, await request.auser(), datos)
         return JsonResponse({"success": True, "data": output}, status=201)
@@ -566,6 +571,82 @@ def _resumen(revision, folio):
         "tax": None if revision.tax is None else _texto(revision.tax),
         "total": None if revision.total is None else _texto(revision.total),
     }
+
+
+def _listado_propio(actor, params):
+    """Una fila por folio propio, sobre su última revisión, nunca QuoteItem.total."""
+    actor = require_commercial_permission(actor)
+    if set(params) - {"q", "status", "page"} or any(len(params.getlist(k)) != 1 for k in params):
+        raise _EntradaInvalida("Filtros de listado inválidos.")
+    query = params.get("q", "").strip()
+    status = params.get("status", "")
+    page = params.get("page", "1")
+    if len(query) > 200 or status not in ("", "DRAFT", "ISSUED") or not re.fullmatch(r"[1-9][0-9]{0,8}", page):
+        raise _EntradaInvalida("Búsqueda, estado o página inválidos.")
+    latest = QuoteRevision.objects.filter(quote_id=OuterRef("quote_id")).order_by("-number").values("pk")[:1]
+    rows = QuoteRevision.objects.filter(quote__advisor_id=actor.pk).annotate(latest_id=Subquery(latest)).filter(pk=F("latest_id"))
+    if query:
+        rows = rows.filter(Q(quote__folio__icontains=query) | Q(header__client__business_name__icontains=query))
+    if status:
+        rows = rows.filter(status=status)
+    rows = rows.select_related("quote").annotate(item_count=Count("snapshots")).order_by("-created_at", "-pk")
+    paginator = Paginator(rows, 20)
+    if int(page) > paginator.num_pages:
+        raise _EntradaInvalida("Página fuera de rango; vuelve al inicio del listado.")
+    selected = paginator.page(int(page))
+    return {"actor_id": actor.pk, "data": [{**_resumen(r, r.quote.folio), "schema_version": r.schema_version,
+        "client_name": r.header["client"]["business_name"], "issue_date": r.issue_date.isoformat(),
+        "items_count": r.item_count} for r in selected],
+        "pagination": {"page": selected.number, "pages": paginator.num_pages, "count": paginator.count}}
+
+
+@_api("GET")
+async def resumen_documental(request, folio, numero):
+    def read(actor):
+        with transaction.atomic():
+            quote, revision = _get_commercial(folio, numero, actor)
+            output = {**_resumen(revision, folio), "actor_id": actor.pk,
+                "schema_version": revision.schema_version, "state_fingerprint": revision.state_fingerprint,
+                "quote_status": quote.status, "client_name": revision.header["client"]["business_name"],
+                "cliente": None, "warnings": [],
+                "emission_enabled": bool(settings.COTIZACIONES_EMISION_HABILITADA and revision.schema_version == 2),
+                "revisiones": [{**_resumen(r, folio), "schema_version": r.schema_version}
+                               for r in quote.revisions.order_by("number")]}
+            if revision.schema_version == 2:
+                if revision.status == "DRAFT":
+                    preview = commercial_services.previsualizar_revision_comercial(revision.pk,
+                        actor=actor, expected_version=revision.edit_version)
+                    output["cliente"] = preview["cliente"]
+                    output["warnings"] = _warning_states(preview["resultado"], revision, quote)
+                else:
+                    output["cliente"] = commercial_services.contexto_revision(revision)
+            return _wire(output)
+    output = await sync_to_async(read, thread_sensitive=True)(await request.auser())
+    return JsonResponse({"success": True, "data": output}, headers={"Cache-Control": "private, no-store"})
+
+
+@_api("POST")
+async def preview_transicion(request, folio, numero):
+    data = _leer_json(request, {"schema_version", "items", "tax_rate", "discount_percent", "fx_context_id", "source_edit_version"})
+    _schema_v2(data)
+    def preview(actor):
+        with transaction.atomic():
+            quote, previous = _get_commercial(folio, numero, actor)
+            if previous.schema_version != 1:
+                raise RevisionConflict("Esta preparación explícita es solo para históricos v1.")
+            if _entero(data.get("source_edit_version"), "source_edit_version") != previous.edit_version:
+                raise RevisionConflict("El histórico cambió; vuelve a abrirlo antes de preparar la transición.")
+            parts = _commercial_items(data.get("items"), actor)
+            tipo, context_id = _fx_context(data.get("fx_context_id"), actor)
+            tax = _decimal_text(data.get("tax_rate"), 5, 4, maximum=Decimal("1"))
+            discount = _decimal_text(data.get("discount_percent"), 5, 2, maximum=Decimal("100"))
+            result = commercial_services.previsualizar_comercial(quote.pk, parts, actor=actor,
+                company=previous.header["company"], conditions=previous.header["conditions"], client=previous.header["client"],
+                tipo_cambio=tipo, exchange_context_id=context_id, tax_rate=tax, discount_percent=discount,
+                issue_date=timezone.localdate(), valid_days=previous.valid_days)
+            result["warnings"] = _warning_states(result["resultado"], QuoteRevision(discount_percent=discount))
+            return _wire(result)
+    return JsonResponse({"success": True, "data": await sync_to_async(preview, thread_sensitive=True)(await request.auser())})
 
 
 # P4: frontera comercial explícita. Las vistas no aceptan originales API del
@@ -922,8 +1003,10 @@ def _commercial_clone(folio, number, actor, data):
     _schema_v2(data)
     def clone(current, request_id):
         quote, revision = _get_commercial(folio, number, current)
+        if "source_edit_version" in data and _entero(data["source_edit_version"], "source_edit_version") != revision.edit_version:
+            raise RevisionConflict("La revisión de origen cambió; recarga antes de crear otra revisión.")
         if revision.schema_version == 2:
-            _fields(data, {"request_id", "schema_version"})
+            _fields(data, {"request_id", "schema_version", "source_edit_version"})
             parts = [commercial_services.PartidaComercialCapturada(**p) for p in commercial_services._commercial_stored(revision)]
             tax, discount, tipo, fx_id = revision.tax_rate, revision.discount_percent, commercial_services._tipo(revision), revision.exchange_context_id
         else:

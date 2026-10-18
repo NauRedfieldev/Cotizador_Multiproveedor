@@ -419,9 +419,13 @@ def emitir_revision(revision_id, *, actor, expected_version, state_fingerprint=N
         raise
 
 
-def obtener_documento(folio, *, actor, number=None, allow_draft=True):
+def obtener_documento(folio, *, actor, number=None, allow_draft=True, expected_version=None,
+                      state_fingerprint=None, expected_status=None, customer_only=False):
     """Número explícito o última emitida; si no hay emisiones, último borrador."""
     from .pdf import generate_quote_pdf, get_quote_context, safe_filename
+
+    if expected_version is not None and number is None:
+        raise ValidationError("La lectura exacta requiere número de revisión.")
 
     # El contexto debe corresponder a UNA versión: impedir lectura de cabecera
     # anterior con partidas nuevas mientras otro hilo guarda/emite el borrador.
@@ -436,6 +440,20 @@ def obtener_documento(folio, *, actor, number=None, allow_draft=True):
         else:
             revision = revisions.filter(status=QuoteRevision.Status.ISSUED).order_by("-number").first()
             revision = revision or revisions.order_by("-number").first()
+        if expected_version is not None or customer_only:
+            _commercial_actor(quote, actor)
+            if revision is None:
+                raise RevisionConflict("El documento requiere una revisión capturada explícita.")
+        if expected_version is not None and (type(expected_version) is not int or revision.edit_version != expected_version):
+            raise RevisionConflict("La versión del documento cambió; recarga el resumen.")
+        if expected_version is not None and revision.schema_version == 2 and state_fingerprint is None:
+            raise ValidationError("La lectura comercial exacta requiere huella guardada.")
+        if expected_status is not None and (revision is None or revision.status != expected_status):
+            raise RevisionConflict("El estado del documento cambió; recarga el resumen.")
+        if state_fingerprint is not None and (revision is None or revision.state_fingerprint != state_fingerprint):
+            raise RevisionConflict("La huella del documento cambió; recarga el resumen.")
+        if customer_only and revision.schema_version != 2:
+            raise RevisionConflict("El original v1 es solo histórico interno; prepara una revisión comercial v2 para el cliente.")
         if revision is not None and revision.schema_version == 2:
             _commercial_actor(quote, actor)
         context = get_quote_context(folio) if revision is None else contexto_revision(revision)
@@ -728,8 +746,9 @@ def _commercial_client_context(revision, result=None, *, snapshots=None):
             "amount": snapshot.sale_amount if revision.status == QuoteRevision.Status.ISSUED else line.importe_venta})
     header = revision.header
     with localcontext(MONEY_CONTEXT):
-        tax_label = f"{revision.tax_rate * 100:g}%"
-        discount_label = f"{revision.discount_percent:g}%"
+        # normalize() quita ceros de escala (16.0000 → 16); :f evita notación 1E+2.
+        tax_label = f"{(revision.tax_rate * 100).normalize():f}%"
+        discount_label = f"{revision.discount_percent.normalize():f}%"
     return {
         "commercial_client": True, "archived_only": revision.status == QuoteRevision.Status.ISSUED,
         "folio": header["folio"], "revision": revision.number,

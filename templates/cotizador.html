@@ -7,7 +7,8 @@
         <div><h2 class="fw-bold mb-1">Cotizador</h2><p class="text-muted mb-0">Captura interna · Cálculo y guardado en el servidor</p></div>
         <span class="badge bg-secondary" id="quoteStatus" role="status" aria-live="polite">Conectando…</span>
     </div>
-    <div class="alert alert-info small">Proveedor, costos, FX y utilidad son información interna. Guardar un borrador no emite ni envía documentos. Resumen, PDF y correo se conectarán en P6.</div>
+    <div class="alert alert-info small">Proveedor, costos, FX y utilidad son información interna. Guardar un borrador no emite ni envía documentos. Ver resumen abre únicamente la revisión guardada sin cambios pendientes.</div>
+    <div id="transitionNotice" class="alert alert-warning d-none">Preparación comercial desde histórico v1: agrega y valida las nuevas entradas; no se copian costos, unidades ni márgenes antiguos. La cabecera de origen se conserva al crear el borrador; revisa y edita cliente/condiciones después de guardarlo, antes de emitir. El original permanece intacto.</div>
     <div id="quoteError" class="alert alert-danger d-none" role="alert"></div>
     <div class="d-flex flex-wrap gap-2 mb-3">
         <button type="button" id="refreshPermissionsBtn" class="btn btn-outline-secondary btn-sm">Revisar conexión y permisos</button>
@@ -89,7 +90,7 @@
     <div class="d-flex flex-wrap gap-2 mb-4">
         <button type="button" id="saveQuoteBtn" class="btn btn-cconor-primary" disabled>Guardar borrador</button>
         <button type="button" id="clearTableBtn" class="btn btn-outline-secondary" disabled>Limpiar partidas del borrador</button>
-        <button type="button" class="btn btn-outline-secondary" disabled title="Pendiente de P6">Resumen / PDF / correo: pendientes de P6</button>
+        <button type="button" id="viewSummaryBtn" class="btn btn-outline-primary" disabled title="Requiere una revisión guardada sin cambios pendientes">Ver resumen</button>
     </div>
     <div class="cconor-card p-3 mb-4">
         <h5 class="fw-bold">Abrir revisión conocida</h5>
@@ -103,4 +104,4 @@
     <div class="quote-notice">Esta cotización no es un pedido ni aparta mercancía. El preview no guarda; guardar no emite. No hay guardado automático.</div>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=5"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=8"></script>{% endblock %}

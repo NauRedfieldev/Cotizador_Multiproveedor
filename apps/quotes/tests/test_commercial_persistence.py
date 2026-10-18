@@ -428,8 +428,28 @@ class CommercialServicesTests(CommercialFixtures, TestCase):
             generate_quote_pdf(context)
         text = "\n".join(c.args[0] for c in paragraphs.call_args_list)
         self.assertIn("precisión completa", text)
-        self.assertIn("Descuento global (10.00%)", text)
+        self.assertIn("Descuento global (10%)", text)
+        self.assertIn("I.V.A. (16%)", text)
+        # Presentación v2: aprox. en la celda, fecha de borrador y sin campos vacíos de empresa.
+        self.assertIn("$33.333<br/>(aprox.)", text)
+        self.assertNotIn("Ver detalle", text)
+        self.assertIn("Fecha de propuesta:", text)
+        self.assertNotIn("Fecha de Emisión", text)
+        self.assertNotIn("RFC: <br/>", text)
+        self.assertNotIn("Tel:", text)
         self.assertIn("Venta antes de descuento:", text)
+        self.assertIn("<b>-$10.00 MXN</b>", text)
+
+    def test_descuento_cero_conserva_renglon_sin_signo(self):
+        context = self.preview(self.commercial_draft([commercial_line(cost="100", margin="0")]))["cliente"]
+        self.assertEqual(context["discount_amount"], D("0"))
+        from reportlab.platypus import Paragraph
+        with patch("apps.quotes.pdf.Paragraph", wraps=Paragraph) as paragraphs:
+            generate_quote_pdf(context)
+        text = "\n".join(c.args[0] for c in paragraphs.call_args_list)
+        self.assertIn("Descuento global (0%)", text)
+        self.assertIn("<b>$0.00 MXN</b>", text)
+        self.assertNotIn("-$0.00", text)
 
     def test_unitario_exacto_y_empate_periodico_no_cambian_importe(self):
         self.assertEqual(commercial_unit_money(D("10"), D("3"), D("30")), ("$10.00", False))

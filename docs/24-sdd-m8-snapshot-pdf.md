@@ -3,6 +3,7 @@
 **Versionado:** §§1–7 describen el esquema histórico v1. La ampliación comercial
 v2/P2 está en §8; preview/render/emisión de servicio P3 en §9. API P4 en
 [28 §13](28-m7a-integracion-vistas-y-m8.md#13-p4--api-comercial-v2-y-capturas-estables); UI P5 en [28 §14](28-m7a-integracion-vistas-y-m8.md#14-p5--cotizador-conectado-al-cálculo-comercial).
+Resumen/documentos P6 en [28 §15](28-m7a-integracion-vistas-y-m8.md#15-p6--mis-cotizaciones-resumen-y-documentos-exactos).
 No reinterpretar los
 campos históricos usando reglas comerciales nuevas.
 
@@ -508,6 +509,12 @@ no nueva precisión de datos ni regla comercial. Si acorta el unitario se etique
 Empates periódicos pueden no reconciliar ni con más decimales; no corregir la partida
 para forzar la multiplicación visible. Unitarios largos pasan a detalle sin truncarse.
 Importes/totales siguen a dos decimales; descuento no se distribuye entre líneas.
+Ajuste P6 (solo PDFs v2 generados después; originales archivados y v1 sin cambios):
+la marca `(aprox.)` va en un renglón propio y no cuenta para decidir «Ver detalle»;
+marca y modelo en renglones separados con columna más ancha; borrador muestra
+«Fecha de propuesta»; empresa sin RFC/teléfono omite esas etiquetas vacías. Las
+etiquetas de tasa se normalizan (`16%`, `10%`), sin ceros de escala. Descuento
+cero conserva su renglón como `$0.00` (sin signo); solo un descuento mayor lleva `-`.
 
 ### 9.3 Emisión y revocación concurrente
 
@@ -554,5 +561,6 @@ En P3 no se crearon archivos de aplicación nuevos ni otra migración. P4 añade
 con capturas/recibos técnicos y API comercial (doc28 §13). 0003/0004 siguen pendientes
 de autorización para BD de trabajo. No se asignan usuarios/grupos reales ni se
 habilita emisión HTTP/mocks. P5 conecta la captura/preview/guardado de interfaz (doc28 §14).
-Faltan P6 y aceptación comercial final con datos oficiales. Los fixtures y
+P6 conecta documentos por revisión y guardas de lectura sin otro modelo/migración
+(doc28 §15). Falta aceptación comercial final con datos oficiales. Los fixtures y
 pruebas sintéticos no certifican semántica real de IVA/stock de Exel ni uso con clientes.

@@ -20,10 +20,12 @@ urlpatterns = [
     path("api/v1/quotes/", api.crear_cotizacion, name="api_crear_cotizacion"),
     path("api/v1/quotes/<str:folio>/", api.detalle_cotizacion, name="api_detalle_cotizacion"),
     path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/", api.guardar_revision, name="api_guardar_revision"),
+    path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/resumen/", api.resumen_documental, name="api_resumen_documental"),
     path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/preview/", api.preview_edicion, name="api_preview_edicion"),
     path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/confirmaciones/", api.confirmar_comercial, name="api_confirmar_comercial"),
     path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/emitir/", api.emitir, name="api_emitir_revision"),
     path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/nueva/", api.nueva_revision, name="api_nueva_revision"),
+    path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/nueva/preview/", api.preview_transicion, name="api_preview_transicion"),
     path("demo/cotizaciones/<str:folio>/pdf/", views.demo_pdf_cotizacion, name="demo_pdf_cotizacion"),
     path(
         "cotizaciones/<str:folio>/pdf/",

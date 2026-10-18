@@ -1,4 +1,4 @@
-// P5: node --test tools/test_cotizador_comercial.cjs (sin paquetes/build/red).
+// P5/P6: node --test tools/test_cotizador_comercial.cjs (sin paquetes/build/red).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
@@ -9,8 +9,8 @@ function runtime(fetch = async () => { throw Error('No red'); }) {
     const context = vm.createContext({ window: {}, console, URLSearchParams, AbortController, setTimeout, clearTimeout,
         document: { cookie: 'csrftoken=synthetic-csrf', addEventListener() {}, getElementById: id => id === 'commercialQuoteApp' ? {} : null },
         localStorage: { getItem() { throw Error('No storage en cotizador'); }, setItem() { throw Error('No storage en cotizador'); } }, fetch });
-    for (const name of ['api.js', 'cotizador.js']) vm.runInContext(fs.readFileSync(path.join(root, 'static/js', name), 'utf8'), context);
-    return { tools: context.window.CCONORQuoteTools, api: context.window.apiClient.commercial };
+    for (const name of ['api.js', 'cotizador.js', 'cotizacion_actions.js']) vm.runInContext(fs.readFileSync(path.join(root, 'static/js', name), 'utf8'), context);
+    return { tools: context.window.CCONORQuoteTools, documents: context.window.CCONORDocumentTools, api: context.window.apiClient.commercial };
 }
 const plain = value => JSON.parse(JSON.stringify(value));
 function line(changes = {}) {
@@ -131,4 +131,64 @@ test('rutas de revisión exacta escapan folio y no usan rutas de listado/borrado
 test('controlador conectado sin innerHTML, parseInt, parseFloat ni storage financiero', () => {
     const source = fs.readFileSync(path.join(root, 'static/js/cotizador.js'), 'utf8');
     assert.doesNotMatch(source, /\.innerHTML\s*=|parseInt\(|parseFloat\(|localStorage\./);
+});
+test('transición v1: tras escribir la copia v2 se olvida el origen antes de releer', () => {
+    const source = fs.readFileSync(path.join(root, 'static/js/cotizador.js'), 'utf8');
+    const save = source.slice(source.indexOf('async function save()'), source.indexOf('async function confirmWarning('));
+    const written = save.indexOf('state.pending = null;\n');
+    const cleared = save.indexOf('state.transition = null;', written);
+    const reread = save.indexOf('await api.revision(saved.folio, saved.revision)');
+    assert.ok(written > 0 && cleared > written && reread > cleared);
+});
+
+const documentDetail = (changes = {}) => ({ folio: 'QA-001', revision: 2, edit_version: 3, status: 'DRAFT', schema_version: 2, state_fingerprint: 'a'.repeat(64), ...changes });
+test('P6: identidad documental fija revisión/versión/estado/huella, sin datos internos', () => {
+    const { documents } = runtime();
+    assert.deepEqual(plain(documents.identity(documentDetail())), { exact: true, revision: 2, edit_version: 3, expected_status: 'DRAFT', state_fingerprint: 'a'.repeat(64) });
+    assert.throws(() => documents.identity(documentDetail({ state_fingerprint: null })));
+    assert.throws(() => documents.identity(documentDetail({ revision: '2.5' })));
+    assert.equal(documents.identity(documentDetail({ schema_version: 1, state_fingerprint: null })).state_fingerprint, undefined);
+});
+test('P6: URL PDF no elige implícitamente última emitida ni importa parámetros financieros', () => {
+    const { documents } = runtime();
+    const url = new URL(documents.documentURL(documentDetail({ folio: 'QA/A?' })), 'http://qa.invalid');
+    assert.equal(url.pathname, '/cotizaciones/QA%2FA%3F/pdf/');
+    assert.equal(url.searchParams.get('revision'), '2');
+    assert.equal(url.searchParams.get('exact'), '1');
+    assert.equal(url.searchParams.get('edit_version'), '3');
+    assert.equal(url.searchParams.get('cost'), null);
+});
+test('P6: recuperar emisión perdida exige la misma versión y huella', () => {
+    const { documents } = runtime();
+    const intent = { body: { edit_version: 3, state_fingerprint: 'a'.repeat(64) } };
+    assert.equal(documents.emissionOutcome(documentDetail(), intent), 'RETRY');
+    assert.equal(documents.emissionOutcome(documentDetail({ status: 'ISSUED' }), intent), 'DONE');
+    assert.equal(documents.emissionOutcome(documentDetail({ edit_version: 4 }), intent), 'CONFLICT');
+});
+test('P6: descarga rechaza HTML/JSON en lugar de presentarlo como PDF', async () => {
+    for (const [status, type] of [[200, 'text/html'], [403, 'text/html'], [409, 'application/json']]) {
+        const { documents } = runtime(async () => response(status, { error: 'QA conflicto' }, type));
+        await assert.rejects(documents.fetchPDF(documentDetail()), error => error.status === status);
+    }
+});
+test('P6: descarga PDF usa credenciales/no-store y conserva el blob original', async () => {
+    let call; const blob = new Blob(['%PDF-QA']);
+    const { documents } = runtime(async (...args) => { call = args; return { ...response(200, {}, 'application/pdf'), blob: async () => blob }; });
+    const pdf = await documents.fetchPDF(documentDetail());
+    assert.equal(pdf.blob, blob);
+    assert.equal(call[1].credentials, 'same-origin');
+    assert.equal(call[1].cache, 'no-store');
+    assert.match(pdf.filename, /r2_BORRADOR\.pdf$/);
+});
+test('P6: correo lleva revisión exacta fuera de /api/v1, sin reintentos automáticos', async () => {
+    const calls = [];
+    const { api } = runtime(async (...args) => { calls.push(args); return response(200, { success: true }); });
+    await api.email('QA/A', { revision: 2, edit_version: 3, email: 'qa@example.invalid' });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], '/api/cotizaciones/QA%2FA/enviar-correo/');
+    assert.equal(JSON.parse(calls[0][1].body).revision, 2);
+});
+test('P6: resumen/documentos no usan DOM HTML externo, storage ni window.print sobre pantalla interna', () => {
+    const source = fs.readFileSync(path.join(root, 'static/js/cotizacion_actions.js'), 'utf8');
+    assert.doesNotMatch(source, /\.innerHTML\s*=|parseFloat\(|localStorage\.|window\.print\(/);
 });
