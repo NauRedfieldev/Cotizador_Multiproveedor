@@ -57,7 +57,7 @@ STAMP=$(date +%Y%m%d-%H%M%S)
 # 2) PDFs (si la carpeta aún no existe, no hay originales que copiar)
 [ -d "$PDF_ROOT" ] && tar -C "$(dirname "$PDF_ROOT")" -czf "$OUT/cconor-pdf-$STAMP.tar.gz" "$(basename "$PDF_ROOT")"
 # 3) Huellas y permisos
-cd "$OUT" && shasum -a 256 cconor-*-$STAMP.* > "cconor-$STAMP.sha256" && chmod 600 cconor-*-$STAMP.*
+cd "$OUT" && shasum -a 256 cconor-*-$STAMP.* > "cconor-$STAMP.sha256" && chmod 600 cconor-*$STAMP*
 # 4) Comprobación rápida: el dump se puede leer
 "$PGBIN/pg_restore" --list "$OUT/cconor-db-$STAMP.dump" | head
 ```
