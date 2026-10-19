@@ -76,7 +76,13 @@
         if (!Array.isArray(list)) return '';
         return list.filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s && !/[\r\n]/.test(s)).slice(0, 50).join('\n');
     }
-    window.CCONORQuoteTools = Object.freeze({ decimal, integer, storedInteger, money, price, item, editOutcome, retainIntent, defaultConditionsText });
+    // Pista solo cuando la búsqueda falla por falta de tipo de cambio, según el permiso del usuario.
+    function fxSearchHint(message, canChangeFx) {
+        if (!/tipo de cambio/i.test(message || '')) return '';
+        return canChangeFx ? ' Aplícalo en «Ajustes globales» y vuelve a buscar.'
+            : ' No tienes permiso para capturar el tipo de cambio; pide a un administrador que te lo habilite.';
+    }
+    window.CCONORQuoteTools = Object.freeze({ decimal, integer, storedInteger, money, price, item, editOutcome, retainIntent, defaultConditionsText, fxSearchHint });
     if (typeof document === 'undefined') return;
     document.addEventListener('DOMContentLoaded', function () {
         const $ = id => document.getElementById(id);
@@ -396,7 +402,7 @@
                 renderProducts();
             } catch (err) {
                 if (err.name === 'AbortError' || version !== searchVersion) return;
-                state.products = []; text('searchStatus', err.message + ' Si hay precios en dólares, primero aplica un tipo de cambio en «Ajustes globales».');
+                state.products = []; text('searchStatus', err.message + fxSearchHint(err.message, has('change_commercial_fx')));
                 showError(err);
                 searchError = $('quoteError').textContent;
             }

@@ -149,6 +149,18 @@ test('M2: nueva cotización y carga inicial usan las predeterminadas, no un cuad
     const preload = start.search(/^\s*\$\('quoteConditions'\)\.value = defaultConditions;/m);
     assert.ok(preload > 0 && preload < start.search(/^\s*fxDisplay\(\); locks\(\); initialize\(\);/m));
 });
+test('búsqueda: la pista de tipo de cambio solo acompaña a ese error y depende del permiso', () => {
+    const { tools } = runtime();
+    const fx = 'Captura el tipo de cambio (pesos por dólar) para comparar los precios en USD.';
+    assert.match(tools.fxSearchHint(fx, true), /Ajustes globales/);
+    assert.match(tools.fxSearchHint(fx, false), /pide a un administrador/);
+    for (const other of ['Inicia sesión para continuar.', 'No fue posible consultar a los proveedores.', '', undefined]) {
+        assert.equal(tools.fxSearchHint(other, true), '');
+        assert.equal(tools.fxSearchHint(other, false), '');
+    }
+    const source = fs.readFileSync(path.join(root, 'static/js/cotizador.js'), 'utf8');
+    assert.match(source, /text\('searchStatus', err\.message \+ fxSearchHint\(err\.message, has\('change_commercial_fx'\)\)\)/);
+});
 test('transición v1: tras escribir la copia v2 se olvida el origen antes de releer', () => {
     const source = fs.readFileSync(path.join(root, 'static/js/cotizador.js'), 'utf8');
     const save = source.slice(source.indexOf('async function save()'), source.indexOf('async function confirmWarning('));
