@@ -149,6 +149,15 @@ test('P6: identidad documental fija revisión/versión/estado/huella, sin datos 
     assert.throws(() => documents.identity(documentDetail({ revision: '2.5' })));
     assert.equal(documents.identity(documentDetail({ schema_version: 1, state_fingerprint: null })).state_fingerprint, undefined);
 });
+test('C16: avisos informativos de stock no bloquean emitir; confirmables y desconocidos sí', () => {
+    const { documents } = runtime();
+    assert.equal(documents.pendingConfirmation([{ code: 'STOCK_CERO', requires_confirmation: false, confirmed: false },
+        { code: 'STOCK_INSUFICIENTE', requires_confirmation: false, confirmed: false }]), false);
+    assert.equal(documents.pendingConfirmation([{ code: 'STOCK_DESCONOCIDO', requires_confirmation: true, confirmed: false }]), true);
+    assert.equal(documents.pendingConfirmation([{ code: 'STOCK_DESCONOCIDO', requires_confirmation: true, confirmed: true }]), false);
+    assert.equal(documents.pendingConfirmation([{ code: 'NUEVO', confirmed: false }]), true); // Sin bandera: bloquea.
+    assert.equal(documents.pendingConfirmation([]), false);
+});
 test('P6: URL PDF no elige implícitamente última emitida ni importa parámetros financieros', () => {
     const { documents } = runtime();
     const url = new URL(documents.documentURL(documentDetail({ folio: 'QA/A?' })), 'http://qa.invalid');

@@ -515,6 +515,7 @@ class QuoteSnapshot(models.Model):
             venta_manual=None if self.manual_unit_price is None else PrecioCapturado(
                 self.manual_unit_price, self.manual_currency, self.manual_tax_rate_included),
             factor_conversion=self.conversion_factor,
+            existencias=self.stock, aplica_existencias=self.source_kind == "API",
         )
 
     def clean_fields(self, exclude=None):
@@ -569,7 +570,8 @@ class QuoteCommercialConfirmation(models.Model):
     edit_version = models.PositiveIntegerField()
     state_fingerprint = models.CharField(max_length=64)
     warning_code = models.CharField(max_length=32, choices=[(v, v) for v in (
-        "MARGEN_CERO", "COSTO_DESCONOCIDO", "VENTA_BAJO_COSTO", "VENTA_CERO", "TOTAL_CERO")])
+        "MARGEN_CERO", "COSTO_DESCONOCIDO", "VENTA_BAJO_COSTO", "VENTA_CERO", "TOTAL_CERO",
+        "STOCK_DESCONOCIDO")])  # Avisos de stock informativos no se confirman ni se guardan.
     scope_ref = models.CharField(max_length=36, blank=True, default="")
     confirmed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
                                      related_name="commercial_confirmations")

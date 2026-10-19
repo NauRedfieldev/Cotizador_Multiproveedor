@@ -455,5 +455,57 @@ class ContratoYPurezaTests(unittest.TestCase):
         self.assertEqual(tipo.origen, "QA sintético")
 
 
+
+def con_stock(existencias, cantidad=1, factor="1", aplica=True, referencia="a"):
+    return PartidaComercial("%s" % referencia, cantidad, precio("100"), margen=D("35"), factor_conversion=D(factor),
+                            existencias=existencias, aplica_existencias=aplica)
+
+
+class AvisosDeStockTests(unittest.TestCase):
+    """C16: stock 0 avisa, desconocido pide comprobación, insuficiente advierte."""
+
+    def stock(self, partida):
+        r = calcular_cotizacion([partida])
+        return [(str(w.codigo), w.requiere_confirmacion) for w in r.advertencias if str(w.codigo).startswith("STOCK_")]
+
+    def test_casos_c16_y_quien_requiere_confirmacion(self):
+        self.assertEqual(self.stock(con_stock(None)), [("STOCK_DESCONOCIDO", True)])
+        self.assertEqual(self.stock(con_stock(0, cantidad=5)), [("STOCK_CERO", False)])  # Sin doble aviso.
+        self.assertEqual(self.stock(con_stock(4, cantidad=5)), [("STOCK_INSUFICIENTE", False)])
+        self.assertEqual(self.stock(con_stock(5, cantidad=5)), [])  # Límite exacto no avisa.
+        self.assertEqual(self.stock(con_stock(6, cantidad=5)), [])
+
+    def test_compara_en_unidad_vendida_con_factor(self):
+        # 2 rollos de 305 m = 610 m disponibles.
+        self.assertEqual(self.stock(con_stock(2, cantidad=610, factor="305")), [])
+        self.assertEqual(self.stock(con_stock(2, cantidad=611, factor="305")), [("STOCK_INSUFICIENTE", False)])
+        # Factor fraccionario: 3 cajas × 0.5 = 1.5 unidades vendidas.
+        self.assertEqual(self.stock(con_stock(3, cantidad=2, factor="0.5")), [("STOCK_INSUFICIENTE", False)])
+        self.assertEqual(self.stock(con_stock(4, cantidad=2, factor="0.5")), [])
+
+    def test_conceptos_manuales_y_default_no_evaluan_stock(self):
+        self.assertEqual(self.stock(con_stock(None, aplica=False)), [])
+        self.assertEqual(self.stock(con_stock(0, aplica=False)), [])
+        self.assertEqual(self.stock(margen()), [])
+
+    def test_stock_no_cambia_importes(self):
+        base = calcular_cotizacion([margen(cantidad=3)])
+        con = calcular_cotizacion([con_stock(0, cantidad=3)])
+        self.assertEqual((base.subtotal_venta, base.iva, base.total, base.utilidad_bruta),
+                         (con.subtotal_venta, con.iva, con.total, con.utilidad_bruta))
+
+    def test_existencias_tipos_y_rango(self):
+        for valor in (True, -1, 1.0, D("1"), "1", 9223372036854775808):
+            with self.subTest(valor=valor), self.assertRaises(ValidationError):
+                con_stock(valor)
+        self.assertEqual(self.stock(con_stock(9223372036854775807, cantidad=1)), [])
+        with self.assertRaises(TypeError):
+            con_stock(1, aplica=1)
+
+    def test_avisos_previos_siguen_requiriendo_confirmacion(self):
+        r = calcular_cotizacion([margen(porcentaje="0")])
+        self.assertTrue(all(w.requiere_confirmacion for w in r.advertencias))
+
+
 if __name__ == "__main__":
     unittest.main()

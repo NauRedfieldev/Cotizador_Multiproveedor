@@ -41,7 +41,11 @@
         if (!blob.size) throw Error('El documento PDF está vacío.');
         return { blob, filename: `Cotizacion_${detail.folio}_r${detail.revision}${detail.status === 'DRAFT' ? '_BORRADOR' : ''}.pdf` };
     }
-    window.CCONORDocumentTools = Object.freeze({ money, positiveInteger, identity, documentURL, emissionOutcome, fetchPDF });
+    // Solo un aviso marcado explícitamente como informativo deja de bloquear la emisión.
+    function pendingConfirmation(warnings) {
+        return (warnings || []).some(w => w.requires_confirmation !== false && !w.confirmed);
+    }
+    window.CCONORDocumentTools = Object.freeze({ money, positiveInteger, identity, documentURL, emissionOutcome, fetchPDF, pendingConfirmation });
     document.addEventListener('DOMContentLoaded', function () {
         const $ = id => document.getElementById(id);
         if (!$('commercialSummaryApp')) return;
@@ -60,7 +64,7 @@
             $('editDocumentBtn').disabled = blocked || !d || d.schema_version !== 2 || d.status !== 'DRAFT';
             $('cloneDocumentBtn').disabled = blocked || !d || (d.schema_version === 2 && d.status !== 'ISSUED');
             text('cloneDocumentBtn', d?.schema_version === 1 ? 'Preparar revisión comercial v2' : 'Nueva revisión');
-            $('emitDocumentBtn').disabled = blocked || !d?.emission_enabled || d.status !== 'DRAFT' || d.warnings.some(w => !w.confirmed);
+            $('emitDocumentBtn').disabled = blocked || !d?.emission_enabled || d.status !== 'DRAFT' || pendingConfirmation(d.warnings);
             const canEmail = !blocked && d?.schema_version === 2 && d.status === 'ISSUED';
             $('emailFields').disabled = !canEmail; $('confirmSendEmailBtn').disabled = !canEmail;
             $('resolveDocumentBtn').classList.toggle('d-none', !state.pending);
@@ -158,7 +162,9 @@
                     if (d.status === 'DRAFT') {
                         customerPreview(d.cliente);
                         if (!d.emission_enabled) $('documentWarnings').append(node('div', 'La emisión HTTP está deshabilitada en este entorno.', 'alert alert-info small'));
-                        for (const w of d.warnings) $('documentWarnings').append(node('div', `${w.code}: ${w.confirmed ? 'aceptación vigente' : 'requiere confirmación autorizada en el cotizador'}`, 'alert alert-warning small py-2'));
+                        for (const w of d.warnings) $('documentWarnings').append(w.requires_confirmation === false ?
+                            node('div', `${w.code}: aviso informativo, no requiere aceptación`, 'alert alert-info small py-2') :
+                            node('div', `${w.code}: ${w.confirmed ? 'aceptación vigente' : 'requiere confirmación autorizada en el cotizador'}`, 'alert alert-warning small py-2'));
                     } else displayPDF(d, epoch);
                 }
             } catch (err) { if (epoch === readEpoch) { clearDocument(); error(err); } }

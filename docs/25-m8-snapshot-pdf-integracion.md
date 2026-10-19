@@ -360,6 +360,11 @@ permisos actuales y huella. Código/referencia inválidos → ValidationError; v
 obsoleta/huella diferente → RevisionConflict; falta de capacidad/confirmación válida
 → PermissionDenied. Repetir la misma aceptación no crea duplicados.
 
+Avisos de stock (C16, SDD §8.6): `STOCK_CERO` y `STOCK_INSUFICIENTE` son
+informativos (`requiere_confirmacion=False`): no se confirman (ValidationError) ni
+bloquean emitir. `STOCK_DESCONOCIDO` se confirma con `view_commercial_costs`.
+Las capturas API de prueba necesitan stock explícito si el caso no trata de stock.
+
 Después de editar: edit_version aumenta, state_fingerprint se recalcula y las
 constancias anteriores quedan como antecedente, no autorización vigente. La huella
 request_fingerprint inicial no cambia. Un confirmante inactivo o con permiso
@@ -388,7 +393,8 @@ No consultar relaciones lazy en event loop. P3 valida confirmaciones dentro de l
 operación durable de emitir, no como comprobación independiente que una vista
 pueda usar después sobre datos modificados.
 
-La migración 0003 no contiene backfill ni asignación de usuarios. Crear el archivo
+La migración 0003 no contiene backfill ni asignación de usuarios. La 0005 solo amplía
+opciones de `warning_code` (`sqlmigrate` → no-op en PostgreSQL). Crear el archivo
 no significa haberlo aplicado a la BD de trabajo: pedir autorización, respaldar y
 aplicar antes de ejecutar el código nuevo con esa BD. Tests: mismas instrucciones
 PostgreSQL/storage aislados de §6, incluyendo suites comerciales nuevas.

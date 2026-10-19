@@ -487,10 +487,10 @@ class CommercialAPITests(CommercialFixtures, TestCase):
 
     def confirm_and_issue(self, created):
         detail = self.detail(created)
-        warnings = detail["preview"]["resultado"]["advertencias"]
+        warnings = [w for w in detail["preview"]["warnings"] if w["requires_confirmation"]]
         self.send("api_confirmar_comercial", {"edit_version": created["edit_version"],
             "state_fingerprint": created["state_fingerprint"], "warnings": [
-                {"code": w["codigo"], "line_key": w["referencia"]} for w in warnings]},
+                {"code": w["code"], "line_key": w["line_key"]} for w in warnings]},
             args=(created["folio"], created["revision"]))
         return self.send("api_emitir_revision", {"edit_version": created["edit_version"],
             "state_fingerprint": created["state_fingerprint"]}, args=(created["folio"], created["revision"]))
@@ -690,6 +690,24 @@ class CommercialAPITests(CommercialFixtures, TestCase):
         zero = partida_api_manual(cost={"amount": "0", "currency": "MXN", "vat_basis": "NET"})
         other = self.create(alta_comercial(items=[zero]))
         self.assertEqual(self.detail(other)["preview"]["warnings"], [])
+
+    def test_avisos_de_stock_informativos_y_confirmable_en_api(self):
+        from apps.quotes.tests.test_commercial_persistence import commercial_line
+        cero, desconocido = commercial_line(kind="API", stock=0), commercial_line(kind="API", stock=None, external_id="QA-2")
+        r = self.commercial_draft([cero, desconocido, commercial_line()])
+        created = {"folio": self.quote.folio, "revision": r.number, "edit_version": r.edit_version,
+                   "state_fingerprint": r.state_fingerprint}
+        warnings = {w["code"]: w for w in self.detail(created)["preview"]["warnings"]}
+        self.assertEqual(set(warnings), {"STOCK_CERO", "STOCK_DESCONOCIDO"})
+        self.assertEqual(warnings["STOCK_CERO"], {"code": "STOCK_CERO", "line_key": str(cero.line_key),
+            "requires_confirmation": False, "required_capability": None, "confirmed": False})
+        self.assertEqual((warnings["STOCK_DESCONOCIDO"]["requires_confirmation"], warnings["STOCK_DESCONOCIDO"]["required_capability"]),
+                         (True, "view_commercial_costs"))
+        self.send("api_confirmar_comercial", {"edit_version": r.edit_version, "state_fingerprint": r.state_fingerprint,
+            "warnings": [{"code": "STOCK_CERO", "line_key": str(cero.line_key)}]}, args=(self.quote.folio, r.number), status=400)
+        self.send("api_emitir_revision", {"edit_version": r.edit_version, "state_fingerprint": r.state_fingerprint},
+                  args=(self.quote.folio, r.number), status=403)
+        self.assertEqual(self.confirm_and_issue(created)["status"], "ISSUED")
 
     def test_estado_confirmacion_se_revalida_y_revocacion_no_queda_cacheada(self):
         created = self.create()

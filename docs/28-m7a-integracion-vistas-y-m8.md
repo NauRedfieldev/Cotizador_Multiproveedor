@@ -419,7 +419,10 @@ separan de la huella propuesta. Guardar y volver a leer antes de aceptar avisos.
 
 GET exacto retorna originales/inputs internos, capacidades y emission_enabled,
 confirmations auditables, y preview de borrador con avisos `{code,line_key|null,
-requires_confirmation,required_capability,confirmed}`. `confirmed` solo cuenta
+requires_confirmation,required_capability,confirmed}`. Avisos informativos de stock
+(`STOCK_CERO`, `STOCK_INSUFICIENTE`) llegan con `requires_confirmation=false` y
+`required_capability=null`: se muestran sin botón, no bloquean emitir y confirmarlos
+responde 400. `STOCK_DESCONOCIDO` sí requiere confirmación. `confirmed` solo cuenta
 actor activo, permiso/acceso actuales y misma versión/huella. Las constancias
 anteriores siguen auditables pero no habilitan datos cambiados o permisos revocados.
 Desde P5 incluye también `tipo_cambio={valor,origen,fecha}` o null, leído de la

@@ -982,6 +982,10 @@ def _warning_states(result, revision, quote=None):
     output = []
     for warning in result.advertencias:
         code, scope = str(warning.codigo), warning.referencia or ""
+        if not warning.requiere_confirmacion:
+            output.append({"code": code, "line_key": scope or None, "requires_confirmation": False,
+                           "required_capability": None, "confirmed": False})
+            continue
         capability = commercial_services._warning_permission(code, scope, revision)
         confirmed = False
         for record in records:

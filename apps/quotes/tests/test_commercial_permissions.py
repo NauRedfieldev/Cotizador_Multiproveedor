@@ -146,6 +146,15 @@ class CommercialPermissionsTests(CommercialFixtures, TestCase):
         with self.assertRaises(PermissionDenied):
             self.confirm(r, [("MARGEN_CERO", str(p.line_key))], actor=self.other)
 
+    def test_stock_desconocido_lo_confirma_el_acceso_comercial_base(self):
+        self.other_quote()
+        p = commercial_line(kind="API", stock=None)
+        r = self.commercial_draft([p], actor=self.other)
+        with self.assertRaises(PermissionDenied):
+            validar_confirmaciones_comerciales(r.pk, actor=self.other, expected_version=1)
+        self.confirm(r, [("STOCK_DESCONOCIDO", str(p.line_key))], actor=self.other)
+        validar_confirmaciones_comerciales(r.pk, actor=self.other, expected_version=1)
+
     def test_total_cero_por_descuento_no_se_confirma_solo_con_venta_manual(self):
         self.other_quote()
         self.grant(DISCOUNT)

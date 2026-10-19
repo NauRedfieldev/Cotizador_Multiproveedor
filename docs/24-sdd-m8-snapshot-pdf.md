@@ -386,7 +386,7 @@ cantidades antiguas para adaptarlas. Los originales/archivos de origen no cambia
 
 | Permiso `quotes.*` | Función |
 | --- | --- |
-| `view_commercial_costs` | Identificación/lectura financiera interna, además del acceso a la Quote |
+| `view_commercial_costs` | Identificación/lectura financiera interna, además del acceso a la Quote; confirmar STOCK_DESCONOCIDO |
 | `change_commercial_margin` | Ajustar margen y confirmar MARGEN_CERO |
 | `set_commercial_sale` | Captura/venta manual; confirmar costo desconocido, venta manual bajo costo o venta0 |
 | `change_commercial_tax` | Cambiar IVA y tasas incluidas; la captura inicial de la tasa estándar no la cambia |
@@ -424,10 +424,25 @@ partida arbitrarios. La constancia es inmutable y no cambia edit_version. Editar
 los datos deja anteriores constancias conservadas pero obsoletas; clonar no las copia.
 
 `validar_confirmaciones_comerciales` recalcula estado, comprueba la huella y exige
-constancia para CADA aviso vigente. Reconsulta actividad, permiso y acceso actual
+constancia para CADA aviso vigente que requiere confirmación. Reconsulta actividad, permiso y acceso actual
 del confirmante. Una revocación exige otra aceptación autorizada. TOTAL_CERO por
 descuento exige permiso de descuento; sin descuento, capacidad de venta manual.
-Un borrador pendiente puede guardarse sin aceptar aún. Confirmar/validar por sí solos
+Un borrador pendiente puede guardarse sin aceptar aún.
+
+Avisos de stock (C16, solo partidas `source_kind=API`; no cambian importes ni huella).
+Se comparan en unidad vendida: `stock × conversion_factor` frente a la cantidad.
+
+| Código | Condición | Efecto |
+| --- | --- | --- |
+| `STOCK_CERO` | El proveedor informó 0 | Informativo: no se acepta ni bloquea emitir |
+| `STOCK_INSUFICIENTE` | `0 < stock × factor < cantidad` | Informativo: no se acepta ni bloquea emitir |
+| `STOCK_DESCONOCIDO` | Stock no informado (`None`, no es 0) | Requiere confirmación (comprobación del asesor) |
+
+Confirmar un aviso informativo se rechaza y no crea constancia. Conceptos manuales no
+evalúan stock. El cliente no ve avisos de stock (leyenda pendiente de C16). Migración
+0005 solo amplía las opciones de `warning_code` (sin SQL en PostgreSQL).
+
+Confirmar/validar por sí solos
 NO emiten: P3 integra la misma validación dentro de la transacción durable (§9), sin
 reducir garantías de archivo/commit de §5 ni regenerar originales existentes.
 

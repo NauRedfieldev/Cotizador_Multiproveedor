@@ -46,7 +46,8 @@ def commercial_line(cost="100", quantity="1", margin="35", sale=None, kind="MANU
         pricing_mode="MARGIN" if sale is None else "MANUAL", margin_percent=D(margin) if sale is None else None,
         manual_unit_price=None if sale is None else D(sale), manual_currency=None if sale is None else "MXN")
     if kind == "API":
-        datos.update(provider_code="qa", provider_name="Proveedor sintético", external_id="QA-1")
+        # Stock suficiente por defecto; los avisos C16 de stock se prueban explícitamente.
+        datos.update(provider_code="qa", provider_name="Proveedor sintético", external_id="QA-1", stock=1000000)
     datos.update(kwargs)
     return PartidaComercialCapturada(**datos)
 
@@ -491,6 +492,30 @@ class CommercialServicesTests(CommercialFixtures, TestCase):
         self.confirm(r, [("VENTA_BAJO_COSTO", "")])
         issued = self.issue(r)
         self.assertEqual((issued.total, issued.gross_profit), (D("0"), D("-100")))
+
+    def test_stock_desconocido_bloquea_emision_hasta_confirmar(self):
+        p = commercial_line(kind="API", stock=None)
+        r = self.commercial_draft([p])
+        with self.assertRaises(PermissionDenied):
+            self.issue(r)
+        self.confirm(r, [("STOCK_DESCONOCIDO", str(p.line_key))])
+        self.assertEqual(self.issue(r).status, "ISSUED")
+
+    def test_stock_cero_e_insuficiente_avisan_sin_bloquear_ni_admitir_aceptacion(self):
+        cero = commercial_line(kind="API", stock=0)
+        corto = commercial_line(kind="API", stock=2, quantity="3", external_id="QA-2")
+        manual = commercial_line()
+        r = self.commercial_draft([cero, corto, manual])
+        result = _current_commercial_state(r)
+        self.assertEqual({(str(w.codigo), w.referencia, w.requiere_confirmacion) for w in result.advertencias},
+                         {("STOCK_CERO", str(cero.line_key), False), ("STOCK_INSUFICIENTE", str(corto.line_key), False)})
+        for code, line in (("STOCK_CERO", cero), ("STOCK_INSUFICIENTE", corto)):
+            with self.subTest(code=code), self.assertRaises(ValidationError):
+                self.confirm(r, [(code, str(line.line_key))])
+        self.assertFalse(r.commercial_confirmations.exists())
+        issued = self.issue(r)
+        self.assertEqual(issued.status, "ISSUED")
+        self.assertEqual([s.stock for s in issued.snapshots.order_by("position")], [0, 2, None])
 
     def test_cambiar_cliente_invalida_aceptacion_sin_borrar_historia(self):
         p = commercial_line(margin="0")

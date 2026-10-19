@@ -854,10 +854,12 @@ def previsualizar_comercial(quote_id, partidas, *, actor, company, conditions, c
 
 
 def _warning_permission(code, scope, revision):
-    from .permissions import DISCOUNT, MANUAL_SALE, MARGIN
+    from .permissions import DISCOUNT, MANUAL_SALE, MARGIN, VIEW_COSTS
 
     if code == "MARGEN_CERO":
         return MARGIN
+    if code == "STOCK_DESCONOCIDO":
+        return VIEW_COSTS  # El asesor declara que comprobó disponibilidad.
     if (code == "VENTA_BAJO_COSTO" and not scope) or (code == "TOTAL_CERO" and revision.discount_percent > 0):
         return DISCOUNT
     return MANUAL_SALE
@@ -874,6 +876,7 @@ def confirmar_advertencias_comerciales(revision_id, warnings, *, actor, expected
             raise RevisionConflict("Recarga antes de confirmar el estado comercial.")
         result = _current_commercial_state(revision)
         actual = {(str(w.codigo), w.referencia or "") for w in result.advertencias}
+        informativos = {(str(w.codigo), w.referencia or "") for w in result.advertencias if not w.requiere_confirmacion}
         records = []
         for index, warning in enumerate(warnings):
             if index >= MAX_ITEMS * 3 + 5:
@@ -881,6 +884,8 @@ def confirmar_advertencias_comerciales(revision_id, warnings, *, actor, expected
             if not isinstance(warning, (tuple, list)) or len(warning) != 2 or not all(isinstance(v, str) for v in warning):
                 raise ValidationError("Referencia de advertencia inválida.")
             code, scope = warning
+            if (code, scope) in informativos:
+                raise ValidationError("Aviso informativo: no requiere ni admite aceptación.")
             if (code, scope) not in actual:
                 raise ValidationError("La advertencia no pertenece al estado actual.")
             require_commercial_permission(actor, _warning_permission(code, scope, revision))
@@ -908,6 +913,8 @@ def _validate_commercial_confirmations(quote, revision, result, *, actor, lock_u
         list(get_user_model().objects.select_for_update().filter(pk__in=ids).order_by("pk"))
     _commercial_actor(quote, actor)
     for warning in result.advertencias:
+        if not warning.requiere_confirmacion:
+            continue
         code, scope = str(warning.codigo), warning.referencia or ""
         valid = False
         for record in records:

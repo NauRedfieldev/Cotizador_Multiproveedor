@@ -32,6 +32,15 @@ class CodigoAdvertencia(StrEnum):
     VENTA_BAJO_COSTO = "VENTA_BAJO_COSTO"
     VENTA_CERO = "VENTA_CERO"
     TOTAL_CERO = "TOTAL_CERO"
+    # C16: solo partidas de proveedor (API); el stock no cambia importes.
+    STOCK_CERO = "STOCK_CERO"
+    STOCK_DESCONOCIDO = "STOCK_DESCONOCIDO"
+    STOCK_INSUFICIENTE = "STOCK_INSUFICIENTE"
+
+
+# Avisos que se muestran pero no se aceptan ni bloquean la emisión.
+AVISOS_INFORMATIVOS = frozenset((CodigoAdvertencia.STOCK_CERO, CodigoAdvertencia.STOCK_INSUFICIENTE))
+_STOCK_MAXIMO = 9223372036854775807
 
 
 def _tasa(valor):
@@ -72,6 +81,8 @@ class PartidaComercial:
     para obtener el costo de la unidad vendida. La venta manual ya corresponde a
     esa unidad vendida y NO se vuelve a dividir. Cantidad es un entero estricto.
     No recibe proveedor/raw ni inventa costo cero cuando es desconocido.
+    Existencias van en la unidad del proveedor (None = desconocidas, no cero) y
+    solo se evalúan si aplica_existencias (oferta de proveedor, no concepto manual).
     """
 
     referencia: str
@@ -80,6 +91,8 @@ class PartidaComercial:
     margen: Decimal | None = None
     venta_manual: PrecioCapturado | None = None
     factor_conversion: Decimal = _UNO
+    existencias: int | None = None
+    aplica_existencias: bool = False
 
     def __post_init__(self):
         if not isinstance(self.referencia, str) or not self.referencia.strip() or len(self.referencia) > 6000:
@@ -90,6 +103,10 @@ class PartidaComercial:
         if self.costo is not None and not isinstance(self.costo, PrecioCapturado):
             raise TypeError("El costo debe ser PrecioCapturado o None.")
         decimal_limit(self.factor_conversion, 18, 6, minimum=Decimal("0.000001"))
+        if type(self.aplica_existencias) is not bool:
+            raise TypeError("aplica_existencias debe ser bool.")
+        if self.existencias is not None and (type(self.existencias) is not int or not 0 <= self.existencias <= _STOCK_MAXIMO):
+            raise ValidationError("Existencias fuera de rango o no enteras.")
         if (self.margen is None) == (self.venta_manual is None):
             raise ValidationError("Indica margen o venta manual, no ambos ni ninguno.")
         if self.margen is not None:
@@ -123,6 +140,10 @@ class DescuentoGlobal:
 class AdvertenciaComercial:
     codigo: CodigoAdvertencia
     referencia: str | None  # None: advertencia sobre la cotización completa.
+
+    @property
+    def requiere_confirmacion(self):
+        return self.codigo not in AVISOS_INFORMATIVOS
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +220,19 @@ def _calcular_partida(entrada, tipo_cambio):
                             importe_venta, utilidad, margen_real)
 
 
+def _aviso_existencias(entrada):
+    """Compara en unidad vendida: stock del proveedor × factor de conversión."""
+    if not entrada.aplica_existencias:
+        return None
+    if entrada.existencias is None:
+        return CodigoAdvertencia.STOCK_DESCONOCIDO
+    if entrada.existencias == 0:
+        return CodigoAdvertencia.STOCK_CERO
+    if Decimal(entrada.existencias) * entrada.factor_conversion < Decimal(entrada.cantidad):
+        return CodigoAdvertencia.STOCK_INSUFICIENTE
+    return None
+
+
 def calcular_cotizacion(
     partidas: Iterable[PartidaComercial], *, tipo_cambio: TipoCambio | None = None,
     descuento: DescuentoGlobal | None = None, tasa_iva: Decimal = TASA_IVA_INICIAL,
@@ -238,6 +272,9 @@ def calcular_cotizacion(
                 advertencias.append(AdvertenciaComercial(CodigoAdvertencia.VENTA_BAJO_COSTO, entrada.referencia))
             if resultado.importe_venta == 0:
                 advertencias.append(AdvertenciaComercial(CodigoAdvertencia.VENTA_CERO, entrada.referencia))
+            stock = _aviso_existencias(entrada)
+            if stock is not None:
+                advertencias.append(AdvertenciaComercial(stock, entrada.referencia))
         if not calculadas:
             raise ValidationError("Una cotización requiere al menos una partida.")
         subtotal = _importe(sum((p.importe_venta for p in calculadas), _CERO))

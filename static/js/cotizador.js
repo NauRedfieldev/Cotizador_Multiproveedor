@@ -183,9 +183,18 @@
             $('quoteWarnings').replaceChildren();
             if (!entries?.length) { text('quoteWarnings', 'Sin advertencias comerciales en este cálculo.'); return; }
             const labels = { MARGEN_CERO: 'Margen cero', COSTO_DESCONOCIDO: 'Costo desconocido: utilidad incompleta',
-                VENTA_BAJO_COSTO: 'Venta bajo costo', VENTA_CERO: 'Venta de partida en cero', TOTAL_CERO: 'Total de cotización en cero' };
+                VENTA_BAJO_COSTO: 'Venta bajo costo', VENTA_CERO: 'Venta de partida en cero', TOTAL_CERO: 'Total de cotización en cero',
+                STOCK_CERO: 'El proveedor informa existencias en cero', STOCK_INSUFICIENTE: 'Existencias del proveedor menores que la cantidad (en unidad vendida)',
+                STOCK_DESCONOCIDO: 'Existencias desconocidas: comprobar disponibilidad con el proveedor' };
             for (const warning of entries) {
                 const lineIndex = state.lines.findIndex(l => l.key === warning.line_key);
+                if (warning.requires_confirmation === false) {
+                    const info = element('div', '', 'alert alert-info py-2 small');
+                    info.append(element('div', `${warning.line_key ? 'Partida ' + (lineIndex + 1) : 'Global'}: ${labels[warning.code] || warning.code}`, 'fw-bold'),
+                        element('div', 'Aviso informativo; no requiere aceptación ni bloquea la emisión.'));
+                    $('quoteWarnings').append(info);
+                    continue;
+                }
                 const box = element('div', '', 'alert alert-warning py-2 small');
                 box.append(element('div', `${warning.line_key ? 'Partida ' + (lineIndex + 1) : 'Global'}: ${labels[warning.code] || warning.code}`, 'fw-bold'));
                 box.append(element('div', warning.confirmed ? 'Aceptación vigente para esta versión.' : 'Pendiente de aceptación autorizada.'));
