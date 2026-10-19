@@ -439,7 +439,9 @@ Se comparan en unidad vendida: `stock × conversion_factor` frente a la cantidad
 | `STOCK_DESCONOCIDO` | Stock no informado (`None`, no es 0) | Requiere confirmación (comprobación del asesor) |
 
 Confirmar un aviso informativo se rechaza y no crea constancia. Conceptos manuales no
-evalúan stock. El cliente no ve avisos de stock (leyenda pendiente de C16). Migración
+evalúan stock. El cliente no ve avisos de stock por partida; el PDF comercial lleva siempre
+la leyenda fija «Precios y disponibilidad sujetos a confirmación al momento del pedido.»
+(`LEYENDA_DISPONIBILIDAD` en `pdf.py`, docs/30 B2; solo emisiones nuevas). Migración
 0005 solo amplía las opciones de `warning_code` (sin SQL en PostgreSQL).
 
 Confirmar/validar por sí solos

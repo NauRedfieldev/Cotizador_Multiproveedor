@@ -1,14 +1,14 @@
 # Puesta en marcha · Pendientes antes del uso real
 
-> **Estado del documento: ABIERTO** · Última revisión: 2026-10-19
+> **Estado del documento: ABIERTO** · Última revisión: 2026-10-19 (B1 parcial, B2 hecho, B4 y B5 anotados)
 >
 > Este es el único documento de pendientes; los demás de `docs/` son técnicos y no
 > llevan estados. Reglas:
 > 1. Actualizar la fila en el **mismo commit** que resuelve el pendiente.
-> 2. Estados permitidos (solo §B): `PENDIENTE`, `HECHO (fecha · commit/quién)`,
+> 2. Estados permitidos (solo §B y §C): `PENDIENTE`, `HECHO (fecha · commit/quién)`,
 >    `NO APLICA (motivo)`.
 > 3. Ante duda, gana la comprobación (§A "Cómo verificar"), no el texto.
-> 4. Cuando todo §B esté `HECHO` o `NO APLICA`, cambiar este encabezado a
+> 4. Cuando todo §B y lo que §C marque como bloqueante esté `HECHO` o `NO APLICA`, cambiar este encabezado a
 >    **«CERRADO el <fecha>: sin pendientes. Se conserva como registro.»**
 >
 > Nunca anotar contraseñas, contenido de `.env`/`.pgpass` ni datos bancarios.
@@ -34,14 +34,22 @@ No tienen estado global: que estén hechos en un equipo no significa que lo est�
 
 | # | Tema | Estado | Bloquea |
 | --- | --- | --- | --- |
-| B1 | Datos oficiales, vigencia, condiciones, firma del asesor y quién aprueba el formato del PDF (C15) | PENDIENTE (logo `static/img/logo.png` confirmado como oficial 2026-10-18) | Emitir a clientes reales |
-| B2 | Si el cliente ve una leyenda de disponibilidad (detalle de C16) | PENDIENTE (avisos internos de stock HECHOS 2026-10-18 · d3cbedc) | Texto del PDF/correo |
+| B1 | Datos oficiales, vigencia, condiciones, firma del asesor y quién aprueba el formato del PDF (C15) | PENDIENTE: datos oficiales de la empresa (nombre y dirección provisionales en uso) y teléfono del asesor (requiere desarrollo, M1). Resuelto 2026-10-19: logo `static/img/logo.png` oficial; vigencia 15 días editable por el asesor; firma = nombre completo del perfil + teléfono del asesor; aprueba el formato el admin o un asesor autorizado; dirección de la empresa va en `CCONOR_EMPRESA_TAGLINE` | Emitir a clientes reales |
+| B2 | Si el cliente ve una leyenda de disponibilidad (detalle de C16) | HECHO (2026-10-19 · usuario; implementado con M3): leyenda fija en todas las cotizaciones comerciales, solo en el PDF (no en el correo), sin revelar stock por partida: «Precios y disponibilidad sujetos a confirmación al momento del pedido.» Avisos internos de stock HECHOS 2026-10-18 · d3cbedc | Texto del PDF/correo |
 | B3 | Remitente, canal y confirmación del correo (C17) | PENDIENTE | Correo real |
-| B4 | SYSCOM: confirmar si sus precios vienen con o sin IVA | PENDIENTE | Ofertas SYSCOM en el cotizador comercial |
-| B5 | Exel del Norte: acceso real a la API y base de IVA | PENDIENTE | Ofertas Exel en el cotizador comercial |
+| B4 | SYSCOM: confirmar si sus precios vienen con o sin IVA | PENDIENTE: evidencia documental 2026-10-19 ([developers.syscom.mx](https://developers.syscom.mx/docs/productos): `iva=1` → precios con IVA ×1.16; el adaptador envía `iva=0`, lo que apunta a `NET`). Falta cotejar un producto real contra factura o portal de CCONOR. Mientras tanto, las ofertas SYSCOM se rechazan en el cotizador comercial (409), sin riesgo de doble IVA | Ofertas SYSCOM en el cotizador comercial |
+| B5 | Exel del Norte: acceso real a la API y base de IVA | PENDIENTE: acceso a la API pendiente (2026-10-19) | Ofertas Exel en el cotizador comercial |
 | B6 | Quién recibe cada rol (Personal / Administrador CCONOR) | PENDIENTE | A6 |
 | B7 | Aceptación, retención, frecuencia y responsable de respaldos (C18) | PENDIENTE (recomendaciones en docs/29 §7) | Uso real y A9 |
 
-## C. Orden recomendado
+## C. Mejoras acordadas (no bloquean el uso real salvo que se indique)
+
+| # | Mejora | Estado | Origen |
+| --- | --- | --- | --- |
+| M1 | Teléfono del asesor en el PDF y el correo (hoy el perfil de usuario no tiene teléfono; requiere diseño y migración) | PENDIENTE · bloquea cerrar B1 | B1 |
+| M2 | Condiciones comerciales precargadas y editables en cada cotización nueva | PENDIENTE · no bloquea | B1 |
+| M3 | Leyenda fija de disponibilidad en el PDF comercial (no en el correo); aplica solo a emisiones nuevas, las emitidas no cambian | HECHO (2026-10-19 · `LEYENDA_DISPONIBILIDAD` en `apps/quotes/pdf.py`) | B2 |
+
+## D. Orden recomendado
 
 A1 → A2 → A3 → A4 → A5 → (B6) A6 → (B4/B5) A7 → aceptación (B7) → A9.

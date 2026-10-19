@@ -47,6 +47,8 @@ COMPANY = {
     "advisor": "Ing. Odalis Leal",
 }
 
+LEYENDA_DISPONIBILIDAD = "Precios y disponibilidad sujetos a confirmación al momento del pedido."
+
 DEFAULT_CONDITIONS = [
     "Precios expresados en Pesos Mexicanos (MXN).",
     "Tiempo de entrega estimado: 2 a 4 días hábiles tras confirmación de pago.",
@@ -465,6 +467,8 @@ def generate_quote_pdf(quote):
     story.append(Spacer(1, 0.4 * cm))
     if not commercial and quote.get("exchange_rate_label"):
         story.append(Paragraph(quote["exchange_rate_label"], st["small"]))
+    if commercial:  # B2: leyenda fija para el cliente; no revela stock por partida.
+        story.append(Paragraph(LEYENDA_DISPONIBILIDAD, st["small"]))
     if commercial and any(item["unit_price_approximate"] for item in quote["items"]):
         story.append(Paragraph("Unitarios indicados como aprox. son aproximados. Los importes de partida se calculan con precisión completa y se redondean a dos decimales; prevalecen sobre la multiplicación del unitario mostrado.", st["small"]))
     if not commercial and any(item.get("stock") in (0, None) for item in quote["items"]) and not quote.get("legacy_unknown_currency"):

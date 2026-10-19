@@ -441,6 +441,20 @@ class CommercialServicesTests(CommercialFixtures, TestCase):
         self.assertIn("Venta antes de descuento:", text)
         self.assertIn("<b>-$10.00 MXN</b>", text)
 
+    def test_leyenda_fija_de_disponibilidad_solo_en_pdf_comercial(self):
+        from reportlab.platypus import Paragraph
+        from apps.quotes.pdf import LEYENDA_DISPONIBILIDAD, build_demo_quote
+        for stock in (None, 0, 500):  # Igual con o sin aviso de stock.
+            r = self.commercial_draft([commercial_line(kind="API", stock=stock)])
+            with patch("apps.quotes.pdf.Paragraph", wraps=Paragraph) as paragraphs:
+                generate_quote_pdf(self.preview(r)["cliente"])
+            textos = [c.args[0] for c in paragraphs.call_args_list]
+            self.assertEqual(textos.count(LEYENDA_DISPONIBILIDAD), 1)
+            self.assertNotIn("Stock", "\n".join(textos))
+        with patch("apps.quotes.pdf.Paragraph", wraps=Paragraph) as paragraphs:
+            generate_quote_pdf(build_demo_quote("DEMO-1"))
+        self.assertNotIn(LEYENDA_DISPONIBILIDAD, [c.args[0] for c in paragraphs.call_args_list])
+
     def test_descuento_cero_conserva_renglon_sin_signo(self):
         context = self.preview(self.commercial_draft([commercial_line(cost="100", margin="0")]))["cliente"]
         self.assertEqual(context["discount_amount"], D("0"))
