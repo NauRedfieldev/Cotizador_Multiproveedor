@@ -49,6 +49,7 @@ No tienen estado global: que estén hechos en un equipo no significa que lo est�
 | M1 | Teléfono del asesor en el PDF y el correo (hoy el perfil de usuario no tiene teléfono; requiere diseño y migración) | PENDIENTE · bloquea cerrar B1 | B1 |
 | M2 | Condiciones comerciales precargadas y editables en cada cotización nueva | PENDIENTE · no bloquea | B1 |
 | M3 | Leyenda fija de disponibilidad en el PDF comercial (no en el correo); aplica solo a emisiones nuevas, las emitidas no cambian | HECHO (2026-10-19 · `LEYENDA_DISPONIBILIDAD` en `apps/quotes/pdf.py`) | B2 |
+| M4 | Proponer el tipo de cambio de SYSCOM del día (`GET /tipocambio`, público; valores normal, preferencial y por plazos) con fuente y fecha, para que el asesor lo confirme o lo cambie. Falta decidir qué valor usar (normal si CCONOR paga de contado en pesos; por plazo si paga a crédito) y quién puede confirmarlo: hoy el rol Personal sin permiso de tipo de cambio no puede buscar ofertas en dólares (ver B6) | PENDIENTE · no bloquea | B4 |
 
 ## D. Orden recomendado
 
