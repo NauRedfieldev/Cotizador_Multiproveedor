@@ -462,3 +462,68 @@ class ProteccionTests(TestCase):
         # El botón del menú cierra la sesión de verdad.
         self.assertRedirects(self.client.post(reverse("logout")), reverse("login"))
         self.assertEqual(self.client.get(reverse("comparador")).status_code, 302)
+
+
+class CondicionesPredeterminadasTests(TestCase):
+    """M2: condiciones activas que el cotizador precarga en cada cotización nueva."""
+
+    def setUp(self):
+        from apps.quotes.models import DefaultCommercialCondition
+        self.modelo = DefaultCommercialCondition
+        self.client.force_login(crear_asesor())
+
+    def condiciones_de_la_pagina(self):
+        import json
+        import re
+        respuesta = self.client.get(reverse("cotizador"))
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertIn("csrftoken", respuesta.cookies)
+        bloque = re.search(r'<script id="defaultConditions" type="application/json">(.*?)</script>',
+                           respuesta.content.decode(), re.S)
+        self.assertIsNotNone(bloque)
+        return json.loads(bloque.group(1)), respuesta
+
+    def test_sin_condiciones_la_pagina_entrega_lista_vacia(self):
+        self.assertEqual(self.condiciones_de_la_pagina()[0], [])
+
+    def test_solo_activas_y_en_orden(self):
+        self.modelo.objects.create(text="Segunda", order=2)
+        self.modelo.objects.create(text="Inactiva", order=0, active=False)
+        self.modelo.objects.create(text="  Primera  ", order=1)
+        self.assertEqual(self.condiciones_de_la_pagina()[0], ["Primera", "Segunda"])
+
+    def test_texto_con_marcado_no_rompe_la_pagina(self):
+        texto = '</script><script>alert("x")</script> & "comillas"'
+        self.modelo.objects.create(text=texto)
+        condiciones, respuesta = self.condiciones_de_la_pagina()
+        self.assertEqual(condiciones, [texto])
+        self.assertNotContains(respuesta, '<script>alert("x")</script>', html=False)
+
+    def test_validaciones_del_modelo(self):
+        from django.core.exceptions import ValidationError
+        from apps.quotes.models import MAX_CONDICIONES_PREDETERMINADAS
+        for texto in ("", "   ", "Dos\nlíneas", "Retorno\rcarro", "x" * 6001):
+            with self.subTest(texto=texto[:20]), self.assertRaises(ValidationError):
+                self.modelo.objects.create(text=texto)
+        for i in range(MAX_CONDICIONES_PREDETERMINADAS):
+            self.modelo.objects.create(text=f"C{i}")
+        with self.assertRaises(ValidationError):
+            self.modelo.objects.create(text="Una de más")
+        self.modelo.objects.create(text="Inactiva no cuenta", active=False)
+        primera = self.modelo.objects.first()
+        primera.text = "Editada"
+        primera.save()  # Editar una activa existente no choca con el límite.
+        self.assertEqual(self.modelo.objects.filter(active=True).count(), MAX_CONDICIONES_PREDETERMINADAS)
+
+    def test_admin_lista_y_alta(self):
+        self.modelo.objects.create(text="Visible en el admin", order=3)
+        self.client.force_login(crear_asesor("admin_qa", is_staff=True, is_superuser=True))
+        lista = self.client.get(reverse("admin:quotes_defaultcommercialcondition_changelist"))
+        self.assertContains(lista, "Visible en el admin")
+        alta = self.client.post(reverse("admin:quotes_defaultcommercialcondition_add"),
+                                {"text": "Desde el admin", "order": "1", "active": "on"})
+        self.assertEqual(alta.status_code, 302)
+        invalida = self.client.post(reverse("admin:quotes_defaultcommercialcondition_add"),
+                                    {"text": "Dos\r\nlíneas", "order": "2", "active": "on"})
+        self.assertEqual(invalida.status_code, 200)  # El formulario muestra el error, no guarda.
+        self.assertEqual(list(self.modelo.objects.values_list("text", flat=True)), ["Desde el admin", "Visible en el admin"])

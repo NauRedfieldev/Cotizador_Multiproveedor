@@ -729,3 +729,39 @@ class QuoteAPIRequest(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("No borrar recibos de idempotencia.")
+
+
+MAX_CONDICIONES_PREDETERMINADAS = 50  # mismo límite que acepta el cotizador
+
+
+class DefaultCommercialCondition(models.Model):
+    """M2: condición que el cotizador precarga en cada cotización nueva.
+
+    Solo es un texto inicial que el asesor puede editar o borrar; cada revisión
+    guarda su propia copia, así que cambiar esta lista no altera cotizaciones.
+    """
+
+    text = models.CharField("texto", max_length=6000)
+    order = models.PositiveSmallIntegerField("orden", default=0)
+    active = models.BooleanField("activa", default=True)
+
+    class Meta:
+        ordering = ["order", "pk"]
+        verbose_name = "condición predeterminada"
+        verbose_name_plural = "condiciones predeterminadas"
+
+    def __str__(self):
+        return self.text[:80]
+
+    def clean(self):
+        self.text = (self.text or "").strip()
+        if not self.text:
+            raise ValidationError({"text": "Escribe la condición."})
+        if "\n" in self.text or "\r" in self.text:
+            raise ValidationError({"text": "Una condición por registro, sin saltos de línea."})
+        if self.active and DefaultCommercialCondition.objects.filter(active=True).exclude(pk=self.pk).count() >= MAX_CONDICIONES_PREDETERMINADAS:
+            raise ValidationError(f"Máximo {MAX_CONDICIONES_PREDETERMINADAS} condiciones activas.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)

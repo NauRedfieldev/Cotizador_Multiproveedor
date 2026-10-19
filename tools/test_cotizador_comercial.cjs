@@ -132,6 +132,23 @@ test('controlador conectado sin innerHTML, parseInt, parseFloat ni storage finan
     const source = fs.readFileSync(path.join(root, 'static/js/cotizador.js'), 'utf8');
     assert.doesNotMatch(source, /\.innerHTML\s*=|parseInt\(|parseFloat\(|localStorage\./);
 });
+test('M2: condiciones predeterminadas como texto inicial, una por línea', () => {
+    const { tools } = runtime();
+    assert.equal(tools.defaultConditionsText('["Primera", "  Segunda  "]'), 'Primera\nSegunda');
+    assert.equal(tools.defaultConditionsText('[]'), '');
+    for (const bad of [undefined, '', 'no json', '{"a":1}', 'null']) assert.equal(tools.defaultConditionsText(bad), '');
+    assert.equal(tools.defaultConditionsText('["ok", 3, "", "dos\\nlíneas", null]'), 'ok');
+    assert.equal(tools.defaultConditionsText(JSON.stringify(Array.from({ length: 60 }, (_, i) => `C${i}`))).split('\n').length, 50);
+});
+test('M2: nueva cotización y carga inicial usan las predeterminadas, no un cuadro vacío', () => {
+    const source = fs.readFileSync(path.join(root, 'static/js/cotizador.js'), 'utf8');
+    const reset = source.slice(source.indexOf("$('newQuoteBtn').addEventListener"), source.indexOf("window.addEventListener('beforeunload'"));
+    assert.match(reset, /\$\('quoteConditions'\)\.value = defaultConditions;/);
+    assert.doesNotMatch(reset, /'quoteConditions', 'newExchangeRate'\]\) \$\(id\)\.value = ''/);
+    const start = source.slice(source.indexOf('async function initialize()'));
+    const preload = start.search(/^\s*\$\('quoteConditions'\)\.value = defaultConditions;/m);
+    assert.ok(preload > 0 && preload < start.search(/^\s*fxDisplay\(\); locks\(\); initialize\(\);/m));
+});
 test('transición v1: tras escribir la copia v2 se olvida el origen antes de releer', () => {
     const source = fs.readFileSync(path.join(root, 'static/js/cotizador.js'), 'utf8');
     const save = source.slice(source.indexOf('async function save()'), source.indexOf('async function confirmWarning('));

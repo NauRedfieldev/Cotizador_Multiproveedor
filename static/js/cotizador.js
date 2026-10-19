@@ -69,13 +69,21 @@
     function retainIntent(error, previouslyUncertain = false) {
         return previouslyUncertain || error.uncertain || error.status === 401 || error.status === 0;
     }
-    window.CCONORQuoteTools = Object.freeze({ decimal, integer, storedInteger, money, price, item, editOutcome, retainIntent });
+    // M2: condiciones predeterminadas del servidor; solo texto inicial editable, una por línea.
+    function defaultConditionsText(json) {
+        let list;
+        try { list = JSON.parse(json || '[]'); } catch { return ''; }
+        if (!Array.isArray(list)) return '';
+        return list.filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s && !/[\r\n]/.test(s)).slice(0, 50).join('\n');
+    }
+    window.CCONORQuoteTools = Object.freeze({ decimal, integer, storedInteger, money, price, item, editOutcome, retainIntent, defaultConditionsText });
     if (typeof document === 'undefined') return;
     document.addEventListener('DOMContentLoaded', function () {
         const $ = id => document.getElementById(id);
         if (!$('commercialQuoteApp')) return;
         const api = window.apiClient.commercial;
         const initialIssueDate = $('issueDate').value;
+        const defaultConditions = defaultConditionsText($('defaultConditions')?.textContent);
         const state = { caps: null, lines: [], products: [], saved: null, fx: null, dirty: false, busy: false,
             readonly: false, preview: null, epoch: 0, pending: null, fxPending: null, conflict: false };
         let previewTimer, previewAbort, searchTimer, searchAbort, searchVersion = 0, searchError = '';
@@ -585,7 +593,8 @@
             if (state.dirty && !window.confirm('Descartar cambios no guardados y preparar otra cotización?')) return;
             state.saved = null; state.transition = null; state.loadedDetail = null; state.readonly = false; state.conflict = false; state.lines = []; state.fx = null;
             $('transitionNotice').classList.add('d-none');
-            for (const id of ['clientName', 'clientRfc', 'clientEmail', 'clientContact', 'clientPhone', 'clientProject', 'quoteNotes', 'quoteConditions', 'newExchangeRate']) $(id).value = '';
+            for (const id of ['clientName', 'clientRfc', 'clientEmail', 'clientContact', 'clientPhone', 'clientProject', 'quoteNotes', 'newExchangeRate']) $(id).value = '';
+            $('quoteConditions').value = defaultConditions;
             $('quoteFolio').value = 'Se asigna al guardar'; $('quoteRevision').value = 'Sin guardar';
             $('taxRate').value = '0.16'; $('discountPercent').value = '0'; $('validDays').value = '15';
             $('issueDate').value = initialIssueDate;
@@ -619,6 +628,7 @@
             } catch (err) { showError(err); }
             finally { state.busy = false; locks(); renderLines(); }
         }
+        $('quoteConditions').value = defaultConditions;  // Una revisión abierta después trae las suyas.
         fxDisplay(); locks(); initialize();
     });
 }());

@@ -1,6 +1,6 @@
 # Puesta en marcha · Pendientes antes del uso real
 
-> **Estado del documento: ABIERTO** · Última revisión: 2026-10-19 (B2 y B4 hechos; B1 parcial; B3, B5–B7 pendientes)
+> **Estado del documento: ABIERTO** · Última revisión: 2026-10-19 (B2, B4 y M2 hechos; B1 parcial; B3, B5–B7 pendientes)
 >
 > Este es el único documento de pendientes; los demás de `docs/` son técnicos y no
 > llevan estados. Reglas:
@@ -21,7 +21,7 @@ No tienen estado global: que estén hechos en un equipo no significa que lo est�
 | Paso | Qué hacer | Cómo verificar | Detalle |
 | --- | --- | --- | --- |
 | A1 | Respaldar BD + PDFs y probar la restauración | Prueba de restauración sin fallos de huella | [docs/29 §4–§5](29-respaldo-y-restauracion.md) |
-| A2 | Aplicar migraciones de `quotes` (0003–0005), siempre después de A1 | `manage.py showmigrations quotes` sin `[ ]` | docs/25 §7.4, docs/29 §6 |
+| A2 | Aplicar migraciones de `quotes` (0003–0006), siempre después de A1 | `manage.py showmigrations quotes` sin `[ ]` | docs/25 §7.4, docs/29 §6 |
 | A3 | Carpeta privada y persistente de PDFs | `QUOTE_PDF_ROOT` fuera de `static/`, permisos 700 e incluida en A1 | docs/24 §5, docs/29 §1 |
 | A4 | Datos de la empresa: `CCONOR_EMPRESA_NAME` (obligatorio), `_RFC`, `_TAGLINE`, `_PHONE`, `_EMAIL` en `.env`; reiniciar | Crear un borrador no responde 503 | docs/28 §7 y §11 |
 | A5 | Crear grupos comerciales con `configure_commercial_groups` (superusuario, una vez tras A2) | Existen «Personal CCONOR» y «Administrador CCONOR» en el admin | docs/24 §8.5, docs/25 §7.3 |
@@ -47,7 +47,7 @@ No tienen estado global: que estén hechos en un equipo no significa que lo est�
 | # | Mejora | Estado | Origen |
 | --- | --- | --- | --- |
 | M1 | Teléfono del asesor en el PDF y el correo (hoy el perfil de usuario no tiene teléfono; requiere diseño y migración) | PENDIENTE · bloquea cerrar B1 | B1 |
-| M2 | Condiciones comerciales precargadas y editables en cada cotización nueva | PENDIENTE · no bloquea | B1 |
+| M2 | Condiciones comerciales precargadas y editables en cada cotización nueva | HECHO (2026-10-19 · admin «Condiciones predeterminadas», migración 0006): un administrador las agrega, ordena o desactiva; el asesor las edita en cada cotización; las cotizaciones guardadas conservan las suyas. Lista inicial vacía: los textos oficiales los captura CCONOR (ver B1). Uso: docs/28 §14.4 | B1 |
 | M3 | Leyenda fija de disponibilidad en el PDF comercial (no en el correo); aplica solo a emisiones nuevas, las emitidas no cambian | HECHO (2026-10-19 · `LEYENDA_DISPONIBILIDAD` en `apps/quotes/pdf.py`) | B2 |
 | M4 | Proponer el tipo de cambio de SYSCOM del día (`GET /tipocambio`, público; valores normal, preferencial y por plazos) con fuente y fecha, para que el asesor lo confirme o lo cambie. Falta decidir qué valor usar (normal si CCONOR paga de contado en pesos; por plazo si paga a crédito) y quién puede confirmarlo: hoy el rol Personal sin permiso de tipo de cambio no puede buscar ofertas en dólares (ver B6) | PENDIENTE · no bloquea | B4 |
 

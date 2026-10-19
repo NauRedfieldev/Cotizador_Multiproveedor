@@ -21,6 +21,8 @@ from django.urls import include, path
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.generic import TemplateView
 
+from apps.quotes.views import cotizador_comercial
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     # Vistas de presentación (templates/): solo renderizan HTML estático.
@@ -31,7 +33,8 @@ urlpatterns = [
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),
     # Con sesión: SYSCOM pide mostrar sus precios de distribuidor solo a usuarios con
     # sesión (docs/02 §8.2). ensure_csrf_cookie: el cotizador guarda por POST con fetch.
-    path('cotizador/', login_required(ensure_csrf_cookie(TemplateView.as_view(template_name='cotizador.html'))), name='cotizador'),
+    # M2: la vista entrega las condiciones predeterminadas que se precargan.
+    path('cotizador/', login_required(ensure_csrf_cookie(cotizador_comercial)), name='cotizador'),
     # /comparador/ ahora lo resuelve apps.quotes.urls (vista cotizar_productos, M7b).
     # ensure_csrf_cookie: el modal de envío por correo hace POST por fetch
     # y el JS lee el token CSRF desde la cookie.

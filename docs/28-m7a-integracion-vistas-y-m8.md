@@ -561,6 +561,38 @@ pendientes en BD de trabajo y la emisión HTTP sigue OFF. Tampoco se asignaron r
 reales, alteró .env o validaron datos oficiales/retención/recuperación. No arrancar
 esta versión con la BD de trabajo sin autorización para preparar ese entorno.
 
+### 14.4 M2 · Condiciones predeterminadas
+
+Textos que el cotizador **precarga** en "Condiciones para el cliente" de cada cotización
+nueva. Son solo un valor inicial: el asesor los edita o borra antes de guardar.
+
+**Cómo se usan (administrador):**
+- Admin de Django → **Quotes → Condiciones predeterminadas**: agregar, editar el
+  **orden** y marcar o desmarcar **activa** (también desde la lista).
+- Una condición por registro: sin saltos de línea, hasta 6000 caracteres y máximo
+  **50 activas** (el mismo límite que acepta el cotizador). Los espacios al inicio y
+  al final se quitan al guardar.
+- Desactivar en lugar de borrar conserva el texto para volver a usarlo.
+- Hoy solo entra al admin un usuario `is_staff` con permisos del modelo (p. ej. un
+  superusuario); el grupo «Administrador CCONOR» no tiene acceso al admin.
+
+**Cómo funciona:**
+- Modelo `DefaultCommercialCondition` (`text`, `order`, `active`; orden por `order` y
+  luego por alta), migración `quotes.0006` (solo crea la tabla).
+- La vista `cotizador_comercial` (`/cotizador/`, con sesión) entrega las activas en
+  orden con `json_script` (`#defaultConditions`); el texto se escapa y nunca se
+  ejecuta como HTML.
+- `cotizador.js` las escribe en el cuadro al **abrir la página** y al pulsar **«Nueva
+  cotización»**. Abrir una revisión existente o preparar una copia desde un histórico
+  v1 muestra las condiciones de esa cotización, no las predeterminadas.
+- Precargar no marca la cotización como modificada.
+- El API no cambia: `conditions` sigue siendo una lista explícita y obligatoria que
+  se guarda tal cual en cada revisión (§12). Cambiar o desactivar una condición
+  predeterminada **no altera** cotizaciones guardadas ni emitidas.
+
+Pruebas: `CondicionesPredeterminadasTests` (`test_vistas_cotizacion.py`) y casos M2 de
+`tools/test_cotizador_comercial.cjs`. Estado y textos oficiales: [docs/30](30-puesta-en-marcha.md) M2 y B1.
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 ### 15.1 Alcance y acceso

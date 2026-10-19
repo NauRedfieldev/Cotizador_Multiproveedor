@@ -3,6 +3,7 @@
 {% block title %}CCONOR - Cotizador comercial{% endblock %}
 {% block content %}
 <div class="container py-3" id="commercialQuoteApp">
+    {{ condiciones_predeterminadas|json_script:"defaultConditions" }}
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
         <div><h2 class="fw-bold mb-1">Cotizador</h2><p class="text-muted mb-0">Captura interna · Cálculo y guardado en el servidor</p></div>
         <span class="badge bg-secondary" id="quoteStatus" role="status" aria-live="polite">Conectando…</span>
@@ -104,4 +105,4 @@
     <div class="quote-notice">Esta cotización no es un pedido ni aparta mercancía. El preview no guarda; guardar no emite. No hay guardado automático.</div>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=10"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=11"></script>{% endblock %}

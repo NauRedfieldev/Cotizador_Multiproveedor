@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.core.exceptions import PermissionDenied
 
-from .models import QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
+from .models import DefaultCommercialCondition, QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
 from .permissions import require_commercial_permission
 
 
@@ -42,3 +42,13 @@ class QuoteSnapshotAdmin(SnapshotReadOnlyAdmin):
 @admin.register(QuoteCommercialConfirmation)
 class QuoteCommercialConfirmationAdmin(SnapshotReadOnlyAdmin):
     list_display = ("revision", "edit_version", "warning_code", "confirmed_by", "confirmed_at")
+
+
+@admin.register(DefaultCommercialCondition)
+class DefaultCommercialConditionAdmin(admin.ModelAdmin):
+    """M2: textos que se precargan en cada cotización nueva; no cambia cotizaciones guardadas."""
+
+    list_display = ("order", "text", "active")
+    list_display_links = ("text",)
+    list_editable = ("order", "active")
+    list_filter = ("active",)

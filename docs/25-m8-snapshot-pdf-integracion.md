@@ -394,7 +394,8 @@ operación durable de emitir, no como comprobación independiente que una vista
 pueda usar después sobre datos modificados.
 
 La migración 0003 no contiene backfill ni asignación de usuarios. La 0005 solo amplía
-opciones de `warning_code` (`sqlmigrate` → no-op en PostgreSQL). Crear el archivo
+opciones de `warning_code` (`sqlmigrate` → no-op en PostgreSQL). La 0006 (M2) crea
+la tabla de condiciones predeterminadas; no toca cotizaciones existentes. Crear el archivo
 no significa haberlo aplicado a la BD de trabajo: pedir autorización, respaldar y
 aplicar antes de ejecutar el código nuevo con esa BD. Tests: mismas instrucciones
 PostgreSQL/storage aislados de §6, incluyendo suites comerciales nuevas.

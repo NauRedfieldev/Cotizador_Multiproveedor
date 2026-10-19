@@ -32,7 +32,7 @@ from apps.providers.models import Provider
 from apps.providers.service import search_all
 
 from .comparison import comparar_configurado, tipo_cambio_manual
-from .models import Quote, QuoteRevision
+from .models import DefaultCommercialCondition, Quote, QuoteRevision
 from .pdf import build_demo_quote, generate_quote_pdf, money, safe_filename
 from .snapshots import ArchivedPDFError, RevisionConflict, obtener_documento
 
@@ -82,6 +82,12 @@ def _document_guard(data):
     if fingerprint is not None and (not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)):
         raise ValidationError("Huella de documento inválida.")
     return {"expected_version": version, "state_fingerprint": fingerprint, "expected_status": status}
+
+
+def cotizador_comercial(request):
+    """Página del cotizador; entrega las condiciones activas que se precargan (M2)."""
+    condiciones = list(DefaultCommercialCondition.objects.filter(active=True).values_list("text", flat=True))
+    return render(request, "cotizador.html", {"condiciones_predeterminadas": condiciones})
 
 
 @login_required
