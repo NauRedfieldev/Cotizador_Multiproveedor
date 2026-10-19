@@ -120,8 +120,8 @@
             text('discountPermissionHint', has('apply_commercial_discount') ? '' : 'Descuento conservado; sin permiso para modificarlo.');
             for (const id of ['applyFxBtn', 'clearFxBtn', 'newExchangeRate']) $(id).disabled = !allowed || !has('change_commercial_fx');
             if (state.fxPending) { $('newExchangeRate').disabled = true; $('clearFxBtn').disabled = true; $('applyFxBtn').disabled = state.busy; }
-            text('applyFxBtn', state.fxPending ? 'Resolver FX' : 'Aplicar FX');
-            text('fxPermissionHint', has('change_commercial_fx') ? 'Aplicar otro contexto FX es una operación explícita; una búsqueda no lo reemplaza.' : 'Sin permiso de cambiar FX. El contexto ya guardado se conserva al editar.');
+            text('applyFxBtn', state.fxPending ? 'Resolver tipo de cambio' : 'Aplicar tipo de cambio');
+            text('fxPermissionHint', has('change_commercial_fx') ? 'Cambiar el tipo de cambio es una acción explícita; una búsqueda no lo reemplaza.' : 'Sin permiso para cambiar el tipo de cambio. El ya guardado se conserva al editar.');
             text('quoteStatus', state.pending ? 'Resultado de guardado por resolver' : state.readonly ? 'Solo lectura' : state.conflict ? 'Conflicto: recarga explícita necesaria' :
                 state.busy ? 'Procesando…' : state.dirty ? 'Cambios pendientes de guardar' : state.saved ? 'Guardado' : state.caps ? 'Nuevo · sin guardar' : 'Sin conexión autorizada');
         }
@@ -388,14 +388,14 @@
                 renderProducts();
             } catch (err) {
                 if (err.name === 'AbortError' || version !== searchVersion) return;
-                state.products = []; text('searchStatus', err.message + ' Para USD se necesita un contexto FX autorizado.');
+                state.products = []; text('searchStatus', err.message + ' Si hay precios en dólares, primero aplica un tipo de cambio en «Ajustes globales».');
                 showError(err);
                 searchError = $('quoteError').textContent;
             }
         }
         function fxDisplay() {
-            $('exchangeRate').value = state.fx ? `1 USD = ${state.fx.value} MXN` : 'Sin contexto FX';
-            text('fxEvidence', state.fx ? `${state.fx.source} · ${state.fx.date} · Contexto capturado` : 'No se inventa un FX. Para solo MXN puede permanecer vacío.');
+            $('exchangeRate').value = state.fx ? `1 USD = ${state.fx.value} MXN` : 'Sin tipo de cambio';
+            text('fxEvidence', state.fx ? `${state.fx.source} · ${state.fx.date} · Contexto capturado` : 'El sistema no supone un tipo de cambio. Si todo es en pesos, puede quedar vacío.');
         }
         function loadLine(snapshot) {
             const line = blankLine();
@@ -596,7 +596,7 @@
         const requestedModel = new URLSearchParams(window.location.search).get('sku');
         if (requestedModel) {
             $('productSearchInput').value = requestedModel;
-            text('searchStatus', 'Modelo recibido del comparador: busca y elige la oferta exacta. No se importaron precios ni FX de la URL.');
+            text('searchStatus', 'Modelo recibido del comparador: busca y elige la oferta exacta. No se importaron precios ni tipo de cambio desde el enlace.');
         }
         async function initialize() {
             await capabilities();

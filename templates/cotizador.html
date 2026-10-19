@@ -7,7 +7,7 @@
         <div><h2 class="fw-bold mb-1">Cotizador</h2><p class="text-muted mb-0">Captura interna · Cálculo y guardado en el servidor</p></div>
         <span class="badge bg-secondary" id="quoteStatus" role="status" aria-live="polite">Conectando…</span>
     </div>
-    <div class="alert alert-info small">Proveedor, costos, FX y utilidad son información interna. Guardar un borrador no emite ni envía documentos. Ver resumen abre únicamente la revisión guardada sin cambios pendientes.</div>
+    <div class="alert alert-info small">Proveedor, costos, tipo de cambio y utilidad son información interna. Guardar un borrador no emite ni envía documentos. Ver resumen abre únicamente la revisión guardada sin cambios pendientes.</div>
     <div id="transitionNotice" class="alert alert-warning d-none">Preparación comercial desde histórico v1: agrega y valida las nuevas entradas; no se copian costos, unidades ni márgenes antiguos. La cabecera de origen se conserva al crear el borrador; revisa y edita cliente/condiciones después de guardarlo, antes de emitir. El original permanece intacto.</div>
     <div id="quoteError" class="alert alert-danger d-none" role="alert"></div>
     <div class="d-flex flex-wrap gap-2 mb-3">
@@ -41,7 +41,7 @@
             <div class="col-md-3"><label for="providerFilter" class="form-label">Proveedor (interno)</label><select id="providerFilter" class="form-select"><option value="">Todos</option></select></div>
             <div class="col-md-3"><button id="searchProductBtn" type="button" class="btn btn-cconor-primary w-100" disabled>Buscar</button></div>
         </div>
-        <div class="small text-muted mt-2">La búsqueda no modifica el FX elegido ni las partidas capturadas. Una base IVA de origen no verificada impide agregar la oferta comercial.</div>
+        <div class="small text-muted mt-2">La búsqueda no modifica el tipo de cambio elegido ni las partidas capturadas. Para precios en dólares, primero aplica un tipo de cambio en «Ajustes globales». Una base IVA de origen no verificada impide agregar la oferta comercial.</div>
         <div id="searchWarning" class="alert alert-warning small mt-2 d-none" role="status"></div>
         <div id="searchStatus" class="small mt-2" role="status" aria-live="polite"></div>
         <div id="resultsList" class="list-group mt-2"></div>
@@ -61,9 +61,9 @@
                 <div class="row g-3">
                     <div class="col-6"><label for="taxRate" class="form-label">IVA de venta (fracción: 0.16 = 16%)</label><input id="taxRate" class="form-control form-control-sm" inputmode="decimal" value="0.16" disabled><div id="taxPermissionHint" class="small text-muted"></div></div>
                     <div class="col-6"><label for="discountPercent" class="form-label">Descuento global antes de IVA (%)</label><input id="discountPercent" class="form-control form-control-sm" inputmode="decimal" value="0" disabled><div id="discountPermissionHint" class="small text-muted"></div></div>
-                    <div class="col-12"><label for="exchangeRate" class="form-label">FX elegido USD → MXN (interno)</label><input id="exchangeRate" class="form-control form-control-sm bg-light" value="Sin contexto FX" readonly><div id="fxEvidence" class="small text-muted"></div></div>
-                    <div class="col-6"><label for="newExchangeRate" class="form-label">Capturar otro FX</label><input id="newExchangeRate" class="form-control form-control-sm" inputmode="decimal" placeholder="Valor explícito, sin tasa supuesta" disabled></div>
-                    <div class="col-6 d-flex align-items-end gap-1"><button type="button" id="applyFxBtn" class="btn btn-outline-primary btn-sm" disabled>Aplicar FX</button><button type="button" id="clearFxBtn" class="btn btn-outline-secondary btn-sm" disabled>Sin FX</button></div>
+                    <div class="col-12"><label for="exchangeRate" class="form-label">Tipo de cambio elegido (pesos por dólar, interno)</label><input id="exchangeRate" class="form-control form-control-sm bg-light" value="Sin tipo de cambio" readonly><div id="fxEvidence" class="small text-muted"></div></div>
+                    <div class="col-6"><label for="newExchangeRate" class="form-label">Capturar tipo de cambio (pesos por dólar)</label><input id="newExchangeRate" class="form-control form-control-sm" inputmode="decimal" placeholder="Valor explícito, sin tasa supuesta" disabled></div>
+                    <div class="col-6 d-flex align-items-end gap-1"><button type="button" id="applyFxBtn" class="btn btn-outline-primary btn-sm" disabled>Aplicar tipo de cambio</button><button type="button" id="clearFxBtn" class="btn btn-outline-secondary btn-sm" disabled>Quitar</button></div>
                     <div class="col-12 small text-muted" id="fxPermissionHint"></div>
                 </div>
             </div>
@@ -104,4 +104,4 @@
     <div class="quote-notice">Esta cotización no es un pedido ni aparta mercancía. El preview no guarda; guardar no emite. No hay guardado automático.</div>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=9"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=10"></script>{% endblock %}
