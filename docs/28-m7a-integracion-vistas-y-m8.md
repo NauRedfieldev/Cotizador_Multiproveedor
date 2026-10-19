@@ -376,7 +376,8 @@ La base IVA de origen NO está en ProviderOffer actual. Por eso P4 consulta la
 configuración confiable `settings.CCONOR_PROVIDER_PRICE_BASES`, vacía por defecto.
 Solo poblarla tras verificar que el contrato aplica a TODAS las ofertas de ese
 proveedor: `{"codigo":{"vat_basis":"NET"}}` o INCLUDED con vat_rate decimal.
-No se configuró NET para SYSCOM/Exel por suposición. Ausencia=UNKNOWN: la búsqueda
+No se configura NET por suposición: SYSCOM quedó en NET el 2026-10-19 tras verificarlo
+(docs/30 B4); Exel sigue sin configurar (B5). Ausencia=UNKNOWN: la búsqueda
 puede mostrar la oferta internamente, pero crear/preview comercial la rechaza409.
 Si hay variación por producto, no usar una regla global; falta enriquecer el contrato
 verificado por oferta antes de habilitar ese proveedor para uso real.

@@ -164,7 +164,8 @@ COTIZACIONES_EMISION_HABILITADA = env.bool('COTIZACIONES_EMISION_HABILITADA', de
 # Bases API verificadas en servidor. Vacío = UNKNOWN, nunca asumir precio NET.
 # Configurar solo tras validar que el contrato aplica a todas las ofertas del proveedor.
 # Forma: {'codigo': {'vat_basis': 'NET'}} o INCLUDED con vat_rate como texto decimal.
-CCONOR_PROVIDER_PRICE_BASES = {}
+# SYSCOM NET verificado 2026-10-19 (docs/30 B4): el adaptador consulta con iva=0.
+CCONOR_PROVIDER_PRICE_BASES = {'syscom': {'vat_basis': 'NET'}}
 
 # M7a: login con las vistas de django.contrib.auth (docs/28). Los usuarios se dan de alta en el admin.
 LOGIN_URL = 'login'
