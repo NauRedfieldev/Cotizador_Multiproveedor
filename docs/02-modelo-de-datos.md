@@ -5,7 +5,7 @@
 | **Fuente de verdad** | [`apps/providers/models.py`](../apps/providers/models.py) (commit `738fcbc`). Si este documento y el código discrepan, manda el código. |
 | **Estado** | Implementado y probado: 103 pruebas, 100 % de líneas y ramas en `models.py` y `admin.py`. |
 | **Fecha** | 2026-10-04 |
-| **Relacionado** | SDD de M1 ([`12-sdd-m1-providers-core.md`](12-sdd-m1-providers-core.md), §4.6) · [AGENTS.md](../AGENTS.md) §Pruebas |
+| **Relacionado** | SDD de M1 (`12-sdd-m1-providers-core.md`, §4.6; **no disponible en el repositorio**, sustituido por [13](13-sdd-m2-contrato-y-orquestacion.md) y [14](14-contrato-y-orquestacion.md)) · Pruebas: [20 §8](20-guia-integrar-api-de-proveedor.md#8-pruebas-fase-4) |
 
 ## 1. Visión general
 
@@ -245,7 +245,7 @@ proveedor "syscom" (Provider) ──► GET /productos …  ◄──┘   (http
 6. **Volumen:** `aupsert` cuesta 1 o 2 sentencias por producto. Con `limit` de hasta 1000 por página va bien. Si se descarga el catálogo completo de forma periódica, conviene valorar un upsert por lotes (aún no existe).
 7. **Pruebas de M3:**
    - Sin red, con `httpx.MockTransport` y respuestas de ejemplo guardadas.
-   - Con el runner de Django y las convenciones de AGENTS.md §Pruebas.
+   - Con el runner de Django y las convenciones de [20 §8](20-guia-integrar-api-de-proveedor.md#8-pruebas-fase-4).
 
 ### 8.4 Preguntas abiertas para el SDD de M3
 

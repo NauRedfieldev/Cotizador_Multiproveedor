@@ -124,6 +124,8 @@ No se envía `stock=true`, porque solo devolvería productos con existencias, ni
 - **Precios:** llegan en USD y sin IVA (`moneda=usd`, `iva=0`).
 - **Lo que hace `quotes`:** convierte a la moneda de la cotización con un tipo de cambio explícito y aplica el IVA una sola vez (`tax = subtotal × tax_rate`).
 - **El precio:** es `precio_descuento`, el que paga CCONOR. Nunca es el público (`precio_1` o `precio_lista`).
+- **Sin descuento financiero:** no se envía `financiero=true`, que resta el descuento por forma de pago (~4% por transferencia, verificado 2026-10-19). Decisión: costo sin ese descuento, el seguro si CCONOR paga con tarjeta o a crédito (docs/30 B4).
+- **Base IVA:** con `iva=0` los precios son sin IVA (verificado 2026-10-19 contra el portal); `CCONOR_PROVIDER_PRICE_BASES` declara `syscom` como `NET`.
 - **Precios de distribuidor:** el acuerdo de SYSCOM pide mostrarlos solo a usuarios que hayan iniciado sesión.
 
 ### 6.5 Con las vistas async (futuras)
@@ -163,7 +165,7 @@ python manage.py test                                               # todo, incl
 - todo ocurre en la BD de pruebas;
 - la API se simula con `ApiFalsa` y las muestras de `tests/muestras/`.
 
-**Cobertura y mutaciones:** los comandos están en AGENTS.md §Pruebas. Las mutaciones se hacen con un script que restaura los bytes desde memoria, nunca con `git restore`.
+**Cobertura y mutaciones:** los comandos de cobertura están en [02 §7](02-modelo-de-datos.md#7-pruebas-que-lo-respaldan) (cambiar `--source` al módulo). Las mutaciones se hacen con un script que restaura los bytes desde memoria, nunca con `git restore`.
 
 ## 9. Llamadas reales hechas (2026-10-05)
 

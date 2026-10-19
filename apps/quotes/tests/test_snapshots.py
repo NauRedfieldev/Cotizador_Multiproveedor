@@ -12,7 +12,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import AnonymousUser
+from django.contrib.auth.models import AnonymousUser, Permission
 from django.core import mail
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import DatabaseError, close_old_connections, connection, transaction
@@ -418,6 +418,10 @@ class SnapshotFlowTests(SnapshotFixtures, TestCase):
 
 
 class DocumentViewsTests(SnapshotFixtures, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.actor.user_permissions.add(Permission.objects.get(content_type__app_label="quotes", codename="view_commercial_costs"))
+
     def url(self, folio=None):
         return f"/cotizaciones/{folio or self.quote.folio}/pdf/"
 
@@ -429,20 +433,18 @@ class DocumentViewsTests(SnapshotFixtures, TestCase):
         self.client.force_login(self.staff)
         self.assertEqual(self.client.get(self.url()).status_code, 200)
 
-    def test_descarga_y_correo_mismos_bytes_archivados(self):
+    def test_original_v1_intacto_y_correo_externo_bloqueado(self):
         issued = self.issue()
         expected = leer_pdf_emitido(issued)
         self.client.force_login(self.actor)
         with patch("apps.quotes.pdf.generate_quote_pdf", side_effect=AssertionError("No regenerar")):
             response = self.client.get(self.url())
             sent = self.client.post(f"/api/cotizaciones/{self.quote.folio}/enviar-correo/",
-                                    json.dumps({"email": "destino@example.invalid"}), content_type="application/json")
+                                    json.dumps({"email": "destino@example.invalid", "revision": 1}), content_type="application/json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, expected)
-        self.assertEqual(sent.status_code, 200)
-        self.assertEqual(mail.outbox[0].attachments[0][1], expected)
-        self.assertIn("$11.65 MXN", mail.outbox[0].alternatives[0].content)
-        self.assertIn("Revisión 1", mail.outbox[0].alternatives[0].content)
+        self.assertEqual(sent.status_code, 409)
+        self.assertEqual(len(getattr(mail, "outbox", [])), 0)
         self.assertEqual(response["Cache-Control"], "private, no-store")
 
     def test_seleccion_revision_y_preferencia_ultima_emitida(self):
@@ -461,7 +463,7 @@ class DocumentViewsTests(SnapshotFixtures, TestCase):
         self.draft()
         self.client.force_login(self.actor)
         response = self.client.post(f"/api/cotizaciones/{self.quote.folio}/enviar-correo/",
-                                    json.dumps({"email": "destino@example.invalid"}), content_type="application/json")
+                                    json.dumps({"email": "destino@example.invalid", "revision": 1}), content_type="application/json")
         self.assertEqual(response.status_code, 409)
         self.assertFalse(self.files())
 
@@ -595,6 +597,7 @@ class SnapshotMigrationTests(TransactionTestCase):
         executor = MigrationExecutor(connection)
         old_target = [("quotes", "0001_initial")]
         new_target = [("quotes", "0002_quoterevision_quotesnapshot")]
+        latest_target = executor.loader.graph.leaf_nodes()
         try:
             executor.migrate(old_target)
             apps = executor.loader.project_state(old_target).apps
@@ -611,4 +614,4 @@ class SnapshotMigrationTests(TransactionTestCase):
             self.assertFalse(current.revisions.exists())
             self.assertFalse(QuoteSnapshot.objects.exists())
         finally:
-            MigrationExecutor(connection).migrate(new_target)
+            MigrationExecutor(connection).migrate(latest_target)

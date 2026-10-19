@@ -2,7 +2,7 @@
 
 > **Fuentes:**
 > - [AGENTS.md](../AGENTS.md), el documento rector.
-> - El [SDD de M1](12-sdd-m1-providers-core.md): el núcleo original, que **se conserva sin cambios como retroalimentación**. Este SDD lo concreta y explica qué cambia (§6.4).
+> - El SDD de M1 (`12-sdd-m1-providers-core.md`): el núcleo original, que **se conserva sin cambios como retroalimentación**. Este SDD lo concreta y explica qué cambia (§6.4). **No disponible en el repositorio** (nunca se versionó); su contenido vigente está en este documento y en [14](14-contrato-y-orquestacion.md).
 > - [02-modelo-de-datos.md](02-modelo-de-datos.md): M1a y la preparación de SYSCOM.
 > - `docs/DER.md` y `apps/catalog/constants.py` de la rama del equipo `feature/der-modelos-catalog-quotes`, aún sin fusionar.
 > - La documentación pública de SYSCOM, consultada el 2026-10-04.
@@ -401,7 +401,7 @@ El SDD de M1 **no se modifica** [Decisión 5]. Este apartado registra la evoluci
 
 ## 9. Plan de pruebas
 
-Se ejecutan con el runner de Django (AGENTS.md §Pruebas): `TestCase` con métodos `async def`, `httpx.MockTransport` sin red, `RelojControlado` de `tests/soporte.py` para el tiempo, y adaptadores falsos registrados con una utilidad nueva de `soporte.py`. Etiquetas: `unit` para las pruebas sin BD y `django_db` para las demás.
+Se ejecutan con el runner de Django ([20 §8](20-guia-integrar-api-de-proveedor.md#8-pruebas-fase-4)): `TestCase` con métodos `async def`, `httpx.MockTransport` sin red, `RelojControlado` de `tests/soporte.py` para el tiempo, y adaptadores falsos registrados con una utilidad nueva de `soporte.py`. Etiquetas: `unit` para las pruebas sin BD y `django_db` para las demás.
 
 **Contratos (`test_contracts.py`)**
 1. `ProductQuery(term=" laptop ", sku=" ")` → `term == "laptop"`, `sku is None`, `limit == 60`.
@@ -591,7 +591,7 @@ que falla, después el código. No hagas commits ni push salvo que se pidan.
 - Concurrencia solo con asyncio.gather(return_exceptions=True) + asyncio.wait_for;
   sin TaskGroup ni ThreadPoolExecutor. ORM async.
 - httpx.AsyncClient con timeout=None (manda wait_for). Nunca registres tokens ni credenciales.
-- Pruebas con el runner de Django, httpx.MockTransport y tests/soporte.py (AGENTS.md §Pruebas).
+- Pruebas con el runner de Django, httpx.MockTransport y tests/soporte.py (docs/20 §8).
 
 Al terminar: ejecuta el criterio de la §10 y pega su salida, actualiza MEMORY.md y
 escribe docs/14-contrato-y-orquestacion.md (T7). Si algo del SDD no se puede cumplir,

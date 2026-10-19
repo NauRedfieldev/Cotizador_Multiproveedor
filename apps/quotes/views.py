@@ -32,7 +32,7 @@ from apps.providers.models import Provider
 from apps.providers.service import search_all
 
 from .comparison import comparar_configurado, tipo_cambio_manual
-from .models import Quote, QuoteRevision
+from .models import DefaultCommercialCondition, Quote, QuoteRevision
 from .pdf import build_demo_quote, generate_quote_pdf, money, safe_filename
 from .snapshots import ArchivedPDFError, RevisionConflict, obtener_documento
 
@@ -49,7 +49,9 @@ def _document_error(exc):
     if isinstance(exc, ArchivedPDFError):
         return JsonResponse({"error": "PDF original no disponible o dañado; requiere recuperación."}, status=503)
     if isinstance(exc, RevisionConflict):
-        return JsonResponse({"error": "La revisión requiere emisión o recarga."}, status=409)
+        # Mensajes propios de M8, sin datos internos: explican qué recargar o preparar.
+        message = exc.messages[0] if exc.messages else "La revisión requiere emisión o recarga."
+        return JsonResponse({"error": message}, status=409)
     if isinstance(exc, ValidationError):
         return JsonResponse({"error": "Datos de solicitud inválidos."}, status=400)
     logger.error("M8: fallo al obtener el documento; no se sustituye por demo.", exc_info=True)
@@ -66,6 +68,28 @@ def _number(value):
     return value
 
 
+def _document_guard(data):
+    """P6: lectura exacta opcional; la UI siempre manda identidad y estado guardados."""
+    if data.get("exact") not in (True, "1"):
+        return {}
+    if hasattr(data, "getlist") and any(len(data.getlist(k)) != 1 for k in data):
+        raise ValidationError("Identidad documental ambigua.")
+    version = _number(data.get("edit_version"))
+    status = data.get("expected_status")
+    fingerprint = data.get("state_fingerprint")
+    if version is None or status not in ("DRAFT", "ISSUED"):
+        raise ValidationError("Falta versión/estado del documento.")
+    if fingerprint is not None and (not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)):
+        raise ValidationError("Huella de documento inválida.")
+    return {"expected_version": version, "state_fingerprint": fingerprint, "expected_status": status}
+
+
+def cotizador_comercial(request):
+    """Página del cotizador; entrega las condiciones activas que se precargan (M2)."""
+    condiciones = list(DefaultCommercialCondition.objects.filter(active=True).values_list("text", flat=True))
+    return render(request, "cotizador.html", {"condiciones_predeterminadas": condiciones})
+
+
 @login_required
 def descargar_pdf_cotizacion(request, folio):
     """GET /cotizaciones/<folio>/pdf/ → descarga el PDF oficial.
@@ -75,12 +99,16 @@ def descargar_pdf_cotizacion(request, folio):
     if request.method not in {"GET", "HEAD"}:
         return JsonResponse({"error": "Método no permitido."}, status=405)
     try:
-        _, pdf_bytes, filename = obtener_documento(folio, actor=request.user, number=_number(request.GET.get("revision")))
+        if request.GET.get("exact") == "1" and request.GET.get("revision") is None:
+            raise ValidationError("Se requiere revisión exacta.")
+        context, pdf_bytes, filename = obtener_documento(folio, actor=request.user,
+            number=_number(request.GET.get("revision")), **_document_guard(request.GET))
     except Exception as exc:
         return _document_error(exc)
     response = HttpResponse(pdf_bytes, content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     response["Cache-Control"] = "private, no-store"
+    response["X-Quote-Document"] = "original" if context.get("archived_only") else "draft-or-historical"
     return response
 
 
@@ -88,21 +116,34 @@ def descargar_pdf_cotizacion(request, folio):
 def enviar_cotizacion_correo(request, folio):
     """POST /api/cotizaciones/<folio>/enviar-correo/ → envía la cotización.
 
-    Body JSON: {email, subject, message, attach_pdf=true, revision?}.
-    Adjunta el original archivado; no emite ni regenera versiones emitidas.
+    Body JSON: {email, revision, subject?, message?, attach_pdf=true, exact?,
+                edit_version?, expected_status?, state_fingerprint?}.
+    Solo v2 emitida autorizada; adjunta original, no emite ni regenera emisiones.
     """
     if request.method != "POST":
         return JsonResponse({"success": False, "error": "Método no permitido."}, status=405)
 
+    def unique_pairs(entries):
+        result = {}
+        for key, value in entries:
+            if key in result:
+                raise ValueError("JSON ambiguo.")
+            result[key] = value
+        return result
+
     try:
-        payload = json.loads(request.body or "{}")
-    except (json.JSONDecodeError, UnicodeDecodeError):
+        payload = json.loads(request.body or "{}", object_pairs_hook=unique_pairs)
+    except (ValueError, UnicodeDecodeError, RecursionError):
         return JsonResponse({"success": False, "error": "JSON inválido."}, status=400)
 
     if not isinstance(payload, dict):
         return JsonResponse({"success": False, "error": "JSON debe ser un objeto."}, status=400)
+    if set(payload) - {"email", "subject", "message", "attach_pdf", "revision", "exact", "edit_version", "state_fingerprint", "expected_status"}:
+        return JsonResponse({"success": False, "error": "Campos de correo no admitidos."}, status=400)
     if any(not isinstance(payload.get(key, ""), str) for key in ("email", "subject", "message")) or type(payload.get("attach_pdf", True)) is not bool:
         return JsonResponse({"success": False, "error": "Tipos de datos inválidos."}, status=400)
+    if len(payload.get("email", "")) > 254 or len(payload.get("subject", "")) > 255 or len(payload.get("message", "")) > 6000:
+        return JsonResponse({"success": False, "error": "Datos del correo demasiado largos."}, status=400)
     email = payload.get("email", "").strip()
     try:
         validate_email(email)
@@ -110,8 +151,13 @@ def enviar_cotizacion_correo(request, folio):
         return JsonResponse({"success": False, "error": "Correo destinatario inválido."}, status=400)
 
     try:
+        guard = _document_guard(payload)
+        if payload.get("revision") is None:
+            raise ValidationError("Se requiere revisión exacta.")
+        if guard and payload.get("attach_pdf", True) is not True:
+            raise ValidationError("El envío comercial exacto adjunta siempre su original.")
         quote, pdf_bytes, filename = obtener_documento(folio, actor=request.user,
-                                                      number=_number(payload.get("revision")), allow_draft=False)
+            number=_number(payload.get("revision")), allow_draft=False, customer_only=True, **guard)
     except Exception as exc:
         return _document_error(exc)
     quote["total_fmt"] = money(quote["total"])
@@ -136,7 +182,8 @@ def enviar_cotizacion_correo(request, folio):
         msg.attach(filename, pdf_bytes, "application/pdf")
 
     try:
-        msg.send()
+        if msg.send() != 1:
+            raise RuntimeError("El backend de correo no confirmó aceptación.")
     except Exception:
         logger.error("M8: no se pudo enviar el correo.", exc_info=True)
         return JsonResponse({"success": False, "error": "No se pudo enviar el correo."}, status=500)

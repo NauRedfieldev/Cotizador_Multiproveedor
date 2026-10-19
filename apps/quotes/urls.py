@@ -12,12 +12,20 @@ urlpatterns = [
     path("comparador/", views.cotizar_productos, name="cotizar_productos"),
     # M7a: misma búsqueda en JSON para el cotizador (docs/28).
     path("api/v1/products/search/", api.buscar_productos, name="api_buscar_productos"),
+    path("api/v1/quotes/preview/", api.preview_nueva, name="api_preview_nueva"),
+    path("api/v1/quotes/fx-contexts/", api.crear_contexto_fx, name="api_contexto_fx"),
+    path("api/v1/commercial/capabilities/", api.capacidades_comerciales, name="api_capacidades_comerciales"),
+    path("api/v1/commercial/permissions/<int:user_id>/", api.permisos_comerciales, name="api_permisos_comerciales"),
     # M7a: cotizaciones sobre los servicios de M8 (docs/28 y docs/25 M8 §2).
     path("api/v1/quotes/", api.crear_cotizacion, name="api_crear_cotizacion"),
     path("api/v1/quotes/<str:folio>/", api.detalle_cotizacion, name="api_detalle_cotizacion"),
     path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/", api.guardar_revision, name="api_guardar_revision"),
+    path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/resumen/", api.resumen_documental, name="api_resumen_documental"),
+    path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/preview/", api.preview_edicion, name="api_preview_edicion"),
+    path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/confirmaciones/", api.confirmar_comercial, name="api_confirmar_comercial"),
     path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/emitir/", api.emitir, name="api_emitir_revision"),
     path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/nueva/", api.nueva_revision, name="api_nueva_revision"),
+    path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/nueva/preview/", api.preview_transicion, name="api_preview_transicion"),
     path("demo/cotizaciones/<str:folio>/pdf/", views.demo_pdf_cotizacion, name="demo_pdf_cotizacion"),
     path(
         "cotizaciones/<str:folio>/pdf/",

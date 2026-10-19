@@ -222,7 +222,7 @@ Incluyen las preguntas abiertas de [02 §8.4](02-modelo-de-datos.md); su pregunt
 
 ## 7. Plan de pruebas sugerido para M3
 
-Sin red, con el runner de Django y reutilizando `tests/soporte.py` (AGENTS.md §Pruebas):
+Sin red, con el runner de Django y reutilizando `tests/soporte.py` ([20 §8](20-guia-integrar-api-de-proveedor.md#8-pruebas-fase-4)):
 
 1. **`request_token`:**
    - con un 200 → `NewToken` con el token y la vida que devuelve SYSCOM;

@@ -12,6 +12,8 @@ from unittest import mock
 from uuid import uuid4
 
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
+from django.contrib.auth.models import Permission
 from asgiref.sync import sync_to_async
 from django.test import AsyncClient, TestCase, TransactionTestCase, override_settings, tag
 from django.urls import reverse
@@ -21,6 +23,9 @@ from apps.quotes import api
 from apps.quotes.models import Quote, QuoteRevision
 from apps.quotes.snapshots import ArchivedPDFError
 from apps.quotes.tests.test_vistas_cotizacion import adaptador, crear_asesor, usd
+from apps.quotes.tests.test_commercial_persistence import CommercialFixtures
+from apps.quotes.models import QuoteAPIRequest, QuoteSelectionContext
+from apps.quotes.permissions import FX, MANUAL_SALE, MARGIN, set_commercial_permission
 
 TIPO = {"valor": "17.50", "origen": "manual", "fecha": "2026-10-15T18:00:00+00:00"}
 EMPRESA_QA = {"name": "Empresa sintética (QA)", "rfc": "", "tagline": "Datos sintéticos de prueba",
@@ -73,6 +78,9 @@ class ApiCotizacionesTests(TestCase):
         self.asesor = crear_asesor()
         self.otro = crear_asesor("otro")
         self.staff = crear_asesor("jefa", is_staff=True)
+        view = Permission.objects.get(content_type__app_label="quotes", codename="view_commercial_costs")
+        for actor in (self.asesor, self.otro, self.staff):
+            actor.user_permissions.add(view)
         crear_proveedor("alfa")
         crear_proveedor("beta")
         self.async_client.force_login(self.asesor)
@@ -264,11 +272,10 @@ class ApiCotizacionesTests(TestCase):
         edicion = cuerpo_edicion(client_name="Cliente renombrado", valid_days=30, conditions=[])
         del edicion["edit_version"]  # cada envío pone la suya; sin ella debe dar 400
         respuesta, cuerpo = await self.enviar("put", self.url_revision(folio, 1), {**edicion, "edit_version": 1})
-        self.assertEqual(respuesta.status_code, 200)
-        self.assertEqual(cuerpo["data"]["edit_version"], 2)
+        self.assertEqual(respuesta.status_code, 409)  # P4: transición explícita, no recaptura v1.
         revision = await QuoteRevision.objects.aget(quote__folio=folio, number=1)
-        self.assertEqual((revision.header["client"]["business_name"], revision.valid_days), ("Cliente renombrado", 30))
-        self.assertEqual(revision.header["conditions"], [])  # lista vacía explícita, sin valores por defecto
+        self.assertEqual((revision.header["client"]["business_name"], revision.valid_days), ("Cliente sintético S.A. de C.V.", 15))
+        self.assertEqual(revision.header["conditions"], CONDICIONES)
         self.assertEqual(revision.header["company"]["name"], "Empresa sintética (QA)")
 
         # notes es del alta: en la edición se rechaza en lugar de ignorarla.
@@ -279,7 +286,7 @@ class ApiCotizacionesTests(TestCase):
         obsoleta, cuerpo = await self.enviar("put", self.url_revision(folio, 1), {**edicion, "edit_version": 1})
         self.assertEqual(obsoleta.status_code, 409)
         sin_version, _ = await self.enviar("put", self.url_revision(folio, 1), edicion)
-        self.assertEqual(sin_version.status_code, 400)
+        self.assertEqual(sin_version.status_code, 409)  # primero se informa incompatibilidad de esquema
         no_existe, _ = await self.enviar("put", self.url_revision(folio, 7), {**edicion, "edit_version": 1})
         self.assertEqual(no_existe.status_code, 404)
 
@@ -287,16 +294,12 @@ class ApiCotizacionesTests(TestCase):
         _, alta = await self.alta()
         folio = alta["data"]["folio"]
         respuesta, cuerpo = await self.enviar("post", self.url_revision(folio, 1, "emitir"), {"edit_version": 1})
-        self.assertEqual(respuesta.status_code, 200)
-        datos = cuerpo["data"]
-        self.assertEqual(datos["status"], "ISSUED")
-        # 10.25 USD × 17.50 × 2 = 358.75; IVA 16 % = 57.40.
-        self.assertEqual((datos["subtotal"], datos["tax"], datos["total"]), ("358.75", "57.40", "416.15"))
-        self.assertEqual(len(list(self.pdfs.rglob("*.pdf"))), 1)
+        self.assertEqual(respuesta.status_code, 409)  # nunca emisión HTTP a costo v1
+        self.assertEqual(len(list(self.pdfs.rglob("*.pdf"))), 0)
 
         otra_vez, cuerpo = await self.enviar("post", self.url_revision(folio, 1, "emitir"), {"edit_version": 1})
-        self.assertEqual((otra_vez.status_code, cuerpo["data"]), (200, datos))
-        self.assertEqual(len(list(self.pdfs.rglob("*.pdf"))), 1)
+        self.assertEqual(otra_vez.status_code, 409)
+        self.assertEqual(len(list(self.pdfs.rglob("*.pdf"))), 0)
 
         emitida, _ = await self.enviar("put", self.url_revision(folio, 1), cuerpo_edicion())
         self.assertEqual(emitida.status_code, 409)
@@ -307,7 +310,10 @@ class ApiCotizacionesTests(TestCase):
         borrador, _ = await self.enviar("post", self.url_revision(folio, 1, "nueva"), {"request_id": str(uuid4())})
         self.assertEqual(borrador.status_code, 409)  # solo desde una emisión
 
-        await self.enviar("post", self.url_revision(folio, 1, "emitir"), {"edit_version": 1})
+        # Original v1 histórico creado por servicio interno, no por emisión HTTP nueva.
+        from apps.quotes.snapshots import emitir_revision
+        revision = await QuoteRevision.objects.aget(quote__folio=folio)
+        await sync_to_async(emitir_revision, thread_sensitive=True)(revision.pk, actor=self.asesor, expected_version=1)
         clave = str(uuid4())
         respuesta, cuerpo = await self.enviar("post", self.url_revision(folio, 1, "nueva"), {"request_id": clave})
         self.assertEqual(respuesta.status_code, 201)
@@ -317,31 +323,30 @@ class ApiCotizacionesTests(TestCase):
         self.assertEqual((repetida.status_code, otra["data"]["revision"]), (201, 2))
 
     async def test_c12_metodos_no_permitidos(self):
-        self.assertEqual((await self.async_client.get(reverse("api_crear_cotizacion"))).status_code, 405)
+        self.assertEqual((await self.async_client.patch(reverse("api_crear_cotizacion"))).status_code, 405)
         self.assertEqual((await self.async_client.delete(self.url_revision("X", 1))).status_code, 405)
 
     async def test_c13_errores_inesperados_dan_500_generico_y_quedan_en_el_log(self):
         _, alta = await self.alta()
         folio = alta["data"]["folio"]
-        with mock.patch.object(api, "aemitir_revision", side_effect=RuntimeError("detalle interno")), \
+        with mock.patch.object(api, "_commercial_edit", side_effect=RuntimeError("detalle interno")), \
                 self.assertLogs("apps.quotes.api", "ERROR"):
-            respuesta, cuerpo = await self.enviar("post", self.url_revision(folio, 1, "emitir"), {"edit_version": 1})
+            respuesta, cuerpo = await self.enviar("put", self.url_revision(folio, 1), cuerpo_edicion())
         self.assertEqual(respuesta.status_code, 500)
         self.assertNotIn("detalle interno", cuerpo["error"])
 
     async def test_c13b_un_type_error_de_m8_es_400_generico(self):
         _, alta = await self.alta()
-        with mock.patch.object(api, "aemitir_revision", side_effect=TypeError("Se requiere X")):
+        with mock.patch.object(api, "_commercial_edit", side_effect=TypeError("Se requiere X")):
             respuesta, cuerpo = await self.enviar(
-                "post", self.url_revision(alta["data"]["folio"], 1, "emitir"), {"edit_version": 1}
+                "put", self.url_revision(alta["data"]["folio"], 1), cuerpo_edicion()
             )
         self.assertEqual((respuesta.status_code, cuerpo["error"]), (400, "Datos de solicitud inválidos."))
 
     async def test_c14_original_dañado_da_503(self):
         _, alta = await self.alta()
         folio = alta["data"]["folio"]
-        with mock.patch.object(api, "aemitir_revision", side_effect=ArchivedPDFError("x")):
-            respuesta, _ = await self.enviar("post", self.url_revision(folio, 1, "emitir"), {"edit_version": 1})
+        respuesta = api._respuesta_de_error(ArchivedPDFError("x"))
         self.assertEqual(respuesta.status_code, 503)
 
     async def test_c15_choque_de_folio_se_reintenta(self):
@@ -372,7 +377,7 @@ class ApiCotizacionesTests(TestCase):
         with override_settings(COTIZACIONES_EMISION_HABILITADA=False):
             respuesta, cuerpo = await self.enviar("post", self.url_revision(folio, 1, "emitir"), {"edit_version": 1})
         self.assertEqual(respuesta.status_code, 403)
-        self.assertIn("política de precios", cuerpo["error"])
+        self.assertIn("deshabilitada", cuerpo["error"])
         self.assertEqual((await QuoteRevision.objects.aget(quote__folio=folio)).status, "DRAFT")
         self.assertEqual(list(self.pdfs.rglob("*.pdf")), [])
 
@@ -390,7 +395,7 @@ class ApiCotizacionesTests(TestCase):
         folio = alta["data"]["folio"]
         with override_settings(CCONOR_EMPRESA={**EMPRESA_QA, "name": "Otra empresa"}):
             respuesta, _ = await self.enviar("put", self.url_revision(folio, 1), cuerpo_edicion())
-        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta.status_code, 409)
         revision = await QuoteRevision.objects.aget(quote__folio=folio)
         self.assertEqual(revision.header["company"]["name"], "Empresa sintética (QA)")
 
@@ -442,3 +447,628 @@ class AltaConcurrenteTests(TransactionTestCase):
             resultados = ejecutar_en_hilos(alta, [(), ()])
         self.assertEqual(resultados[0], resultados[1])
         self.assertEqual(Quote.objects.count(), 1)
+
+
+def partida_api_manual(**changes):
+    data = {"line_key": str(uuid4()), "source": {"type": "MANUAL", "name": "Servicio sintético"},
+        "cost": None, "quantity": 1,
+        "units": {"source_label": "Servicio", "sale_label": "Servicio", "conversion_factor": "1", "confirmed": True},
+        "pricing": {"mode": "MANUAL", "sale": {"amount": "100.00", "currency": "MXN", "vat_basis": "NET"}}}
+    data.update(changes)
+    return data
+
+
+def alta_comercial(**changes):
+    data = {**cuerpo_alta(), "schema_version": 2, "items": [partida_api_manual()],
+        "tax_rate": "0.16", "discount_percent": "0", "fx_context_id": None, "issue_date": "2026-10-16"}
+    data.update(changes)
+    return data
+
+
+@override_settings(CCONOR_EMPRESA=EMPRESA_QA, COTIZACIONES_EMISION_HABILITADA=True)
+class CommercialAPITests(CommercialFixtures, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.actor)
+        self.enterContext(override_settings(MAILERS={"default": {"BACKEND": "django.core.mail.backends.locmem.EmailBackend"}}))
+
+    def send(self, name, data=None, *, method="post", args=(), status=200):
+        url = reverse(name, args=args)
+        response = getattr(self.client, method)(url, data=json.dumps(data) if data is not None else None,
+                                               content_type="application/json")
+        self.assertEqual(response.status_code, status, response.content.decode()[:1000])
+        return response.json().get("data", response.json())
+
+    def create(self, data=None):
+        return self.send("api_crear_cotizacion", data or alta_comercial(), status=201)
+
+    def detail(self, created):
+        return self.send("api_guardar_revision", method="get", args=(created["folio"], created["revision"]))
+
+    def confirm_and_issue(self, created):
+        detail = self.detail(created)
+        warnings = [w for w in detail["preview"]["warnings"] if w["requires_confirmation"]]
+        self.send("api_confirmar_comercial", {"edit_version": created["edit_version"],
+            "state_fingerprint": created["state_fingerprint"], "warnings": [
+                {"code": w["code"], "line_key": w["line_key"]} for w in warnings]},
+            args=(created["folio"], created["revision"]))
+        return self.send("api_emitir_revision", {"edit_version": created["edit_version"],
+            "state_fingerprint": created["state_fingerprint"]}, args=(created["folio"], created["revision"]))
+
+    def test_preview_antes_de_quote_no_escribe_ni_reserva_folio(self):
+        from django.test.utils import CaptureQueriesContext
+        from django.db import connection
+        data = {k: v for k, v in alta_comercial().items() if k not in ("notes", "request_id")}
+        before = Quote.objects.count()
+        with CaptureQueriesContext(connection) as queries:
+            result = self.send("api_preview_nueva", data)
+        self.assertFalse(any(q["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for q in queries))
+        self.assertFalse(result["persistida"])
+        self.assertIsNone(result["cliente"]["folio"])
+        self.assertIsNone(result["cliente"]["revision"])
+        self.assertEqual(result["cliente"]["total"], "116.00")
+        self.assertEqual(Quote.objects.count(), before)
+        self.assertFalse(QuoteAPIRequest.objects.exists())
+        self.assertFalse(self.files())
+
+    def test_alta_detalle_exactos_y_recibo_sin_notas_en_salida(self):
+        data = alta_comercial()
+        created = self.create(data)
+        detail = self.detail(created)
+        self.assertEqual((detail["schema_version"], detail["calculation_version"]), (2, 1))
+        self.assertEqual(detail["items"][0]["line_key"], data["items"][0]["line_key"])
+        self.assertIsNone(detail["items"][0]["source_unit_price"])
+        self.assertEqual(detail["preview"]["resultado"]["total"], "116.00")
+        self.assertNotIn("Nota interna", json.dumps(detail))
+        self.assertEqual(QuoteAPIRequest.objects.count(), 1)
+
+    def test_reintentar_no_lee_empresa_capturas_o_defaults_vivos(self):
+        data = alta_comercial()
+        first = self.create(data)
+        with override_settings(CCONOR_EMPRESA={}), mock.patch.object(api, "_commercial_items", side_effect=AssertionError("No recapturar")):
+            again = self.create(data)
+        self.assertEqual(again["folio"], first["folio"])
+        self.assertTrue(again["replayed"])
+        self.assertEqual(QuoteAPIRequest.objects.count(), 1)
+        self.send("api_crear_cotizacion", {**data, "notes": "Otra intención"}, status=409)
+
+    def test_recibo_reintento_tras_editar_devuelve_estado_vigente(self):
+        data = alta_comercial()
+        first = self.create(data)
+        edited = {k: v for k, v in data.items() if k not in ("schema_version", "request_id", "notes")}
+        edited["items"][0]["source"] = {"type": "EXISTING"}
+        # No mutar intención original: restaurar una copia independiente para reintento.
+        original = alta_comercial(request_id=data["request_id"], items=[partida_api_manual(line_key=data["items"][0]["line_key"])])
+        edited.update(edit_version=1, client_name="Cliente editado QA")
+        self.send("api_guardar_revision", edited, method="put", args=(first["folio"], 1))
+        replay = self.create(original)
+        self.assertEqual(replay["edit_version"], 2)
+        self.assertTrue(replay["replayed"])
+
+    def test_fallo_no_deja_quote_o_recibo(self):
+        before = Quote.objects.count()
+        self.send("api_crear_cotizacion", alta_comercial(items=[partida_api_manual(quantity=0)]), status=400)
+        self.assertEqual(Quote.objects.count(), before)
+        self.assertFalse(QuoteAPIRequest.objects.exists())
+
+    def test_decimal_numerico_exponente_y_cantidad_fraccion_no_admitidos(self):
+        for price in (100.0, "1e2", "NaN", "-1", "1,000"):
+            line = partida_api_manual()
+            line["pricing"]["sale"]["amount"] = price
+            self.send("api_crear_cotizacion", alta_comercial(items=[line]), status=400)
+        for quantity in (True, "1", 1.5):
+            self.send("api_crear_cotizacion", alta_comercial(items=[partida_api_manual(quantity=quantity)]), status=400)
+
+    def test_confirmaciones_reales_y_emision_archivada_sin_recalculo(self):
+        created = self.create()
+        self.send("api_emitir_revision", {"edit_version": 1, "state_fingerprint": created["state_fingerprint"]},
+            args=(created["folio"], 1), status=403)
+        issued = self.confirm_and_issue(created)
+        self.assertEqual((issued["total"], issued["status"]), ("116.00", "ISSUED"))
+        from apps.quotes import snapshots
+        with mock.patch.object(snapshots, "_commercial_calculate", side_effect=AssertionError("No recalcular")):
+            detail = self.detail(created)
+            self.assertEqual(detail["sealed"]["gross_profit"], None)
+            self.assertTrue(detail["cliente"]["archived_only"])
+            self.send("api_emitir_revision", {"edit_version": 1, "state_fingerprint": created["state_fingerprint"]}, args=(created["folio"], 1))
+        self.assertEqual(len(self.files()), 1)
+
+    def test_huella_incorrecta_y_actor_falso_se_rechazan(self):
+        created = self.create()
+        self.send("api_emitir_revision", {"edit_version": 1, "state_fingerprint": "0" * 64}, args=(created["folio"], 1), status=409)
+        self.send("api_confirmar_comercial", {"edit_version": 1, "state_fingerprint": created["state_fingerprint"],
+            "warnings": [], "confirmed_by": self.root.pk}, args=(created["folio"], 1), status=400)
+
+    def test_edicion_preview_sin_sesion_y_cambio_cliente_invalida_avisos(self):
+        data = alta_comercial()
+        created = self.create(data)
+        edit = {k: v for k, v in data.items() if k not in ("schema_version", "request_id", "notes")}
+        edit["items"][0]["source"] = {"type": "EXISTING"}
+        edit["items"][0]["quantity"] = 2
+        edit.update(edit_version=1, client_name="Cambio de cliente QA")
+        preview = self.send("api_preview_edicion", edit, args=(created["folio"], 1))
+        self.assertEqual(preview["cliente"]["total"], "232.00")
+        self.assertEqual(self.detail(created)["edit_version"], 1)
+        saved = self.send("api_guardar_revision", edit, method="put", args=(created["folio"], 1))
+        self.assertEqual(saved["state_fingerprint"], preview["state_fingerprint"])
+        self.send("api_guardar_revision", edit, method="put", args=(created["folio"], 1), status=409)
+
+    def test_otro_asesor_y_staff_no_financiero_no_acceden(self):
+        created = self.create()
+        self.client.force_login(self.other)
+        self.send("api_guardar_revision", method="get", args=(created["folio"], 1), status=403)
+        self.staff.groups.remove(self.internal)
+        self.client.force_login(self.staff)
+        self.send("api_guardar_revision", method="get", args=(created["folio"], 1), status=403)
+
+    def test_csrf_sesion_y_metodos(self):
+        from django.test import Client
+        anonymous = self.client_class()
+        self.assertEqual(anonymous.post(reverse("api_preview_nueva")).status_code, 401)
+        strict = Client(enforce_csrf_checks=True)
+        strict.force_login(self.actor)
+        self.assertEqual(strict.post(reverse("api_preview_nueva"), data="{}", content_type="application/json").status_code, 403)
+        self.assertEqual(self.client.get(reverse("api_preview_nueva")).status_code, 405)
+
+    def test_fx_recibo_y_capacidad_separada(self):
+        data = {"request_id": str(uuid4()), "value": "17.50"}
+        first = self.send("api_contexto_fx", data, status=201)
+        again = self.send("api_contexto_fx", data, status=201)
+        self.assertEqual(first["fx_context_id"], again["fx_context_id"])
+        self.send("api_contexto_fx", {**data, "value": "18"}, status=409)
+        self.send("api_crear_cotizacion", alta_comercial(request_id=data["request_id"]), status=409)
+        self.client.force_login(self.other)
+        self.send("api_contexto_fx", {"request_id": str(uuid4()), "value": "17.50"}, status=403)
+
+    def test_contextos_y_recibos_son_inmutables(self):
+        result = self.send("api_contexto_fx", {"request_id": str(uuid4()), "value": "17.5"}, status=201)
+        context = QuoteSelectionContext.objects.get(pk=result["fx_context_id"])
+        from django.core.exceptions import ValidationError
+        for action in (context.save, context.delete, lambda: QuoteSelectionContext.objects.all().update(payload={}),
+                       QuoteAPIRequest.objects.first().save, QuoteAPIRequest.objects.first().delete):
+            with self.assertRaises(ValidationError):
+                action()
+
+    def test_gestor_limita_permisos_y_no_cambia_privilegios_tecnicos(self):
+        self.send("api_permisos_comerciales", {"capability": MARGIN, "enabled": True}, method="patch", args=(self.other.pk,))
+        self.other.refresh_from_db()
+        self.assertFalse(self.other.is_staff)
+        self.assertFalse(self.other.is_superuser)
+        self.send("api_permisos_comerciales", {"capability": "manage_commercial_permissions", "enabled": True},
+            method="patch", args=(self.other.pk,), status=400)
+        self.client.force_login(self.other)
+        self.send("api_permisos_comerciales", method="get", args=(self.actor.pk,), status=403)
+        result = self.send("api_capacidades_comerciales", method="get")
+        self.assertTrue(result[MARGIN])
+
+    def test_clone_y_transicion_explicita_preservan_origen(self):
+        original = self.draft()
+        line = partida_api_manual()
+        data = {"schema_version": 2, "request_id": str(uuid4()), "items": [line], "tax_rate": ".16",
+                "discount_percent": "0", "fx_context_id": None}
+        # El protocolo requiere cero inicial.
+        data["tax_rate"] = "0.16"
+        created = self.send("api_nueva_revision", data, args=(self.quote.folio, original.number), status=201)
+        original.refresh_from_db()
+        self.assertEqual(original.schema_version, 1)
+        issued = self.confirm_and_issue(created)
+        key = {"schema_version": 2, "request_id": str(uuid4())}
+        clone = self.send("api_nueva_revision", key, args=(created["folio"], created["revision"]), status=201)
+        with mock.patch.object(api, "_commercial_items", side_effect=AssertionError("No recapturar")):
+            replay = self.send("api_nueva_revision", key, args=(created["folio"], created["revision"]), status=201)
+        self.assertEqual(clone["revision"], replay["revision"])
+        detail = self.detail(clone)
+        self.assertEqual(detail["confirmations"], [])
+        self.assertEqual(detail["items"][0]["line_key"], line["line_key"])
+
+    def test_emision_sigue_bloqueada_por_bandera(self):
+        created = self.create()
+        with override_settings(COTIZACIONES_EMISION_HABILITADA=False):
+            self.send("api_emitir_revision", {"edit_version": 1, "state_fingerprint": created["state_fingerprint"]},
+                args=(created["folio"], 1), status=403)
+        self.assertFalse(self.files())
+
+    def test_iva_incluido_manual_independiente_iva_de_venta(self):
+        line = partida_api_manual()
+        line["pricing"]["sale"].update(amount="116", vat_basis="INCLUDED", vat_rate="0.16")
+        created = self.create(alta_comercial(items=[line], tax_rate="0.08"))
+        detail = self.detail(created)
+        self.assertEqual(detail["items"][0]["manual_unit_price"], "116.000000")
+        self.assertEqual(detail["items"][0]["manual_tax_rate_included"], "0.1600")
+        self.assertEqual(detail["preview"]["resultado"]["subtotal_neto"], "100.00")
+        self.assertEqual(detail["preview"]["cliente"]["total"], "108.00")
+
+    def test_perdida_total_cero_y_costo_cero_conocido(self):
+        line = partida_api_manual(cost={"amount": "100", "currency": "MXN", "vat_basis": "NET"},
+                                  pricing={"mode": "MARGIN", "margin_percent": "35"})
+        created = self.create(alta_comercial(items=[line], discount_percent="100"))
+        warnings = self.detail(created)["preview"]["warnings"]
+        self.assertEqual({w["code"] for w in warnings}, {"VENTA_BAJO_COSTO", "TOTAL_CERO"})
+        issued = self.confirm_and_issue(created)
+        self.assertEqual(issued["total"], "0.00")
+        self.assertEqual(self.detail(created)["sealed"]["gross_profit"], "-100.00")
+        zero = partida_api_manual(cost={"amount": "0", "currency": "MXN", "vat_basis": "NET"})
+        other = self.create(alta_comercial(items=[zero]))
+        self.assertEqual(self.detail(other)["preview"]["warnings"], [])
+
+    def test_avisos_de_stock_informativos_y_confirmable_en_api(self):
+        from apps.quotes.tests.test_commercial_persistence import commercial_line
+        cero, desconocido = commercial_line(kind="API", stock=0), commercial_line(kind="API", stock=None, external_id="QA-2")
+        r = self.commercial_draft([cero, desconocido, commercial_line()])
+        created = {"folio": self.quote.folio, "revision": r.number, "edit_version": r.edit_version,
+                   "state_fingerprint": r.state_fingerprint}
+        warnings = {w["code"]: w for w in self.detail(created)["preview"]["warnings"]}
+        self.assertEqual(set(warnings), {"STOCK_CERO", "STOCK_DESCONOCIDO"})
+        self.assertEqual(warnings["STOCK_CERO"], {"code": "STOCK_CERO", "line_key": str(cero.line_key),
+            "requires_confirmation": False, "required_capability": None, "confirmed": False})
+        self.assertEqual((warnings["STOCK_DESCONOCIDO"]["requires_confirmation"], warnings["STOCK_DESCONOCIDO"]["required_capability"]),
+                         (True, "view_commercial_costs"))
+        self.send("api_confirmar_comercial", {"edit_version": r.edit_version, "state_fingerprint": r.state_fingerprint,
+            "warnings": [{"code": "STOCK_CERO", "line_key": str(cero.line_key)}]}, args=(self.quote.folio, r.number), status=400)
+        self.send("api_emitir_revision", {"edit_version": r.edit_version, "state_fingerprint": r.state_fingerprint},
+                  args=(self.quote.folio, r.number), status=403)
+        self.assertEqual(self.confirm_and_issue(created)["status"], "ISSUED")
+
+    def test_estado_confirmacion_se_revalida_y_revocacion_no_queda_cacheada(self):
+        created = self.create()
+        self.assertFalse(self.detail(created)["preview"]["warnings"][0]["confirmed"])
+        detail = self.detail(created)
+        warning = detail["preview"]["warnings"][0]
+        self.send("api_confirmar_comercial", {"edit_version": 1, "state_fingerprint": created["state_fingerprint"],
+            "warnings": [{"code": warning["code"], "line_key": warning["line_key"]}]}, args=(created["folio"], 1))
+        self.assertTrue(self.detail(created)["preview"]["warnings"][0]["confirmed"])
+        self.actor.groups.remove(self.commercial_admin)
+        self.assertFalse(self.detail(created)["preview"]["warnings"][0]["confirmed"])
+        self.send("api_emitir_revision", {"edit_version": 1, "state_fingerprint": created["state_fingerprint"]},
+                  args=(created["folio"], 1), status=403)
+
+    def test_reintento_sin_permiso_interno_no_devuelve_datos(self):
+        body = alta_comercial()
+        self.create(body)
+        self.actor.groups.clear()
+        self.send("api_crear_cotizacion", body, status=403)
+
+    def test_contexto_fx_ajeno_y_metadatos_falsos_se_rechazan(self):
+        fx = self.send("api_contexto_fx", {"request_id": str(uuid4()), "value": "17.5"}, status=201)
+        self.send("api_contexto_fx", {"request_id": str(uuid4()), "value": "17.5", "source": "proveedor"}, status=400)
+        self.client.force_login(self.other)
+        self.send("api_crear_cotizacion", alta_comercial(fx_context_id=fx["fx_context_id"]), status=409)
+
+    def test_detalle_devuelve_evidencia_fx_capturada_para_interfaz(self):
+        fx = self.send("api_contexto_fx", {"request_id": str(uuid4()), "value": "17.12345678"}, status=201)
+        created = self.create(alta_comercial(fx_context_id=fx["fx_context_id"]))
+        detail = self.detail(created)
+        self.assertEqual(detail["tipo_cambio"]["valor"], "17.12345678")
+        self.assertEqual(detail["tipo_cambio"]["origen"], "manual")
+        self.assertEqual(detail["fx_context_id"], fx["fx_context_id"])
+        capabilities = self.client.get(reverse("api_capacidades_comerciales")).json()
+        self.assertEqual(capabilities["actor_id"], self.actor.pk)
+
+    def test_pagina_cotizador_conectada_sin_filas_o_totales_demo(self):
+        response = self.client.get(reverse("cotizador"))
+        self.assertEqual(response.status_code, 200)
+        for text in ("commercialQuoteApp", "quoteConditions", "quoteWarnings", "addManualBtn", "Abrir revisión exacta"):
+            self.assertContains(response, text)
+        for demo in ("SYS-PRO-CAT6", "CT-DELL-P2422H", "$64,335.90", 'value="17.50"', "Openpay / Stripe"):
+            self.assertNotContains(response, demo)
+        self.assertContains(response, "viewSummaryBtn")
+
+    def test_json_ambiguo_no_se_acepta(self):
+        for body in ('{"schema_version":2,"schema_version":2}', '{"schema_version":NaN}'):
+            response = self.client.post(reverse("api_crear_cotizacion"), body, content_type="application/json")
+            self.assertEqual(response.status_code, 400)
+
+    def test_fechas_y_schema_estrictos_y_errores_estructurados(self):
+        for value in ("20261016", "2026-02-30", None):
+            result = self.send("api_crear_cotizacion", alta_comercial(issue_date=value), status=400)
+            self.assertEqual(result["code"], "INVALID_INPUT")
+            self.assertEqual(result["details"], {})
+        self.send("api_crear_cotizacion", alta_comercial(schema_version=True), status=400)
+
+    def test_recibo_no_se_sobrescribe_con_objeto_nuevo_misma_pk(self):
+        self.create()
+        old = QuoteAPIRequest.objects.get()
+        from django.db import IntegrityError, transaction
+        copy = QuoteAPIRequest(pk=old.pk, actor=old.actor, request_id=uuid4(), operation=old.operation,
+                               fingerprint=old.fingerprint, revision=old.revision)
+        with self.assertRaises((IntegrityError, ValidationError)), transaction.atomic():
+            copy.save()
+        self.assertEqual(QuoteAPIRequest.objects.get().request_id, old.request_id)
+
+
+@override_settings(CCONOR_EMPRESA=EMPRESA_QA, COTIZACIONES_EMISION_HABILITADA=True)
+class DocumentalAPITests(CommercialFixtures, TestCase):
+    send = CommercialAPITests.send
+    create = CommercialAPITests.create
+    detail = CommercialAPITests.detail
+    confirm_and_issue = CommercialAPITests.confirm_and_issue
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.actor)
+
+    def summary(self, created):
+        return self.send("api_resumen_documental", method="get", args=(created["folio"], created["revision"]))
+
+    def document_params(self, created):
+        return {"exact": "1", "revision": created["revision"], "edit_version": created["edit_version"],
+                "state_fingerprint": created["state_fingerprint"], "expected_status": created.get("status", "DRAFT")}
+
+    def test_listado_solo_propias_incluso_staff_y_sin_costos(self):
+        first = self.create(alta_comercial(client_name="QA propietario"))
+        other = self.create(alta_comercial(client_name="QA ajena"))
+        quote = Quote.objects.get(folio=other["folio"])
+        quote.advisor = self.other
+        quote.save(update_fields=["advisor"])
+        response = self.client.get(reverse("api_crear_cotizacion"))
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual([r["folio"] for r in result["data"]], [first["folio"]])
+        self.assertIsNone(result["data"][0]["total"])
+        for internal in ("source_unit_price", "provider", "state_fingerprint", "notes", "known_cost_total"):
+            self.assertNotIn(internal, response.content.decode())
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+        self.client.force_login(self.staff)
+        self.assertEqual(self.client.get(reverse("api_crear_cotizacion")).json()["data"], [])
+
+    def test_listado_paginado_y_filtros_rechazan_entradas_ambiguas(self):
+        for i in range(21):
+            self.create(alta_comercial(client_name=f"QA cliente {i}"))
+        url = reverse("api_crear_cotizacion")
+        first = self.client.get(url).json()
+        self.assertEqual(len(first["data"]), 20)
+        self.assertEqual(first["pagination"], {"page": 1, "pages": 2, "count": 21})
+        self.assertEqual(len(self.client.get(url, {"page": 2}).json()["data"]), 1)
+        self.assertEqual(len(self.client.get(url, {"q": "QA cliente 20"}).json()["data"]), 1)
+        self.assertEqual(self.client.get(url, {"status": "ISSUED"}).json()["data"], [])
+        for query in ("page=0", "page=3", "page=1&page=2", "status=enviada", "advisor=1", "page=1.5"):
+            self.assertEqual(self.client.get(url + "?" + query).status_code, 400)
+
+    def test_listado_busca_cabecera_de_ultima_revision_no_cliente_antiguo(self):
+        original = self.issue(self.commercial_draft())
+        from apps.quotes.snapshots import crear_revision_comercial
+        from apps.quotes.tests.test_commercial_persistence import commercial_line
+        draft = crear_revision_comercial(original.pk, [commercial_line()], actor=self.actor, request_id=uuid4(),
+            tax_rate=Decimal(".16"), discount_percent=Decimal("0"), tipo_cambio=None, exchange_context_id=None)
+        self.commercial_edit(draft, client={**draft.header["client"], "business_name": "Cliente nuevo revisado"})
+        result = self.client.get(reverse("api_crear_cotizacion"), {"q": "nuevo revisado"}).json()["data"]
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["revision"], 2)
+        self.assertIsNone(result[0]["total"])
+
+    def test_listado_sesion_y_revocacion(self):
+        url = reverse("api_crear_cotizacion")
+        self.client.logout()
+        self.assertEqual(self.client.get(url).status_code, 401)
+        self.client.force_login(self.actor)
+        self.actor.groups.clear()
+        self.assertEqual(self.client.get(url).status_code, 403)
+
+    def test_resumen_borrador_cliente_allowlist_y_sin_escrituras(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        created = self.create()
+        with CaptureQueriesContext(connection) as queries:
+            result = self.summary(created)
+        self.assertFalse(any(q["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for q in queries))
+        self.assertEqual(result["cliente"]["total"], "116.00")
+        self.assertEqual(result["warnings"][0]["code"], "COSTO_DESCONOCIDO")
+        self.assertEqual(result["revision"], 1)
+        wire = json.dumps(result["cliente"])
+        for key in ("provider", "source_currency", "source_unit_price", "margin_percent", "utilidad", "exchange_rate"):
+            self.assertNotIn(key, wire)
+        self.assertFalse(self.files())
+
+    def test_resumen_emitida_sin_motor_ni_renderer_y_revision_explicita(self):
+        created = self.create()
+        self.confirm_and_issue(created)
+        with mock.patch("apps.quotes.snapshots._commercial_calculate", side_effect=AssertionError("Sin motor")), mock.patch("apps.quotes.pdf.generate_quote_pdf", side_effect=AssertionError("Sin renderer")):
+            summary = self.summary(created)
+        self.assertTrue(summary["cliente"]["archived_only"])
+        self.assertEqual(summary["cliente"]["total"], "116.00")
+        self.send("api_nueva_revision", {"schema_version": 2, "request_id": str(uuid4())}, args=(created["folio"], 1), status=201)
+        self.assertEqual(self.summary(created)["revision"], 1)
+        self.assertEqual(len(self.summary(created)["revisiones"]), 2)
+
+    def test_resumen_ajeno_y_revocacion_no_exponen_documento(self):
+        created = self.create()
+        self.client.force_login(self.other)
+        self.send("api_resumen_documental", method="get", args=(created["folio"], 1), status=403)
+        self.client.force_login(self.actor)
+        self.actor.groups.clear()
+        self.send("api_resumen_documental", method="get", args=(created["folio"], 1), status=403)
+
+    def test_pdf_borrador_exacto_rechaza_version_estado_y_huella_obsoletos(self):
+        created = self.create()
+        url = reverse("descargar_pdf_cotizacion", args=[created["folio"]])
+        params = self.document_params(created)
+        response = self.client.get(url, params)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.content.startswith(b"%PDF-"))
+        self.assertFalse(self.files())
+        for changes in ({"edit_version": 2}, {"state_fingerprint": "b" * 64}, {"expected_status": "ISSUED"}):
+            self.assertEqual(self.client.get(url, {**params, **changes}).status_code, 409)
+        for key in ("revision", "edit_version", "state_fingerprint"):
+            self.assertEqual(self.client.get(url, {k: v for k, v in params.items() if k != key}).status_code, 400)
+
+    def test_pdf_estado_cambia_entre_resumen_y_descarga_no_cambia_documento_silenciosamente(self):
+        created = self.create()
+        self.confirm_and_issue(created)
+        url = reverse("descargar_pdf_cotizacion", args=[created["folio"]])
+        self.assertEqual(self.client.get(url, self.document_params(created)).status_code, 409)
+        issued = {**created, "status": "ISSUED"}
+        response = self.client.get(url, self.document_params(issued))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["X-Quote-Document"], "original")
+
+    def test_correo_exacto_envia_original_no_cambia_destinatario_guardado(self):
+        from django.core import mail
+        from apps.quotes.snapshots import leer_pdf_emitido
+        created = self.create()
+        self.confirm_and_issue(created)
+        r = QuoteRevision.objects.get(quote__folio=created["folio"], number=1)
+        original = leer_pdf_emitido(r)
+        body = {**self.document_params({**created, "status": "ISSUED"}), "exact": True,
+            "email": "otro@qa.example.invalid", "subject": "QA asunto", "message": "QA mensaje", "attach_pdf": True}
+        with mock.patch("apps.quotes.pdf.generate_quote_pdf", side_effect=AssertionError("Sin regenerar")):
+            result = self.client.post(reverse("enviar_cotizacion_correo", args=[created["folio"]]), json.dumps(body), content_type="application/json")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(mail.outbox[0].attachments[0][1], original)
+        self.assertEqual(mail.outbox[0].to, [body["email"]])
+        self.assertNotEqual(r.header["client"]["email"], body["email"])
+
+    def test_correo_sin_revision_sin_adjunto_o_estado_obsoleto_no_envia(self):
+        from django.core import mail
+        created = self.create()
+        self.confirm_and_issue(created)
+        body = {**self.document_params({**created, "status": "ISSUED"}), "exact": True, "email": "qa@example.invalid", "attach_pdf": True}
+        url = reverse("enviar_cotizacion_correo", args=[created["folio"]])
+        for changes, status in (({"revision": None}, 400), ({"attach_pdf": False}, 400), ({"expected_status": "DRAFT"}, 409), ({"state_fingerprint": "c" * 64}, 409)):
+            self.assertEqual(self.client.post(url, json.dumps({**body, **changes}), content_type="application/json").status_code, status)
+        self.assertEqual(len(getattr(mail, "outbox", [])), 0)
+
+    def test_correo_exacto_sin_attach_pdf_adjunta_original(self):
+        from django.core import mail
+        from apps.quotes.snapshots import leer_pdf_emitido
+        created = self.create()
+        self.confirm_and_issue(created)
+        original = leer_pdf_emitido(QuoteRevision.objects.get(quote__folio=created["folio"], number=1))
+        body = {**self.document_params({**created, "status": "ISSUED"}), "exact": True, "email": "qa@example.invalid"}
+        result = self.client.post(reverse("enviar_cotizacion_correo", args=[created["folio"]]), json.dumps(body), content_type="application/json")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].attachments[0][1], original)
+
+    def test_v1_original_interno_intacto_sin_contexto_cliente_ni_correo(self):
+        from apps.quotes.snapshots import leer_pdf_emitido
+        original = self.issue(self.draft())
+        expected = leer_pdf_emitido(original)
+        data = {"folio": self.quote.folio, "revision": 1}
+        summary = self.summary(data)
+        self.assertEqual(summary["schema_version"], 1)
+        self.assertIsNone(summary["cliente"])
+        self.assertFalse(summary["emission_enabled"])
+        url = reverse("descargar_pdf_cotizacion", args=[self.quote.folio])
+        self.assertEqual(self.client.get(url, {"exact": 1, "revision": 1, "edit_version": 1, "expected_status": "ISSUED"}).content, expected)
+        sent = self.client.post(reverse("enviar_cotizacion_correo", args=[self.quote.folio]), json.dumps({"email": "qa@example.invalid", "revision": 1}), content_type="application/json")
+        self.assertEqual(sent.status_code, 409)
+        self.assertIn("histórico interno", sent.json()["error"])  # Motivo explícito, no conflicto genérico.
+
+    def test_preview_transicion_no_crea_revision_ni_reinterpreta_original(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        original = self.issue(self.draft())
+        body = {"schema_version": 2, "source_edit_version": 1, "items": [partida_api_manual()],
+                "tax_rate": "0.16", "discount_percent": "0", "fx_context_id": None}
+        with CaptureQueriesContext(connection) as queries:
+            preview = self.send("api_preview_transicion", body, args=(self.quote.folio, 1))
+        self.assertFalse(any(q["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for q in queries))
+        self.assertFalse(preview["persistida"])
+        self.assertEqual(preview["cliente"]["total"], "116.00")
+        body["source_edit_version"] = 2
+        self.send("api_preview_transicion", body, args=(self.quote.folio, 1), status=409)
+        body["source_edit_version"] = 1
+        created = self.send("api_nueva_revision", {**body, "request_id": str(uuid4())}, args=(self.quote.folio, 1), status=201)
+        self.assertEqual(created["revision"], 2)
+        original.refresh_from_db()
+        self.assertEqual(original.schema_version, 1)
+
+    def test_plantilla_resumen_no_demo_ni_totales_proveedor_o_cuentas_ficticias(self):
+        response = self.client.get(reverse("resumen"))
+        for text in ("commercialSummaryApp", "Mis cotizaciones", "BORRADOR", "revisionSelector"):
+            self.assertContains(response, text)
+        for text in ("COT-2026-0048", "BBVA", "Constructora e Inmobiliaria", "Marca / Dist.", "apiClient.quotes.getAll"):
+            self.assertNotContains(response, text)
+
+    def test_identidad_documental_ambigua_y_campos_extra_de_correo_rechazados(self):
+        created = self.create()
+        url = reverse("descargar_pdf_cotizacion", args=[created["folio"]])
+        self.assertEqual(self.client.get(url + "?exact=1&revision=1&revision=2&edit_version=1&expected_status=DRAFT").status_code, 400)
+        email_url = reverse("enviar_cotizacion_correo", args=[created["folio"]])
+        for body in ('{"email":"qa@example.invalid","revision":1,"revision":2}', '{"email":"qa@example.invalid","revision":1,"cost":"1"}'):
+            self.assertEqual(self.client.post(email_url, body, content_type="application/json").status_code, 400)
+
+    def test_fallo_correo_no_reintenta_ni_promete_entrega(self):
+        created = self.create()
+        self.confirm_and_issue(created)
+        url = reverse("enviar_cotizacion_correo", args=[created["folio"]])
+        for outcome in (RuntimeError("QA corte"), 0):
+            with self.subTest(outcome=type(outcome).__name__), mock.patch("apps.quotes.views.EmailMultiAlternatives.send", **({"side_effect": outcome} if isinstance(outcome, Exception) else {"return_value": outcome})) as send, self.assertLogs("apps.quotes.views", level="ERROR"):
+                response = self.client.post(url, json.dumps({"email": "qa@example.invalid", "revision": 1}), content_type="application/json")
+                self.assertEqual(response.status_code, 500)
+                self.assertEqual(send.call_count, 1)
+
+
+@override_settings(CCONOR_EMPRESA=EMPRESA_QA)
+class CommercialAPIConcurrencyTests(CommercialFixtures, TransactionTestCase):
+    def test_alta_simultanea_y_fx_no_duplican_recibos(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from django.db import close_old_connections
+        from django.contrib.auth import get_user_model
+        data = alta_comercial()
+        barrier = threading.Barrier(2)
+        def create():
+            close_old_connections()
+            try:
+                actor = get_user_model().objects.get(pk=self.actor.pk)
+                barrier.wait(timeout=10)
+                return api._commercial_create(actor, data)
+            finally:
+                close_old_connections()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(create) for _ in range(2)]
+            results = [f.result(timeout=30) for f in futures]
+        self.assertEqual(results[0]["folio"], results[1]["folio"])
+        self.assertCountEqual([r["replayed"] for r in results], [True, False])
+        self.assertEqual(QuoteAPIRequest.objects.count(), 1)
+
+    def test_intenciones_distintas_misma_clave_solo_una_se_confirma(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from django.db import close_old_connections
+        from apps.quotes.snapshots import RevisionConflict
+        barrier = threading.Barrier(2)
+        body = alta_comercial()
+        def create(name):
+            close_old_connections()
+            try:
+                barrier.wait(timeout=10)
+                try:
+                    return api._commercial_create(self.actor, {**body, "client_name": name})["revision"]
+                except RevisionConflict:
+                    return "CONFLICT"
+            finally:
+                close_old_connections()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(create, n) for n in ("Cliente A QA", "Cliente B QA")]
+            self.assertCountEqual([f.result(timeout=30) for f in futures], [1, "CONFLICT"])
+        self.assertEqual(QuoteAPIRequest.objects.count(), 1)
+
+
+class CommercialAPIMigrationTests(TransactionTestCase):
+    def test_migracion_aditiva_desde_p3_sin_convertir_revisiones(self):
+        from django.db import connection
+        from django.db.migrations.executor import MigrationExecutor
+        from django.contrib.auth import get_user_model
+        from django.utils import timezone
+        executor = MigrationExecutor(connection)
+        latest = executor.loader.graph.leaf_nodes()
+        old = [("quotes", "0003_commercial_revision_v2")]
+        try:
+            executor.migrate(old)
+            historical = executor.loader.project_state(old).apps
+            actor = get_user_model().objects.create_user(username="p4_migration_qa")
+            quote = historical.get_model("quotes", "Quote").objects.create(advisor_id=actor.pk, folio="P4-LEGACY", client_name="QA")
+            revision = historical.get_model("quotes", "QuoteRevision").objects.create(quote_id=quote.pk, number=1,
+                request_id=uuid4(), request_fingerprint="a" * 64, header={}, tax_rate=Decimal(".16"),
+                issue_date=timezone.localdate(), valid_days=15)
+            MigrationExecutor(connection).migrate(latest)
+            self.assertEqual(QuoteRevision.objects.get(pk=revision.pk).schema_version, 1)
+            self.assertFalse(QuoteSelectionContext.objects.exists())
+            self.assertFalse(QuoteAPIRequest.objects.exists())
+            context = QuoteSelectionContext.objects.create(actor=actor, kind="FX", payload={
+                "value": "17.5", "source": "manual", "date": timezone.now().isoformat()})
+            QuoteAPIRequest.objects.create(actor=actor, request_id=uuid4(), operation="FX", fingerprint="b"*64, context=context)
+            MigrationExecutor(connection).migrate(old)
+            self.assertTrue(historical.get_model("quotes", "QuoteRevision").objects.filter(pk=revision.pk).exists())
+        finally:
+            MigrationExecutor(connection).migrate(latest)

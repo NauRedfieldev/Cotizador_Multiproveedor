@@ -9,7 +9,7 @@ import json
 import logging
 from copy import deepcopy
 from dataclasses import asdict, dataclass
-from datetime import date, timedelta
+from datetime import date, timedelta, timezone as dt_timezone
 from decimal import Decimal, localcontext
 from uuid import UUID, uuid4
 
@@ -22,8 +22,9 @@ from django.utils import timezone
 
 from apps.providers.contracts import ProviderOffer
 
+from .commercial import MARGEN_INICIAL, TASA_IVA_INICIAL
 from .comparison import OfertaComparada, TipoCambio
-from .models import Quote, QuoteRevision, QuoteSnapshot
+from .models import Quote, QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
 from .snapshot_values import MAX_ITEMS, MONEY_CONTEXT, amount, decimal_limit
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,30 @@ class PartidaCapturada:
         datos = asdict(cls.desde_oferta(comparada.oferta, cantidad, nombre_proveedor=nombre_proveedor))
         datos["es_mejor_precio"] = comparada.es_mejor_precio
         return cls(**datos)
+
+
+@dataclass(frozen=True, slots=True)
+class PartidaComercialCapturada(PartidaCapturada):
+    """Contrato v2 interno: cantidad Decimal entera, identidad estable explícita.
+
+    Una entrada API procede de captura confiable del consumidor; esta dataclass no
+    verifica una petición al proveedor ni firma precios enviados por el navegador.
+    None en precio/moneda de costo solo representa un concepto MANUAL desconocido.
+    """
+
+    source_unit_price: Decimal | None
+    source_currency: str | None
+    line_key: UUID | None = None
+    source_kind: str = "MANUAL"
+    source_unit_label: str = ""
+    sale_unit_label: str = ""
+    conversion_factor: Decimal = Decimal("1")
+    cost_tax_rate_included: Decimal | None = None
+    pricing_mode: str = "MARGIN"
+    margin_percent: Decimal | None = None
+    manual_unit_price: Decimal | None = None
+    manual_currency: str | None = None
+    manual_tax_rate_included: Decimal | None = None
 
 
 def authorize(quote, actor):
@@ -216,6 +241,8 @@ def guardar_borrador(revision_id, partidas, *, actor, expected_version, company,
     """Reemplazo completo con control optimista; M7 debe enviar edit_version leído."""
     with transaction.atomic():
         quote, revision = _locked(revision_id, actor)
+        if revision.schema_version != 1:
+            raise RevisionConflict("Usa guardar_borrador_comercial para una revisión v2.")
         if revision.status != QuoteRevision.Status.DRAFT or type(expected_version) is not int or expected_version != revision.edit_version:
             raise RevisionConflict("El borrador cambió o ya fue emitido.")
         parts = _parts(partidas, tipo_cambio)
@@ -242,6 +269,8 @@ def crear_revision(revision_id, *, actor, request_id=None):
     """Clona una emisión como borrador; repetir request_id no crea otra versión."""
     with transaction.atomic():
         quote, previous = _locked(revision_id, actor)
+        if previous.schema_version != 1:
+            raise RevisionConflict("Usa crear_revision_comercial con entradas explícitas para v2.")
         if previous.status != QuoteRevision.Status.ISSUED:
             raise RevisionConflict("Solo una emisión puede originar una nueva revisión.")
         if request_id is not None:
@@ -262,7 +291,13 @@ def crear_revision(revision_id, *, actor, request_id=None):
 
 
 def contexto_revision(revision):
-    """Contexto del renderer, sin datos de Product/Provider vigentes."""
+    """Adaptador interno sin autorización; usar servicios públicos para leer.
+
+    V1 conserva contrato histórico. V2 usa exclusivamente el contexto cliente.
+    El consumidor debe bloquear/materializar una revisión al leer un borrador.
+    """
+    if revision.schema_version == 2:
+        return _commercial_client_context(revision, None if revision.status == QuoteRevision.Status.ISSUED else _current_commercial_state(revision))
     if revision.schema_version != 1:
         raise ValidationError("Versión de snapshot no soportada.")
     header = deepcopy(revision.header)
@@ -303,7 +338,7 @@ def leer_pdf_emitido(revision):
     return data
 
 
-def emitir_revision(revision_id, *, actor, expected_version):
+def emitir_revision(revision_id, *, actor, expected_version, state_fingerprint=None):
     """Transacción propia: no envolver en otra atomic real ni enviar correo dentro.
 
     El archivo y PostgreSQL no son una única transacción. Un fallo recuperable
@@ -320,13 +355,25 @@ def emitir_revision(revision_id, *, actor, expected_version):
             quote, revision = _locked(revision_id, actor)
             if type(expected_version) is not int or expected_version != revision.edit_version:
                 raise RevisionConflict("El borrador cambió; recarga antes de emitir.")
+            if revision.schema_version == 2:
+                _commercial_actor(quote, actor)
+                if state_fingerprint is not None and state_fingerprint != revision.state_fingerprint:
+                    raise RevisionConflict("La huella comercial cambió; recarga antes de emitir.")
             if revision.status == QuoteRevision.Status.ISSUED:
                 leer_pdf_emitido(revision)
                 return revision
+            if revision.schema_version not in (1, 2):
+                raise ValidationError("Versión de snapshot no soportada.")
             snapshots = list(revision.snapshots.all())
             if not snapshots:
                 raise ValidationError("No se emite una revisión vacía.")
-            context = contexto_revision(revision)
+            result = None
+            if revision.schema_version == 2:
+                result = _current_commercial_state(revision)
+                _validate_commercial_confirmations(quote, revision, result, actor=actor, lock_users=True)
+                context = _commercial_client_context(revision, result)
+            else:
+                context = contexto_revision(revision)
             context["document_label"] = "COTIZACIÓN EMITIDA"
             from .pdf import generate_quote_pdf
 
@@ -340,8 +387,17 @@ def emitir_revision(revision_id, *, actor, expected_version):
                 if hashlib.sha256(stored.read()).hexdigest() != revision.pdf_sha256:
                     raise ArchivedPDFError("La escritura del PDF no conservó los bytes generados.")
             revision.subtotal, revision.tax, revision.total = context["subtotal"], context["iva"], context["total"]
-            for snapshot, item in zip(snapshots, context["items"], strict=True):
-                snapshot.amount = item["amount"]
+            if result is not None:
+                revision.sale_subtotal, revision.discount_amount = result.subtotal_venta, result.descuento
+                revision.known_cost_total = result.costo_conocido
+                revision.costs_complete = all(p.importe_costo is not None for p in result.partidas)
+                revision.gross_profit = result.utilidad_bruta
+            for position, (snapshot, item) in enumerate(zip(snapshots, context["items"], strict=True)):
+                if result is None:
+                    snapshot.amount = item["amount"]
+                else:
+                    snapshot.sale_amount = result.partidas[position].importe_venta
+                    snapshot.cost_amount = result.partidas[position].importe_costo
                 snapshot.save(_seal=True)
             revision.status = QuoteRevision.Status.ISSUED
             revision.issued_at = timezone.now()
@@ -363,9 +419,13 @@ def emitir_revision(revision_id, *, actor, expected_version):
         raise
 
 
-def obtener_documento(folio, *, actor, number=None, allow_draft=True):
+def obtener_documento(folio, *, actor, number=None, allow_draft=True, expected_version=None,
+                      state_fingerprint=None, expected_status=None, customer_only=False):
     """Número explícito o última emitida; si no hay emisiones, último borrador."""
     from .pdf import generate_quote_pdf, get_quote_context, safe_filename
+
+    if expected_version is not None and number is None:
+        raise ValidationError("La lectura exacta requiere número de revisión.")
 
     # El contexto debe corresponder a UNA versión: impedir lectura de cabecera
     # anterior con partidas nuevas mientras otro hilo guarda/emite el borrador.
@@ -380,6 +440,22 @@ def obtener_documento(folio, *, actor, number=None, allow_draft=True):
         else:
             revision = revisions.filter(status=QuoteRevision.Status.ISSUED).order_by("-number").first()
             revision = revision or revisions.order_by("-number").first()
+        if expected_version is not None or customer_only:
+            _commercial_actor(quote, actor)
+            if revision is None:
+                raise RevisionConflict("El documento requiere una revisión capturada explícita.")
+        if expected_version is not None and (type(expected_version) is not int or revision.edit_version != expected_version):
+            raise RevisionConflict("La versión del documento cambió; recarga el resumen.")
+        if expected_version is not None and revision.schema_version == 2 and state_fingerprint is None:
+            raise ValidationError("La lectura comercial exacta requiere huella guardada.")
+        if expected_status is not None and (revision is None or revision.status != expected_status):
+            raise RevisionConflict("El estado del documento cambió; recarga el resumen.")
+        if state_fingerprint is not None and (revision is None or revision.state_fingerprint != state_fingerprint):
+            raise RevisionConflict("La huella del documento cambió; recarga el resumen.")
+        if customer_only and revision.schema_version != 2:
+            raise RevisionConflict("El original v1 es solo histórico interno; prepara una revisión comercial v2 para el cliente.")
+        if revision is not None and revision.schema_version == 2:
+            _commercial_actor(quote, actor)
         context = get_quote_context(folio) if revision is None else contexto_revision(revision)
     if revision is None:
         return context, generate_quote_pdf(context), safe_filename(folio)
@@ -409,3 +485,510 @@ async def aemitir_revision(*args, **kwargs):
 
 async def aobtener_documento(*args, **kwargs):
     return await sync_to_async(obtener_documento, thread_sensitive=True)(*args, **kwargs)
+
+
+# V2: persistencia, preview y emisión comercial. API/UI se conectan en P4/P5;
+# los servicios v1 anteriores mantienen su contrato y no reinterpretan histórico.
+
+def _commercial_data(partidas):
+    salida, keys = [], set()
+    for entrada in partidas:
+        if len(salida) >= MAX_ITEMS:
+            raise ValidationError(f"Máximo {MAX_ITEMS} partidas por revisión.")
+        if not isinstance(entrada, PartidaComercialCapturada) or not isinstance(entrada.line_key, UUID):
+            raise TypeError("Se requiere PartidaComercialCapturada con line_key UUID estable.")
+        if entrada.line_key in keys:
+            raise ValidationError("Identidad de partida duplicada.")
+        keys.add(entrada.line_key)
+        datos = asdict(entrada)
+        for field in ("name", "code", "description", "provider_code", "provider_name", "external_id", "brand", "model", "mpn"):
+            _text(datos[field], required=field == "name", limit=80 if field == "provider_code" else 255 if field == "provider_name" else 6000)
+        for field in ("source_unit_label", "sale_unit_label"):
+            _text(datos[field], required=True, limit=80)
+        model = QuoteSnapshot(**datos)
+        model.clean_fields(exclude=["revision", "position"])
+        model.commercial_input()
+        # Valores canónicos de campos, no str de Decimal sin normalizar.
+        salida.append({field: getattr(model, field) for field in datos})
+    if not salida:
+        raise ValidationError("Una revisión comercial requiere al menos una partida.")
+    return salida
+
+
+def _commercial_calculate(parts, tipo, tax, discount):
+    from .commercial import DescuentoGlobal, calcular_cotizacion
+
+    return calcular_cotizacion((QuoteSnapshot(**p).commercial_input() for p in parts),
+        tipo_cambio=tipo, tasa_iva=tax, descuento=DescuentoGlobal(discount))
+
+
+def _commercial_fingerprint(header, parts, tipo, tax, discount, issue_date, days, based_on, context_id):
+    payload = {"schema": 2, "calculation": 1, "header": header, "parts": parts,
+        "fx": None if tipo is None else {"value": str(decimal_limit(tipo.valor, 18, 8)),
+            "source": tipo.origen, "date": tipo.fecha.astimezone(dt_timezone.utc).isoformat(), "context": str(context_id)},
+        "tax": str(tax), "discount": str(discount), "date": issue_date.isoformat(),
+        "days": days, "based_on": based_on}
+    return hashlib.sha256(json.dumps(payload, default=str, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _commercial_stored(revision):
+    fields = PartidaComercialCapturada.__dataclass_fields__
+    return [{f: getattr(s, f) for f in fields} for s in revision.snapshots.all()]
+
+
+def _commercial_actor(quote, actor):
+    from .permissions import require_commercial_permission
+
+    current = require_commercial_permission(actor)
+    authorize(quote, current)
+    return current
+
+
+def _commercial_adjustments(actor, parts, old_parts, *, tipo, context_id, tax, discount, previous=None):
+    from .permissions import DISCOUNT, FX, MANUAL_SALE, MARGIN, TAX, require_commercial_permission
+
+    previous_parts = {p["line_key"]: p for p in old_parts}
+    original_fields = ("source_kind", "source_unit_price", "source_currency", "cost_tax_rate_included",
+        "provider_code", "provider_name", "external_id", "name", "brand", "model", "mpn", "stock", "source_unit_label")
+    for p in parts:
+        old = previous_parts.get(p["line_key"])
+        if old and old["source_kind"] == "API" and any(p[f] != old[f] for f in original_fields):
+            raise RevisionConflict("Editar no recaptura originales API; usar una selección nueva explícita.")
+        if p["source_kind"] == "MANUAL" or p["pricing_mode"] == "MANUAL":
+            manual_fields = ("source_kind", "pricing_mode", "source_unit_price", "source_currency",
+                "cost_tax_rate_included", "manual_unit_price", "manual_currency", "manual_tax_rate_included")
+            if old is None or any(p[f] != old[f] for f in manual_fields):
+                require_commercial_permission(actor, MANUAL_SALE)
+        if p["margin_percent"] is not None and p["margin_percent"] != (
+                old["margin_percent"] if old and old["margin_percent"] is not None else MARGEN_INICIAL):
+            require_commercial_permission(actor, MARGIN)
+        for field in ("cost_tax_rate_included", "manual_tax_rate_included"):
+            expected = old[field] if old else None
+            if p[field] != expected and p[field] is not None and (old is not None or p[field] != TASA_IVA_INICIAL):
+                require_commercial_permission(actor, TAX)
+    if tax != (previous.tax_rate if previous else TASA_IVA_INICIAL):
+        require_commercial_permission(actor, TAX)
+    if discount != (previous.discount_percent if previous else Decimal("0")):
+        require_commercial_permission(actor, DISCOUNT)
+    if tipo is not None and (not isinstance(context_id, UUID)):
+        raise ValidationError("FX comercial requiere exchange_context_id UUID del servidor.")
+    if tipo is None and context_id is not None:
+        raise ValidationError("No hay identidad de contexto sin FX.")
+    old_tipo = _tipo(previous) if previous else None
+    if (tipo, context_id) != (old_tipo, previous.exchange_context_id if previous else None):
+        require_commercial_permission(actor, FX)
+        if previous and context_id is not None and context_id == previous.exchange_context_id:
+            raise ValidationError("Un cambio de FX requiere una identidad de contexto nueva.")
+
+
+def _commercial_write_parts(revision, parts, actor, old_snapshots=()):
+    old = {s.line_key: s for s in old_snapshots}
+    for position, datos in enumerate(parts, 1):
+        prior = old.get(datos["line_key"])
+        same_units = prior is not None and all(getattr(prior, f) == datos[f] for f in (
+            "source_unit_label", "sale_unit_label", "conversion_factor"))
+        QuoteSnapshot.objects.create(revision=revision, position=position, **datos,
+            captured_at=prior.captured_at if prior else timezone.now(),
+            unit_validated_by_id=prior.unit_validated_by_id if same_units else actor.pk,
+            unit_validated_at=prior.unit_validated_at if same_units else timezone.now())
+
+
+def _create_commercial(quote, parts, *, actor, company, conditions, tipo_cambio, exchange_context_id,
+        client, tax_rate, discount_percent, issue_date, valid_days, request_id, based_on=None, commercial_source=None):
+    actor = _commercial_actor(quote, actor)
+    if not isinstance(request_id, UUID):
+        raise TypeError("request_id debe ser UUID estable entre reintentos.")
+    header = _header(quote, company, conditions, client)
+    tax = decimal_limit(tax_rate, 5, 4, maximum=Decimal("1"))
+    discount = decimal_limit(discount_percent, 5, 2, maximum=Decimal("100"))
+    if type(issue_date) is not date or type(valid_days) is not int or not 1 <= valid_days <= 3650:
+        raise ValidationError("Fecha/vigencia comercial inválidas.")
+    _valid_until(issue_date, valid_days)
+    _commercial_calculate(parts, tipo_cambio, tax, discount)
+    fingerprint = _commercial_fingerprint(header, parts, tipo_cambio, tax, discount,
+        issue_date, valid_days, based_on, exchange_context_id)
+    previous = quote.revisions.filter(request_id=request_id).first()
+    if previous:
+        if previous.schema_version != 2 or previous.request_fingerprint != fingerprint:
+            raise RevisionConflict("request_id ya pertenece a otra intención.")
+        return previous
+    _commercial_adjustments(actor, parts, _commercial_stored(commercial_source) if commercial_source else [],
+        tipo=tipo_cambio, context_id=exchange_context_id, tax=tax, discount=discount, previous=commercial_source)
+    revision = QuoteRevision.objects.create(quote=quote,
+        number=(quote.revisions.aggregate(number=Max("number"))["number"] or 0) + 1,
+        based_on_id=based_on, request_id=request_id, request_fingerprint=fingerprint,
+        schema_version=2, calculation_version=1, state_fingerprint=fingerprint,
+        discount_percent=discount, header=header, tax_rate=tax, issue_date=issue_date, valid_days=valid_days,
+        exchange_rate=decimal_limit(tipo_cambio.valor, 18, 8) if tipo_cambio else None,
+        exchange_rate_source=tipo_cambio.origen if tipo_cambio else "",
+        exchange_rate_date=tipo_cambio.fecha if tipo_cambio else None, exchange_context_id=exchange_context_id)
+    _commercial_write_parts(revision, parts, actor)
+    return revision
+
+
+def crear_borrador_comercial(quote_id, partidas, *, actor, company, conditions,
+        tipo_cambio=None, exchange_context_id=None, client=None, tax_rate=TASA_IVA_INICIAL,
+        discount_percent=Decimal("0"), issue_date=None, valid_days=None, request_id=None):
+    """Crea v2 explícita. No cambia defaults/contrato de crear_borrador v1."""
+    with transaction.atomic():
+        quote = Quote.objects.select_for_update(of=("self",)).select_related("advisor").get(pk=quote_id)
+        return _create_commercial(quote, _commercial_data(partidas), actor=actor, company=company,
+            conditions=conditions, tipo_cambio=tipo_cambio, exchange_context_id=exchange_context_id,
+            client=client if client is not None else {"business_name": quote.client_name, "rfc": quote.client_rfc, "email": quote.client_email},
+            tax_rate=tax_rate, discount_percent=discount_percent,
+            issue_date=quote.issue_date if issue_date is None else issue_date,
+            valid_days=quote.valid_days if valid_days is None else valid_days,
+            request_id=request_id if request_id is not None else uuid4())
+
+
+def _commercial_edit_inputs(quote, revision, partidas, *, actor, expected_version, company, conditions,
+        client, tipo_cambio, exchange_context_id, tax_rate, discount_percent, issue_date, valid_days):
+    if revision.schema_version != 2 or revision.status != QuoteRevision.Status.DRAFT or type(expected_version) is not int or expected_version != revision.edit_version:
+        raise RevisionConflict("El borrador comercial cambió o no es editable.")
+    if type(issue_date) is not date or type(valid_days) is not int or not 1 <= valid_days <= 3650:
+        raise ValidationError("Fecha/vigencia comercial inválidas.")
+    _valid_until(issue_date, valid_days)
+    header = _header(quote, company, conditions, client)
+    parts = _commercial_data(partidas)
+    tax = decimal_limit(tax_rate, 5, 4, maximum=Decimal("1"))
+    discount = decimal_limit(discount_percent, 5, 2, maximum=Decimal("100"))
+    result = _commercial_calculate(parts, tipo_cambio, tax, discount)
+    _commercial_adjustments(actor, parts, _commercial_stored(revision), tipo=tipo_cambio,
+        context_id=exchange_context_id, tax=tax, discount=discount, previous=revision)
+    return header, parts, tax, discount, result
+
+
+def guardar_borrador_comercial(revision_id, partidas, *, actor, expected_version, company, conditions,
+        client, tipo_cambio, exchange_context_id, tax_rate, discount_percent, issue_date, valid_days):
+    with transaction.atomic():
+        quote, revision = _locked(revision_id, actor)
+        actor = _commercial_actor(quote, actor)
+        header, parts, tax, discount, _ = _commercial_edit_inputs(quote, revision, partidas,
+            actor=actor, expected_version=expected_version, company=company, conditions=conditions,
+            client=client, tipo_cambio=tipo_cambio, exchange_context_id=exchange_context_id,
+            tax_rate=tax_rate, discount_percent=discount_percent, issue_date=issue_date, valid_days=valid_days)
+        old_snapshots = list(revision.snapshots.all())
+        for snapshot in old_snapshots:
+            snapshot.delete()
+        revision.header, revision.tax_rate, revision.discount_percent = header, tax, discount
+        revision.issue_date, revision.valid_days = issue_date, valid_days
+        revision.exchange_context_id = exchange_context_id
+        revision.exchange_rate = decimal_limit(tipo_cambio.valor, 18, 8) if tipo_cambio else None
+        revision.exchange_rate_source = tipo_cambio.origen if tipo_cambio else ""
+        revision.exchange_rate_date = tipo_cambio.fecha if tipo_cambio else None
+        revision.state_fingerprint = _commercial_fingerprint(header, parts, tipo_cambio, tax, discount,
+            issue_date, valid_days, revision.based_on_id, exchange_context_id)
+        revision.edit_version += 1
+        revision.save()
+        _commercial_write_parts(revision, parts, actor, old_snapshots)
+        return revision
+
+
+def crear_revision_comercial(revision_id, partidas, *, actor, request_id, tax_rate,
+        discount_percent, tipo_cambio, exchange_context_id):
+    """Transición/clonado explícito con partidas revisadas; acepta origen DRAFT v1.
+
+    No convierte una cantidad decimal ni asigna margen a datos del origen. El
+    consumidor aporta las líneas comerciales completas que el usuario validó.
+    """
+    with transaction.atomic():
+        quote, source = _locked(revision_id, actor)
+        _commercial_actor(quote, actor)
+        if source.schema_version == 2 and source.status != QuoteRevision.Status.ISSUED:
+            raise RevisionConflict("Solo una emisión v2 origina otra revisión comercial; el borrador se edita.")
+        return _create_commercial(quote, _commercial_data(partidas), actor=actor,
+            company=source.header["company"], conditions=source.header["conditions"],
+            client=source.header["client"], tipo_cambio=tipo_cambio, exchange_context_id=exchange_context_id,
+            tax_rate=tax_rate, discount_percent=discount_percent, issue_date=timezone.localdate(),
+            valid_days=source.valid_days, request_id=request_id, based_on=source.pk,
+            commercial_source=source if source.schema_version == 2 else None)
+
+
+def _current_commercial_state(revision):
+    if revision.schema_version != 2 or revision.calculation_version != 1:
+        raise ValidationError("Versión comercial no soportada.")
+    parts = _commercial_stored(revision)
+    fingerprint = _commercial_fingerprint(revision.header, parts, _tipo(revision), revision.tax_rate,
+        revision.discount_percent, revision.issue_date, revision.valid_days, revision.based_on_id, revision.exchange_context_id)
+    if fingerprint != revision.state_fingerprint:
+        raise RevisionConflict("El estado comercial no coincide con su huella; revisar integridad.")
+    return _commercial_calculate(parts, _tipo(revision), revision.tax_rate, revision.discount_percent)
+
+
+def _commercial_client_context(revision, result=None, *, snapshots=None):
+    """Allowlist cliente, nunca asdict(resultado), header completo ni raw."""
+    from .pdf import commercial_unit_money
+
+    snapshots = list(revision.snapshots.all()) if snapshots is None else snapshots
+    if revision.status == QuoteRevision.Status.ISSUED:
+        # Archivo ya emitido: no ejecutar el motor ni una política vigente nueva.
+        # Solo coherencia aritmética de sellos; los bytes mandan para el unitario.
+        with localcontext(MONEY_CONTEXT):
+            if (not snapshots or any(s.sale_amount is None for s in snapshots)
+                    or revision.sale_subtotal != sum((s.sale_amount for s in snapshots), Decimal("0"))
+                    or revision.subtotal != revision.sale_subtotal - revision.discount_amount
+                    or revision.total != revision.subtotal + revision.tax):
+                raise RevisionConflict("Importes sellados incoherentes; revisar integridad sin regenerar PDF.")
+    items = []
+    lines = [None] * len(snapshots) if revision.status == QuoteRevision.Status.ISSUED else result.partidas
+    for snapshot, line in zip(snapshots, lines, strict=True):
+        if line is None:
+            items.append({"code": snapshot.code or "—", "name": snapshot.name,
+                "description": snapshot.description, "brand": snapshot.brand, "model": snapshot.model,
+                "qty": int(snapshot.quantity), "unit_label": snapshot.sale_unit_label, "amount": snapshot.sale_amount})
+            continue
+        label, approximate = commercial_unit_money(line.venta_unitaria_mxn, snapshot.quantity, line.importe_venta)
+        items.append({"code": snapshot.code or "—", "name": snapshot.name,
+            "description": snapshot.description, "brand": snapshot.brand, "model": snapshot.model,
+            "qty": int(snapshot.quantity), "unit_label": snapshot.sale_unit_label,
+            "unit_price": line.venta_unitaria_mxn, "unit_price_label": label,
+            "unit_price_approximate": approximate,
+            "amount": snapshot.sale_amount if revision.status == QuoteRevision.Status.ISSUED else line.importe_venta})
+    header = revision.header
+    with localcontext(MONEY_CONTEXT):
+        # normalize() quita ceros de escala (16.0000 → 16); :f evita notación 1E+2.
+        tax_label = f"{(revision.tax_rate * 100).normalize():f}%"
+        discount_label = f"{revision.discount_percent.normalize():f}%"
+    return {
+        "commercial_client": True, "archived_only": revision.status == QuoteRevision.Status.ISSUED,
+        "folio": header["folio"], "revision": revision.number,
+        "company": {k: header["company"][k] for k in ("name", "rfc", "tagline", "phone", "email", "advisor")},
+        "client": {k: header["client"][k] for k in ("business_name", "rfc", "contact", "email", "phone", "project")},
+        "conditions": list(header["conditions"]), "items": items,
+        "issue_date": revision.issue_date.strftime("%d/%m/%Y"),
+        "valid_until": _valid_until(revision.issue_date, revision.valid_days).strftime("%d/%m/%Y"),
+        "validity_label": f"{revision.valid_days} días", "iva_rate_label": tax_label,
+        "discount_percent_label": discount_label,
+        "sale_subtotal": revision.sale_subtotal if revision.status == QuoteRevision.Status.ISSUED else result.subtotal_venta,
+        "discount_amount": revision.discount_amount if revision.status == QuoteRevision.Status.ISSUED else result.descuento,
+        "subtotal": revision.subtotal if revision.status == QuoteRevision.Status.ISSUED else result.subtotal_neto,
+        "iva": revision.tax if revision.status == QuoteRevision.Status.ISSUED else result.iva,
+        "total": revision.total if revision.status == QuoteRevision.Status.ISSUED else result.total,
+        "document_label": "COTIZACIÓN EMITIDA" if revision.status == QuoteRevision.Status.ISSUED else "BORRADOR — SIN EMITIR",
+    }
+
+
+def previsualizar_revision_comercial(revision_id, *, actor, expected_version):
+    """Lectura materializada de UNA versión; resultado interno separado de cliente.
+
+    No exige confirmaciones para un borrador ni guarda resultados/archivos. Nunca
+    enviar el contenedor completo al cliente: resultado contiene datos financieros.
+    """
+    with transaction.atomic():
+        quote, revision = _locked(revision_id, actor)
+        _commercial_actor(quote, actor)
+        if revision.status != QuoteRevision.Status.DRAFT or type(expected_version) is not int or expected_version != revision.edit_version:
+            raise RevisionConflict("Recarga la revisión comercial antes de previsualizar.")
+        result = _current_commercial_state(revision)
+        return {"persistida": True, "edit_version": revision.edit_version, "state_fingerprint": revision.state_fingerprint,
+            "resultado": result, "cliente": _commercial_client_context(revision, result)}
+
+
+def _preview_commercial_capture(quote, parts, result, *, actor, header, tipo_cambio,
+        exchange_context_id, tax, discount, issue_date, valid_days, based_on=None, number=None):
+    revision = QuoteRevision(quote=quote, schema_version=2, calculation_version=1, header=header,
+        number=number, tax_rate=tax, discount_percent=discount, issue_date=issue_date, valid_days=valid_days,
+        exchange_rate=decimal_limit(tipo_cambio.valor, 18, 8) if tipo_cambio else None,
+        exchange_rate_source=tipo_cambio.origen if tipo_cambio else "",
+        exchange_rate_date=tipo_cambio.fecha if tipo_cambio else None, exchange_context_id=exchange_context_id)
+    revision.state_fingerprint = _commercial_fingerprint(header, parts, tipo_cambio, tax, discount,
+        issue_date, valid_days, based_on, exchange_context_id)
+    revision.clean()
+    snapshots = []
+    for position, data in enumerate(parts, 1):
+        snapshot = QuoteSnapshot(revision=revision, position=position, **data,
+            unit_validated_by=actor, unit_validated_at=timezone.now())
+        snapshot.full_clean(exclude=["revision"], validate_unique=False)
+        snapshots.append(snapshot)
+    return {"persistida": False, "edit_version": None, "state_fingerprint": revision.state_fingerprint,
+        "resultado": result, "cliente": _commercial_client_context(revision, result, snapshots=snapshots)}
+
+
+def previsualizar_edicion_comercial(revision_id, partidas, *, actor, expected_version,
+        company, conditions, client, tipo_cambio, exchange_context_id, tax_rate,
+        discount_percent, issue_date, valid_days):
+    """Simula una edición sin guardarla ni aceptar avisos. Conserva ajustes previos.
+
+    La huella resultante es PROPUESTA; solo la versión guardada permite confirmar.
+    """
+    with transaction.atomic():
+        quote, revision = _locked(revision_id, actor)
+        actor = _commercial_actor(quote, actor)
+        header, parts, tax, discount, result = _commercial_edit_inputs(quote, revision, partidas,
+            actor=actor, expected_version=expected_version, company=company, conditions=conditions,
+            client=client, tipo_cambio=tipo_cambio, exchange_context_id=exchange_context_id,
+            tax_rate=tax_rate, discount_percent=discount_percent, issue_date=issue_date, valid_days=valid_days)
+        output = _preview_commercial_capture(quote, parts, result, actor=actor, header=header,
+            tipo_cambio=tipo_cambio, exchange_context_id=exchange_context_id, tax=tax, discount=discount,
+            issue_date=issue_date, valid_days=valid_days, based_on=revision.based_on_id, number=revision.number)
+        output.update(edit_version=revision.edit_version, base_state_fingerprint=revision.state_fingerprint)
+        return output
+
+
+def previsualizar_comercial(quote_id, partidas, *, actor, company, conditions, client=None,
+        tipo_cambio=None, exchange_context_id=None, tax_rate=TASA_IVA_INICIAL,
+        discount_percent=Decimal("0"), issue_date=None, valid_days=None):
+    """Simula una NUEVA captura, tipada/confiable, sin crear revisión ni aceptar avisos.
+
+    No es edición de un borrador previo ni permite conservar ajustes privilegiados
+    por mandarlos desde el navegador: aplica capacidades de creación a las entradas.
+    """
+    with transaction.atomic():
+        quote = Quote.objects.select_for_update(of=("self",)).select_related("advisor").get(pk=quote_id)
+        actor = _commercial_actor(quote, actor)
+        parts = _commercial_data(partidas)
+        header = _header(quote, company, conditions, client if client is not None else {
+            "business_name": quote.client_name, "rfc": quote.client_rfc, "email": quote.client_email})
+        tax = decimal_limit(tax_rate, 5, 4, maximum=Decimal("1"))
+        discount = decimal_limit(discount_percent, 5, 2, maximum=Decimal("100"))
+        issue_date = quote.issue_date if issue_date is None else issue_date
+        valid_days = quote.valid_days if valid_days is None else valid_days
+        if type(issue_date) is not date or type(valid_days) is not int or not 1 <= valid_days <= 3650:
+            raise ValidationError("Fecha/vigencia comercial inválidas.")
+        _valid_until(issue_date, valid_days)
+        result = _commercial_calculate(parts, tipo_cambio, tax, discount)
+        _commercial_adjustments(actor, parts, [], tipo=tipo_cambio, context_id=exchange_context_id, tax=tax, discount=discount)
+        return _preview_commercial_capture(quote, parts, result, actor=actor, header=header,
+            tipo_cambio=tipo_cambio, exchange_context_id=exchange_context_id, tax=tax, discount=discount,
+            issue_date=issue_date, valid_days=valid_days)
+
+
+def _warning_permission(code, scope, revision):
+    from .permissions import DISCOUNT, MANUAL_SALE, MARGIN, VIEW_COSTS
+
+    if code == "MARGEN_CERO":
+        return MARGIN
+    if code == "STOCK_DESCONOCIDO":
+        return VIEW_COSTS  # El asesor declara que comprobó disponibilidad.
+    if (code == "VENTA_BAJO_COSTO" and not scope) or (code == "TOTAL_CERO" and revision.discount_percent > 0):
+        return DISCOUNT
+    return MANUAL_SALE
+
+
+def confirmar_advertencias_comerciales(revision_id, warnings, *, actor, expected_version, state_fingerprint):
+    """Avisos (código, referencia UUID o vacío), elegidos de los vigentes del motor."""
+    from .permissions import require_commercial_permission
+
+    with transaction.atomic():
+        quote, revision = _locked(revision_id, actor)
+        actor = _commercial_actor(quote, actor)
+        if revision.status != QuoteRevision.Status.DRAFT or type(expected_version) is not int or expected_version != revision.edit_version or state_fingerprint != revision.state_fingerprint:
+            raise RevisionConflict("Recarga antes de confirmar el estado comercial.")
+        result = _current_commercial_state(revision)
+        actual = {(str(w.codigo), w.referencia or "") for w in result.advertencias}
+        informativos = {(str(w.codigo), w.referencia or "") for w in result.advertencias if not w.requiere_confirmacion}
+        records = []
+        for index, warning in enumerate(warnings):
+            if index >= MAX_ITEMS * 3 + 5:
+                raise ValidationError("Demasiadas confirmaciones.")
+            if not isinstance(warning, (tuple, list)) or len(warning) != 2 or not all(isinstance(v, str) for v in warning):
+                raise ValidationError("Referencia de advertencia inválida.")
+            code, scope = warning
+            if (code, scope) in informativos:
+                raise ValidationError("Aviso informativo: no requiere ni admite aceptación.")
+            if (code, scope) not in actual:
+                raise ValidationError("La advertencia no pertenece al estado actual.")
+            require_commercial_permission(actor, _warning_permission(code, scope, revision))
+            filters = dict(revision=revision, edit_version=revision.edit_version,
+                state_fingerprint=revision.state_fingerprint, warning_code=code, scope_ref=scope, confirmed_by=actor)
+            record = QuoteCommercialConfirmation.objects.filter(**filters).first()
+            if record is None:
+                record = QuoteCommercialConfirmation(**filters)
+                record.save(_confirm=True)
+            records.append(record)
+        return tuple(records)
+
+
+def _validate_commercial_confirmations(quote, revision, result, *, actor, lock_users=False):
+    """Revisión ya bloqueada; no abre una transacción separada al emitir."""
+    from django.contrib.auth import get_user_model
+    from .permissions import require_commercial_permission
+
+    records = list(revision.commercial_confirmations.filter(edit_version=revision.edit_version,
+        state_fingerprint=revision.state_fingerprint).select_related("confirmed_by"))
+    if lock_users:
+        # El gestor de capacidades bloquea estas mismas filas User: una revocación
+        # gestionada no puede intercalarse entre comprobar y confirmar el commit.
+        ids = {actor.pk} | {r.confirmed_by_id for r in records}
+        list(get_user_model().objects.select_for_update().filter(pk__in=ids).order_by("pk"))
+    _commercial_actor(quote, actor)
+    for warning in result.advertencias:
+        if not warning.requiere_confirmacion:
+            continue
+        code, scope = str(warning.codigo), warning.referencia or ""
+        valid = False
+        for record in records:
+            if (record.warning_code, record.scope_ref) != (code, scope):
+                continue
+            try:
+                current = require_commercial_permission(record.confirmed_by, _warning_permission(code, scope, revision))
+                authorize(quote, current)
+            except PermissionDenied:
+                continue
+            valid = True
+            break
+        if not valid:
+            raise PermissionDenied("Falta confirmación comercial vigente y autorizada.")
+
+
+def validar_confirmaciones_comerciales(revision_id, *, actor, expected_version):
+    """Comprobación informativa; emitir_revision vuelve a validarlo bajo bloqueo."""
+    with transaction.atomic():
+        quote, revision = _locked(revision_id, actor)
+        _commercial_actor(quote, actor)
+        if revision.status != QuoteRevision.Status.DRAFT or type(expected_version) is not int or expected_version != revision.edit_version:
+            raise RevisionConflict("Recarga el borrador comercial.")
+        result = _current_commercial_state(revision)
+        _validate_commercial_confirmations(quote, revision, result, actor=actor)
+        return result
+
+
+async def acrear_borrador_comercial(*args, **kwargs):
+    return await sync_to_async(crear_borrador_comercial, thread_sensitive=True)(*args, **kwargs)
+
+
+async def aguardar_borrador_comercial(*args, **kwargs):
+    return await sync_to_async(guardar_borrador_comercial, thread_sensitive=True)(*args, **kwargs)
+
+
+async def acrear_revision_comercial(*args, **kwargs):
+    return await sync_to_async(crear_revision_comercial, thread_sensitive=True)(*args, **kwargs)
+
+
+async def aconfirmar_advertencias_comerciales(*args, **kwargs):
+    return await sync_to_async(confirmar_advertencias_comerciales, thread_sensitive=True)(*args, **kwargs)
+
+
+async def aprevisualizar_comercial(*args, **kwargs):
+    return await sync_to_async(previsualizar_comercial, thread_sensitive=True)(*args, **kwargs)
+
+
+async def aprevisualizar_revision_comercial(*args, **kwargs):
+    return await sync_to_async(previsualizar_revision_comercial, thread_sensitive=True)(*args, **kwargs)
+
+
+async def aprevisualizar_edicion_comercial(*args, **kwargs):
+    return await sync_to_async(previsualizar_edicion_comercial, thread_sensitive=True)(*args, **kwargs)
+
+
+def previsualizar_nueva_cotizacion(partidas, *, actor, company, client, conditions,
+        tax_rate, discount_percent, tipo_cambio, exchange_context_id, issue_date, valid_days):
+    """P4: ancla de alta propia en memoria, sin reservar folio ni crear Quote."""
+    from .permissions import require_commercial_permission
+
+    actor = require_commercial_permission(actor)
+    quote = Quote(advisor=actor, client_name=client["business_name"], issue_date=issue_date, valid_days=valid_days)
+    parts = _commercial_data(partidas)
+    tax = decimal_limit(tax_rate, 5, 4, maximum=Decimal("1"))
+    discount = decimal_limit(discount_percent, 5, 2, maximum=Decimal("100"))
+    if type(issue_date) is not date or type(valid_days) is not int or not 1 <= valid_days <= 3650:
+        raise ValidationError("Fecha/vigencia comercial inválidas.")
+    _valid_until(issue_date, valid_days)
+    header = _header(quote, company, conditions, client)
+    result = _commercial_calculate(parts, tipo_cambio, tax, discount)
+    _commercial_adjustments(actor, parts, [], tipo=tipo_cambio, context_id=exchange_context_id, tax=tax, discount=discount)
+    output = _preview_commercial_capture(quote, parts, result, actor=actor, header=header,
+        tipo_cambio=tipo_cambio, exchange_context_id=exchange_context_id, tax=tax, discount=discount,
+        issue_date=issue_date, valid_days=valid_days)
+    output["cliente"]["folio"] = None
+    return output
