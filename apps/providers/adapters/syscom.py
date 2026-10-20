@@ -6,7 +6,9 @@ ofertas inválidas.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -31,6 +33,10 @@ MAX_CARACTERES = 120
 # Campos confirmados con la API real el 2026-10-05 (docs/16 §4.3).
 CAMPO_PRECIO = "precio_descuento"  # el precio de la cuenta de CCONOR (D12)
 SIN_PRODUCTO = "product_not_available"  # 404 de ?modelo= cuando SYSCOM no vende ese modelo (D14)
+# Foto y ficha (2026-10-20): img_portada es https en ftp3.syscom.mx; link es una ruta relativa
+# (/producto/…html) del sitio público. link_privado no se usa: lleva datos de la cuenta de CCONOR.
+SITIO_PUBLICO = "https://www.syscom.mx"
+_RUTA_FICHA = re.compile(r"/producto/[A-Za-z0-9._~%+()-]{1,400}\.html")
 
 
 @register
@@ -102,6 +108,8 @@ class SyscomAdapter(ProviderAdapter):
             mpn=modelo,  # el modelo de SYSCOM es el número de parte del fabricante (D11)
             stock=_existencias(item.get("total_existencia")),
             raw=item,
+            image_url=_foto(item.get("img_portada")),
+            product_url=_ficha(item.get("link")),
         )
 
     def _producto_no_disponible(self, respuesta: httpx.Response) -> bool:
@@ -131,6 +139,26 @@ class SyscomAdapter(ProviderAdapter):
 def _recortar(termino: str) -> str:
     """busqueda admite como mucho 10 palabras y 120 caracteres."""
     return " ".join(termino.split()[:MAX_PALABRAS])[:MAX_CARACTERES].rstrip()
+
+
+def _foto(valor: object) -> str | None:
+    """Solo https en un dominio de SYSCOM; cualquier otra cosa se ignora (sin foto)."""
+    if not isinstance(valor, str):
+        return None
+    url = valor.strip()
+    partes = urlsplit(url)
+    if partes.scheme != "https" or not (partes.hostname or "").endswith(".syscom.mx"):
+        return None
+    if len(url) > 500 or any(c in url for c in ' "\'<>'):
+        return None
+    return url
+
+
+def _ficha(valor: object) -> str | None:
+    """La ruta relativa de link sobre el sitio público; nunca una URL externa ni link_privado."""
+    if not isinstance(valor, str) or not _RUTA_FICHA.fullmatch(valor.strip()):
+        return None
+    return SITIO_PUBLICO + valor.strip()
 
 
 def _identificador(valor: object) -> str:

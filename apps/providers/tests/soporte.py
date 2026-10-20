@@ -141,6 +141,8 @@ class AdaptadorDePrueba(ProviderAdapter):
             model=item.get("modelo"),
             stock=item.get("existencia"),
             raw=item,
+            image_url=item.get("foto"),
+            product_url=item.get("ficha"),
         )
 
     async def request_token(self, client):

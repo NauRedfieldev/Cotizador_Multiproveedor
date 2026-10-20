@@ -74,6 +74,7 @@ class ApiBusquedaTests(TestCase):
             "precio_mxn": "179.3750",
             "es_mejor_precio": True,
             "stock": 0,
+            "product_url": None,
             "match": {
                 "estado": "SIN_MATCH",
                 "estado_label": "Sin coincidencia",
@@ -87,6 +88,26 @@ class ApiBusquedaTests(TestCase):
         for d in cuerpo["data"]:
             self.assertIsInstance(d["price_original"], str)
             self.assertIsInstance(d["precio_mxn"], str)
+
+    async def test_a1b_el_cotizador_recibe_primero_lo_que_el_titulo_nombra(self):
+        _, cuerpo = await self.buscar([
+            adaptador("alfa",
+                      mxn("sim", "50.00", nombre="Reactivación de Conectividad / SIM"),
+                      mxn("monitor", "900.00", nombre='Monitor LED 24" / HDMI'),
+                      mxn("soporte", "100.00", nombre="Soporte de Pared para Monitor / VESA")),
+            adaptador("beta"),
+        ], q="monitor")
+        self.assertEqual([d["external_id"] for d in cuerpo["data"]], ["monitor", "soporte", "sim"])
+        self.assertEqual([d["es_mejor_precio"] for d in cuerpo["data"]], [True, False, False])
+
+    async def test_a1c_el_cotizador_recibe_la_ficha_pero_no_la_foto(self):
+        _, cuerpo = await self.buscar([
+            adaptador("alfa", mxn("1", "100.00", foto="https://img.ejemplo.invalid/1.png",
+                                  ficha="https://www.ejemplo.invalid/producto/1.html")),
+            adaptador("beta"),
+        ])
+        self.assertEqual(cuerpo["data"][0]["product_url"], "https://www.ejemplo.invalid/producto/1.html")
+        self.assertNotIn("image_url", cuerpo["data"][0])
 
     async def test_a2_auto_match_incluye_el_canonico(self):
         categoria = await Category.objects.acreate(name="Redes sintéticas")

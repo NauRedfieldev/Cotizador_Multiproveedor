@@ -9,7 +9,10 @@ from django.test import SimpleTestCase, override_settings
 
 from apps.providers.contracts import ProviderOffer, ProviderResult
 from apps.providers.errors import ProviderTimeout
-from apps.quotes.comparison import TipoCambio, comparar, comparar_configurado, tipo_cambio_manual
+from apps.quotes.comparison import (
+    NIVEL_SIN_COINCIDENCIA, TipoCambio, comparar, comparar_configurado, nivel_de_coincidencia,
+    palabras_de_busqueda, tipo_cambio_manual,
+)
 
 FECHA = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
 
@@ -38,9 +41,9 @@ class ComparisonTests(SimpleTestCase):
         self.assertEqual(comparacion.moneda, "MXN")
         self.assertIsNone(comparacion.tipo_cambio)
 
-    def test_limite_predeterminado_tres(self):
-        comparacion = comparar([resultado(*(oferta(identificador=str(i), precio=str(i)) for i in range(6)))])
-        self.assertEqual(len(comparacion.por_proveedor["ficticio"]), 3)
+    def test_limite_predeterminado_diez(self):
+        comparacion = comparar([resultado(*(oferta(identificador=str(i), precio=str(i)) for i in range(12)))])
+        self.assertEqual(len(comparacion.por_proveedor["ficticio"]), 10)
 
     def test_limite_explicito_y_mayor_que_la_lista(self):
         datos = [resultado(oferta(), oferta(identificador="2", precio="2"))]
@@ -322,3 +325,72 @@ class TipoCambioTests(SimpleTestCase):
         for tipo in [Decimal("17.50"), 17.5, "17.50"]:
             with self.subTest(tipo=tipo), self.assertRaises(TypeError):
                 comparar([resultado(oferta())], tipo_cambio=tipo)
+
+
+def titulada(identificador, precio, nombre, **kwargs):
+    return ProviderOffer(provider_code="ficticio", external_id=identificador, name=nombre,
+                         price=Decimal(precio), currency="MXN", **kwargs)
+
+
+class CoincidenciaTests(SimpleTestCase):
+    """Con término de búsqueda: primero lo que el título nombra (p. ej. «monitor» ≠ soportes)."""
+
+    def nivel(self, nombre, termino="monitor", **kwargs):
+        return nivel_de_coincidencia(titulada("1", "1", nombre, **kwargs), palabras_de_busqueda(termino))
+
+    def test_niveles_por_donde_aparece_la_palabra(self):
+        self.assertEqual(self.nivel('Monitor LED 32" Full HD / HDMI'), 0)
+        self.assertEqual(self.nivel("Monitores Curvos 27 pulgadas"), 0)                  # plural
+        self.assertEqual(self.nivel("Soporte de Pared Articulado para Monitor / VESA"), 1)
+        self.assertEqual(self.nivel("Brazo de Escritorio para 2 Monitores / 17 a 27"), 1)
+        self.assertEqual(self.nivel('Kit de Videoportero IP / Monitor Táctil 7"'), 2)
+        self.assertEqual(self.nivel("Switch PoE+ Monitoreable / 4 Puertos"), NIVEL_SIN_COINCIDENCIA)
+        self.assertEqual(self.nivel("Reactivación de Conectividad / SIM"), NIVEL_SIN_COINCIDENCIA)
+
+    def test_acentos_plurales_palabras_vacias_marca_y_modelo(self):
+        self.assertEqual(self.nivel("Cámara IP Bala 4 MP / Exterior", "camaras ip"), 0)
+        self.assertEqual(self.nivel("Soporte de Pared para Monitor / VESA", "soporte para monitor"), 0)
+        self.assertEqual(self.nivel("Bala 4 MP / Exterior", "hikvision bala", brand="HIKVISION"), 2)
+        self.assertEqual(self.nivel("Bala 4 MP", "DS-2CD2043G2-I", model="DS-2CD2043G2-I"), 0)
+        self.assertEqual(palabras_de_busqueda("  de la  "), ())
+        self.assertEqual(self.nivel("Cualquier cosa", "de la"), 0)                      # sin palabras: sin niveles
+
+    def test_elige_por_coincidencia_y_relevancia_y_ordena_por_precio(self):
+        # Orden del proveedor (su relevancia): lo barato que no coincide no desplaza a los monitores.
+        datos = [resultado(
+            titulada("sim", "5", "Reactivación de Conectividad / SIM"),
+            titulada("switch", "9", "Switch PoE+ Monitoreable / 4 Puertos"),
+            titulada("m1", "900", 'Monitor LED 24" / HDMI'),
+            titulada("soporte", "50", "Soporte de Pared para Monitor / VESA"),
+            titulada("m2", "700", 'Monitor LED 27" / HDMI'),
+            titulada("kit", "300", 'Kit de Videoportero / Monitor 7"'),
+        )]
+        filas = comparar(datos, n=4, termino="monitor").por_proveedor["ficticio"]
+        self.assertEqual([f.oferta.external_id for f in filas], ["m2", "m1", "soporte", "kit"])
+        self.assertEqual([f.nivel for f in filas], [0, 0, 1, 2])
+        # «Mejor precio» entre los monitores (mejor nivel), no el soporte más barato.
+        self.assertEqual([f.es_mejor_precio for f in filas], [True, False, False, False])
+
+    def test_completa_con_relacionados_si_faltan_coincidencias(self):
+        datos = [resultado(
+            titulada("sim", "5", "Reactivación de Conectividad / SIM"),
+            titulada("m1", "900", 'Monitor LED 24" / HDMI'),
+            titulada("switch", "9", "Switch PoE+ Monitoreable"),
+        )]
+        filas = comparar(datos, n=3, termino="monitor").por_proveedor["ficticio"]
+        self.assertEqual([(f.oferta.external_id, f.nivel) for f in filas],
+                         [("m1", 0), ("sim", NIVEL_SIN_COINCIDENCIA), ("switch", NIVEL_SIN_COINCIDENCIA)])
+        self.assertEqual([f.es_mejor_precio for f in filas], [True, False, False])
+
+    def test_sin_ninguna_coincidencia_compara_entre_todas_y_detecta_empates(self):
+        datos = [resultado(titulada("a", "5", "Cable HDMI"), titulada("b", "5", "Cable VGA"),
+                           titulada("c", "9", "Adaptador"))]
+        comparacion = comparar(datos, termino="monitor")
+        filas = comparacion.por_proveedor["ficticio"]
+        self.assertEqual([f.es_mejor_precio for f in filas], [True, True, False])
+        self.assertIn("ficticio", comparacion.proveedores_con_empate)
+
+    def test_sin_termino_conserva_las_mas_baratas(self):
+        datos = [resultado(titulada("sim", "5", "Reactivación / SIM"), titulada("m1", "900", "Monitor LED"))]
+        filas = comparar(datos, n=1).por_proveedor["ficticio"]
+        self.assertEqual([(f.oferta.external_id, f.nivel, f.es_mejor_precio) for f in filas], [("sim", 0, True)])

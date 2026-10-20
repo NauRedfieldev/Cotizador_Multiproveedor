@@ -31,7 +31,7 @@ from apps.providers.contracts import ProductQuery, ProviderOffer
 from apps.providers.models import Provider
 from apps.providers.service import search_all
 
-from .comparison import comparar_configurado, tipo_cambio_manual
+from .comparison import NIVEL_SIN_COINCIDENCIA, comparar_configurado, tipo_cambio_manual
 from .models import DefaultCommercialCondition, Quote, QuoteRevision
 from .pdf import build_demo_quote, generate_quote_pdf, money, safe_filename
 from .snapshots import ArchivedPDFError, RevisionConflict, obtener_documento
@@ -234,6 +234,12 @@ class OfertaPresentada:
     es_mejor_precio: bool  # dentro de su proveedor
     match: ResultadoMatch
     proveedor_nombre: str  # Provider.name; las plantillas no indexan un dict con una variable
+    nivel: int = 0  # coincidencia del título con la búsqueda (M6)
+
+    @property
+    def sin_coincidencia(self):
+        """El proveedor la relacionó con la búsqueda, pero su título no la nombra."""
+        return self.nivel == NIVEL_SIN_COINCIDENCIA
 
 
 class _EntradaInvalida(ValueError):
@@ -302,7 +308,8 @@ async def buscar(request):
     for resultado in disponibles:
         # Por proveedor: si M6 rechaza los datos de uno, solo ese queda fuera.
         try:
-            comparacion = comparar_configurado([resultado], tipo_cambio=tipo_cambio)
+            comparacion = comparar_configurado([resultado], tipo_cambio=tipo_cambio,
+                                               termino=None if consulta.sku else consulta.term)
         except (ValueError, TypeError) as exc:
             logger.warning("Comparación descartada de %s: %s", resultado.provider_code, type(exc).__name__)
             caidos.append(resultado.provider_code)
@@ -324,9 +331,10 @@ async def buscar(request):
     ))
     contexto["ofertas"] = sorted(
         (OfertaPresentada(c.oferta, c.precio_comparable, c.es_mejor_precio, m,
-                          nombres.get(c.oferta.provider_code, c.oferta.provider_code))
+                          nombres.get(c.oferta.provider_code, c.oferta.provider_code), c.nivel)
          for c, m in zip(comparadas, matches)),
-        key=lambda o: (o.precio_comparable, o.oferta.provider_code, o.oferta.external_id),
+        # Primero lo que coincide con la búsqueda; dentro de cada nivel, de más barata a más cara.
+        key=lambda o: (o.nivel, o.precio_comparable, o.oferta.provider_code, o.oferta.external_id),
     )
     return 200, contexto
 

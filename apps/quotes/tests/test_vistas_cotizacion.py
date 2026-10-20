@@ -366,15 +366,60 @@ class VistaCotizacionTests(TestCase):
         self.assertEqual(respuesta.context["proveedores_caidos_nombres"], ["Beta"])
 
     @override_settings(OFERTAS_POR_PROVEEDOR=1)
-    async def test_v12_solo_se_muestran_las_mejores_n_por_proveedor(self):
+    async def test_v12_solo_se_muestran_las_n_mas_relevantes_por_proveedor(self):
+        # Todas coinciden con «camara ip»: manda el orden de cada proveedor, no el precio.
         respuesta = await self.buscar([
             adaptador("alfa", mxn("1", "300.00"), mxn("2", "100.00")),
             adaptador("beta", mxn("1", "200.00"), mxn("2", "250.00")),
         ])
         self.assertEqual(
             [(o.oferta.provider_code, o.oferta.external_id) for o in respuesta.context["ofertas"]],
-            [("alfa", "2"), ("beta", "1")],
+            [("beta", "1"), ("alfa", "1")],
         )
+
+    @override_settings(OFERTAS_POR_PROVEEDOR=10)
+    async def test_v17_primero_lo_que_el_titulo_nombra_y_luego_los_relacionados(self):
+        respuesta = await self.buscar([
+            adaptador("alfa",
+                      mxn("sim", "50.00", nombre="Reactivación de Conectividad / SIM"),
+                      mxn("monitor", "900.00", nombre='Monitor LED 24" / HDMI'),
+                      mxn("cable", "60.00", nombre="Cable HDMI 2 m"),
+                      mxn("soporte", "100.00", nombre="Soporte de Pared para Monitor / VESA")),
+            adaptador("beta", mxn("otro", "800.00", nombre='Monitor 27" / HDMI')),
+        ], q="monitor")
+        ofertas = respuesta.context["ofertas"]
+        self.assertEqual([o.oferta.external_id for o in ofertas], ["otro", "monitor", "soporte", "sim", "cable"])
+        self.assertEqual([o.es_mejor_precio for o in ofertas], [True, True, False, False, False])
+        self.assertEqual([o.sin_coincidencia for o in ofertas], [False, False, False, True, True])
+        html = respuesta.content.decode()
+        self.assertEqual(html.count("Otros resultados relacionados"), 1)
+        self.assertLess(html.index("Soporte de Pared para Monitor"), html.index("Otros resultados relacionados"))
+        self.assertLess(html.index("Otros resultados relacionados"), html.index("Reactivación de Conectividad"))
+
+    async def test_v20_foto_y_enlace_a_la_ficha_del_proveedor(self):
+        respuesta = await self.buscar([
+            adaptador("alfa", mxn("1", "100.00", foto="https://img.ejemplo.invalid/1.png",
+                                  ficha="https://www.ejemplo.invalid/producto/1.html")),
+            adaptador("beta", mxn("2", "200.00", nombre="Cámara IP sin foto")),
+        ])
+        self.assertContains(respuesta, '<img class="oferta-foto" src="https://img.ejemplo.invalid/1.png"')
+        self.assertContains(respuesta, 'loading="lazy"')
+        self.assertContains(respuesta, 'referrerpolicy="no-referrer"')
+        self.assertContains(respuesta, 'href="https://www.ejemplo.invalid/producto/1.html" target="_blank" rel="noopener noreferrer"')
+        self.assertContains(respuesta, "Ver en Alfa", count=1)
+        self.assertNotContains(respuesta, "Ver en Beta")                       # beta no trae ficha: sin enlace
+        self.assertContains(respuesta, "Sin foto", count=1)                    # beta no trae foto
+
+    async def test_v18_sin_relacionados_no_aparece_el_titulo_del_bloque(self):
+        respuesta = await self.buscar([adaptador("alfa", mxn("1", "100.00"))])
+        self.assertNotContains(respuesta, "Otros resultados relacionados")
+
+    async def test_v19_la_busqueda_por_modelo_conserva_el_orden_por_precio(self):
+        respuesta = await self.buscar([
+            adaptador("alfa", mxn("1", "300.00", nombre="Sin relación"), mxn("2", "100.00", nombre="Otra cosa")),
+        ], q="", sku="QA-1")
+        self.assertEqual([o.oferta.external_id for o in respuesta.context["ofertas"]], ["2", "1"])
+        self.assertNotContains(respuesta, "Otros resultados relacionados")
 
     async def test_v15_formulario_en_blanco_no_consulta_ni_cuenta_en_el_limite(self):
         llamadas = []

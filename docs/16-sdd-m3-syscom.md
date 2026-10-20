@@ -212,6 +212,7 @@ M2 congelado: el adaptador no reimplementa timeouts, reintentos, gestión del to
 - S15: la muestra produce la oferta esperada (`Decimal` exacto, MPN = modelo, existencias y USD).
 - S16: los elementos inválidos (id, título, precios, precio 0 o negativo, elemento que no es objeto) lanzan excepciones que el núcleo descarta.
 - S17: una existencia, una marca o un modelo inválidos quedan en `None`; el 0 en existencias es válido; título, marca y modelo llegan sin espacios alrededor.
+- S18: `img_portada` solo se acepta como `https` en `*.syscom.mx`; `link` solo como ruta `/producto/…html` sobre `https://www.syscom.mx`; `link_privado` nunca se usa. Lo demás queda en `None` (ver docs/17 §3.2).
 
 **`search_all` con el adaptador real:**
 - S18: búsqueda completa con ofertas y descartes contados.

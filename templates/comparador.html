@@ -2,6 +2,19 @@
 
 {% block title %}CCONOR - Comparador de Proveedores{% endblock %}
 
+{% block extra_css %}
+<style>
+    /* 8B: foto del producto que manda el proveedor (no se guarda en cotizaciones). */
+    .oferta-foto { width: 112px; height: 112px; flex: none; object-fit: contain; background: #FFFFFF;
+        border: 1px solid #EAE7F3; border-radius: 12px; padding: 6px; }
+    .oferta-sin-foto { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+        padding: 0; background: #F2F1F8; border-style: dashed; border-color: #CFCBDA; color: #8A8FA6; font-size: 12px; }
+    .oferta-sin-foto i { font-size: 28px; }
+    .oferta-texto { min-width: 0; }
+    @media (max-width: 575.98px) { .oferta-foto { width: 80px; height: 80px; } }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container py-3">
 
@@ -80,21 +93,35 @@
     </p>
     {% endif %}
 
-    <!-- OFERTAS: el contexto las trae ordenadas de más barata a más cara en pesos -->
+    <!-- OFERTAS: primero las que el título nombra (M6); dentro de cada nivel, de más barata a más cara en pesos -->
     {% for o in ofertas %}
+    {% ifchanged o.sin_coincidencia %}{% if o.sin_coincidencia %}
+    <div class="mt-4 mb-2">
+        <h5 class="fw-bold mb-1">Otros resultados relacionados</h5>
+        <p class="small text-secondary mb-0">El proveedor los relaciona con tu búsqueda, pero su descripción no la menciona.</p>
+    </div>
+    {% endif %}{% endifchanged %}
     <div class="cconor-card p-3 mb-3{% if o.es_mejor_precio %} border border-success{% endif %}">
         <div class="row g-3 align-items-center">
-            <div class="col-md-5">
-                <h6 class="fw-bold mb-1">{{ o.oferta.name }}</h6>
-                <div class="d-flex flex-wrap align-items-center gap-2 small text-muted">
-                    <span class="badge text-bg-light border">
-                        <i class="bi bi-shop me-1"></i>{{ o.proveedor_nombre }}
-                    </span>
-                    {% if o.oferta.brand %}<span><i class="bi bi-bookmark me-1"></i>{{ o.oferta.brand }}</span>{% endif %}
-                    {% if o.oferta.model %}<span class="font-monospace"><i class="bi bi-cpu me-1"></i>{{ o.oferta.model }}</span>{% endif %}
+            <div class="col-md-5 d-flex align-items-center gap-3">
+                {% if o.oferta.image_url %}
+                <img class="oferta-foto" src="{{ o.oferta.image_url }}" alt="Foto de {{ o.oferta.name }}" width="112" height="112"
+                     loading="lazy" decoding="async" referrerpolicy="no-referrer">
+                {% else %}
+                <div class="oferta-foto oferta-sin-foto" role="img" aria-label="El proveedor no envió foto"><i class="bi bi-image" aria-hidden="true"></i>Sin foto</div>
+                {% endif %}
+                <div class="oferta-texto">
+                    <h6 class="fw-bold mb-1">{{ o.oferta.name }}</h6>
+                    <div class="d-flex flex-wrap align-items-center gap-2 small text-muted">
+                        <span class="badge text-bg-light border">
+                            <i class="bi bi-shop me-1"></i>{{ o.proveedor_nombre }}
+                        </span>
+                        {% if o.oferta.brand %}<span><i class="bi bi-bookmark me-1"></i>{{ o.oferta.brand }}</span>{% endif %}
+                        {% if o.oferta.model %}<span class="font-monospace"><i class="bi bi-cpu me-1"></i>{{ o.oferta.model }}</span>{% endif %}
+                    </div>
                 </div>
             </div>
-            <div class="col-md-3 text-md-center">
+            <div class="col-md-2 text-md-center">
                 <div class="fs-5 fw-bold" style="color: var(--cconor-azul-marino);">${{ o.precio_comparable|floatformat:2 }} MXN</div>
                 {% if o.es_mejor_precio %}
                 <span class="badge text-bg-success">Mejor precio</span>
@@ -110,12 +137,19 @@
                 <span class="text-success"><i class="bi bi-check-circle me-1"></i>{{ o.oferta.stock }} disponibles</span>
                 {% endif %}
             </div>
-            <div class="col-md-2 text-md-end">
+            <div class="col-md-3 d-flex flex-column gap-2">
                 {% if o.oferta.model %}
-                <a class="btn btn-cconor-primary btn-sm d-inline-flex align-items-center gap-1"
+                <a class="btn btn-cconor-primary btn-sm d-inline-flex align-items-center justify-content-center gap-1 w-100"
                     href="{% url 'cotizador' %}?sku={{ o.oferta.model|urlencode }}"
                     title="Buscar este modelo y seleccionar una captura comercial; no agrega ni cambia el tipo de cambio automáticamente">
                      <i class="bi bi-search"></i> Buscar en cotizador
+                </a>
+                {% endif %}
+                {% if o.oferta.product_url %}
+                <a class="btn btn-outline-primary btn-sm d-inline-flex align-items-center justify-content-center gap-1 w-100"
+                    href="{{ o.oferta.product_url }}" target="_blank" rel="noopener noreferrer"
+                    title="Abre la ficha pública del producto en una pestaña nueva">
+                    Ver en {{ o.proveedor_nombre }} <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
                 </a>
                 {% endif %}
             </div>

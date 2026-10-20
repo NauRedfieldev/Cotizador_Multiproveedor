@@ -64,7 +64,17 @@ No se envía `stock=true`, porque solo devolvería productos con existencias, ni
 | `brand` | `marca` | Texto sin espacios alrededor; si no hay, `None` |
 | `model` y `mpn` | `modelo` | El mismo valor en los dos: es el número de parte del fabricante (p. ej. `DS-2CD1143G2-LIUF` de HIKVISION) |
 | `stock` | `total_existencia` | Entero ≥ 0; si no lo es, `None` (el producto **no** se descarta) |
+| `image_url` | `img_portada` | Solo `https` en un dominio `*.syscom.mx` (hoy `ftp3.syscom.mx`), sin espacios ni comillas; si no, `None` («Sin foto») |
+| `product_url` | `link` | Llega como ruta relativa `/producto/…html`; se antepone `https://www.syscom.mx`. Otra forma da `None`. **`link_privado` no se usa**: apunta a otro dominio y lleva datos de la cuenta de CCONOR |
 | `raw` | el producto completo | Incluye categorías, imágenes, enlaces, desglose de existencias y precios por volumen |
+
+Foto y ficha (2026-10-20, formato comprobado con una consulta real autorizada): la foto solo se
+muestra en el comparador (diseño 8B) y se carga desde SYSCOM en el navegador del asesor con
+`loading="lazy"` y `referrerpolicy="no-referrer"`. El enlace «Ver en SYSCOM» abre la ficha pública
+en una pestaña nueva (`noopener noreferrer`) en el comparador y en los resultados del cotizador
+(este solo recibe `product_url` en la API de búsqueda, sin foto). Ninguno de los dos se guarda en
+la captura de la búsqueda, la cotización ni el PDF del cliente. El contrato (`ProviderOffer`) rechaza
+cualquier valor que no sea una URL `https` sin espacios ni comillas.
 
 ## 4. Token y credenciales
 

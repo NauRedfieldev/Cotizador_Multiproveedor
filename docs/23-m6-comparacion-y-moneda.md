@@ -16,15 +16,16 @@ M6 no convierte una sugerencia fuzzy pendiente de revisión en identidad confirm
 ## Operaciones
 
 ```python
-comparar(resultados, *, tipo_cambio=None, n=3)
-comparar_configurado(resultados, *, tipo_cambio=None, n=None)
+comparar(resultados, *, tipo_cambio=None, n=10, termino=None)
+comparar_configurado(resultados, *, tipo_cambio=None, n=None, termino=None)
 tipo_cambio_manual(texto, *, fecha)
 ```
 
 - `comparar`: núcleo puro, sin Django settings. Recibe un iterable de
   `ProviderResult` materializados; no pasar QuerySets o iterables que consulten BD.
 - `comparar_configurado`: entrada Django; cuando `n is None`, lee
-  `settings.OFERTAS_POR_PROVEEDOR`, configurado por `.env`, con predeterminado 3.
+  `settings.OFERTAS_POR_PROVEEDOR`, configurado por `.env`, con predeterminado 10
+  (antes 3; cambiado el 2026-10-20 para que el comparador muestre más resultados).
   Un `n` explícito prevalece. No ejecuta ORM ni llamadas de red.
 - `tipo_cambio_manual`: valida una captura de texto y devuelve el contexto de FX.
   No es un formulario ni endpoint.
@@ -32,6 +33,34 @@ tipo_cambio_manual(texto, *, fecha)
 `n` debe ser entero positivo; booleanos, texto, decimales y valores ≤0 se rechazan.
 El límite es estricto, incluso si hay empates. La variable se documenta también
 en `.env_example`; no hay un tipo de cambio predeterminado en configuración.
+
+## Coincidencia con la búsqueda (`termino`)
+
+Problema que resuelve: SYSCOM relaciona por etiquetas productos que no son lo buscado
+(«monitor» → soportes de pared, switches «Monitoreable», una reactivación de SIM).
+Al elegir las `n` más baratas de las 60 que devuelve, quedaban arriba los accesorios.
+
+Con `termino` (búsqueda libre; nunca con modelo exacto), cada oferta recibe un nivel
+(`nivel_de_coincidencia`, menor es mejor):
+
+| Nivel | Regla | Ejemplo con «monitor» |
+| --- | --- | --- |
+| 0 | La primera parte del título (hasta « / ») empieza por lo buscado, o el modelo es lo buscado | «Monitor LED 32" Full HD / …» |
+| 1 | La primera parte nombra todas las palabras, pero no empieza por ellas | «Soporte de Pared para Monitor / …» |
+| 2 | Las nombra más adelante o en marca/modelo | «Kit de Videoportero / Monitor 7"» |
+| 3 | No las nombra (`NIVEL_SIN_COINCIDENCIA`) | «Switch PoE+ Monitoreable», «Reactivación… / SIM» |
+
+- Palabras completas, sin acentos ni mayúsculas, con plural («monitor» = «monitores»,
+  pero ≠ «monitoreable»). Se ignoran palabras vacías (de, para, con…).
+- **Elección:** las `n` de mejor nivel; dentro de cada nivel, en el orden del proveedor
+  (su relevancia). **Orden mostrado:** por nivel y, dentro de cada nivel, por precio.
+- **Mejor precio y empates:** entre las elegidas del mejor nivel presente; un accesorio
+  más barato no se marca como mejor precio de un monitor.
+- Sin `termino` se conserva el comportamiento original: las `n` más baratas.
+- Comprobado con una búsqueda real de «monitor» (2026-10-20, 60 resultados, sin anotar
+  precios): 12 de nivel 0, 5 de nivel 1, 5 de nivel 2 y 38 de nivel 3; los 10 mostrados
+  son monitores. El orden de «relevancia» de SYSCOM por sí solo no bastaba (el 1.º era
+  un switch «Monitoreable»).
 
 ## Disponibilidad: política acordada
 

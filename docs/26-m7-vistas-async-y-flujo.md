@@ -115,7 +115,7 @@ salir a la red.
 |---|---|---|
 | V1 | Un proveedor caído (timeout) | 200, ofertas del vivo y el caído en el aviso |
 | V2 | Ambos caídos | 503 con `comparador.html` y sin traza |
-| V3 | Ambos vivos | 200, ordenadas por precio comparable |
+| V3 | Ambos vivos | 200; con todas coincidiendo con la búsqueda, ordenadas por precio comparable |
 | V4 | USD sin y con `tipo_cambio` | 400 / 200 con la conversión exacta (`10.25 × 17.50 = 179.3750`) |
 | V5 | Consulta vacía, `tipo_cambio` o `categoria` inválidos | 400 sin consultar proveedores |
 | V6 | Ningún proveedor activo | 503 |
@@ -124,9 +124,13 @@ salir a la red.
 | V9 | Datos que M6 rechaza | Solo ese proveedor cae; si era el único útil, 503 |
 | V10, V10b | Confianza por proveedor y `categoria` | `syscom` empareja por modelo; otro proveedor no; la categoría llega a M5c |
 | V11 | POST | 405 |
-| V12 | `OFERTAS_POR_PROVEEDOR=1` | Solo la mejor de cada proveedor |
+| V12 | `OFERTAS_POR_PROVEEDOR=1` | Solo la más relevante de cada proveedor (docs/23, coincidencia) |
 | V13 | Categorías en el contexto | Solo las activas, ordenadas, también en un 400 |
 | V14 | Nombres de proveedor | `proveedor_nombre` y `proveedores_caidos_nombres` legibles |
+| V17 | «monitor» con soportes y una SIM | Primero lo que el título nombra; un solo bloque «Otros resultados relacionados» al final |
+| V18 | Todo coincide | No aparece el bloque de relacionados |
+| V19 | Modelo exacto (`sku`) | Sin niveles: se conserva el orden por precio |
+| V20 | Foto y ficha del proveedor (8B) | `<img>` con `loading="lazy"` y `referrerpolicy="no-referrer"`; «Sin foto» si falta; «Ver en …» con `target="_blank" rel="noopener noreferrer"` solo si hay ficha |
 
 Comandos (desde la raíz):
 
