@@ -410,6 +410,40 @@ class VistaCotizacionTests(TestCase):
         self.assertNotContains(respuesta, "Ver en Beta")                       # beta no trae ficha: sin enlace
         self.assertContains(respuesta, "Sin foto", count=1)                    # beta no trae foto
 
+    async def test_v21_tipo_de_cambio_como_frase_y_etiqueta_con_cambiar(self):
+        """11B: sin tipo de cambio, el campo «1 USD = $ … MXN» con ejemplo; aplicado, etiqueta y «Cambiar»."""
+        sin_tipo = await self.buscar([adaptador("alfa", mxn("1", "100.00"))])
+        self.assertContains(sin_tipo, 'placeholder="Ej. 18.50"')
+        self.assertContains(sin_tipo, "Obligatorio si el proveedor da precios en USD")
+        self.assertNotContains(sin_tipo, 'class="fx-aplicado"')
+        self.assertNotContains(sin_tipo, "<summary>Cambiar</summary>")
+
+        con_tipo = await self.buscar([adaptador("alfa", usd("1", "10.25"))], tipo_cambio="17.50")
+        self.assertEqual(con_tipo.status_code, 200)
+        self.assertContains(con_tipo, "1 USD = $17.50 MXN")
+        self.assertContains(con_tipo, "<summary>Cambiar</summary>")
+        self.assertContains(con_tipo, 'value="17.50"', count=1)    # el valor viaja en la siguiente búsqueda
+        self.assertContains(con_tipo, 'id="tipo_cambio"', count=1)
+        self.assertNotContains(con_tipo, "MXN/USD (manual")         # la línea gris anterior ya no aparece
+
+    async def test_v22_los_avisos_salen_como_ventana_emergente(self):
+        """Error y proveedores caídos: aviso emergente con X; sin tipo de cambio, botón que lleva al campo."""
+        sin_tipo = await self.buscar([adaptador("alfa", usd("1", "10.25")), adaptador("beta", mxn("1", "200.00"))])
+        self.assertEqual(sin_tipo.status_code, 400)
+        self.assertContains(sin_tipo, 'class="alert quote-error-toast fade show" role="alert"', status_code=400)
+        self.assertContains(sin_tipo, "No se pudo buscar", status_code=400)
+        self.assertContains(sin_tipo, 'data-enfocar="tipo_cambio">Escribir tipo de cambio</button>', status_code=400)
+        self.assertContains(sin_tipo, 'data-bs-dismiss="alert"', status_code=400)
+        self.assertNotContains(sin_tipo, "alert-danger", status_code=400)
+
+        caido = await self.buscar([adaptador("alfa", mxn("1", "100.00")), adaptador("beta", error=TimeoutError())])
+        self.assertContains(caido, "Algunos proveedores no respondieron")
+        self.assertContains(caido, "comparador-aviso")
+        self.assertNotContains(caido, "Escribir tipo de cambio")
+        self.assertNotContains(caido, "alert-warning")
+        # La flecha del título usa el verde azulado del sitio, ya no el naranja.
+        self.assertContains(caido, 'bi-caret-right-fill" style="color: var(--cconor-eleccion);"')
+
     async def test_v18_sin_relacionados_no_aparece_el_titulo_del_bloque(self):
         respuesta = await self.buscar([adaptador("alfa", mxn("1", "100.00"))])
         self.assertNotContains(respuesta, "Otros resultados relacionados")
@@ -459,8 +493,9 @@ class ProteccionTests(TestCase):
         self.assertEqual(llamadas, [])
         self.assertIsNone(cache.get("cotizar:127.0.0.1"))
 
-    def test_p2_inicio_y_login_son_publicos(self):
-        self.assertEqual(self.client.get(reverse("inicio")).status_code, 200)
+    def test_p2_solo_el_login_es_publico_inicio_exige_sesion(self):
+        self.assertRedirects(self.client.get(reverse("inicio")), f"{reverse('login')}?next={reverse('inicio')}",
+                             fetch_redirect_response=False)
         respuesta = self.client.get(reverse("login"))
         self.assertEqual(respuesta.status_code, 200)
         self.assertTemplateUsed(respuesta, "registration/login.html")
@@ -492,27 +527,31 @@ class ProteccionTests(TestCase):
         self.client.force_login(crear_asesor("baja", is_active=False))
         self.assertEqual(self.client.get(reverse("comparador")).status_code, 302)
 
-    def test_p7_el_menu_ofrece_entrar_o_salir_segun_la_sesion(self):
-        anonimo = self.client.get(reverse("inicio"))
-        self.assertContains(anonimo, f'href="{reverse("login")}"')
-        self.assertNotContains(anonimo, f'action="{reverse("logout")}"')
+    def test_p7_sin_sesion_no_hay_menu_ni_pie_y_con_sesion_menu_de_usuario(self):
+        """13C: el acceso no muestra nada del sistema. 13B: iniciales y nombre que despliegan «Cerrar sesión»."""
+        anonimo = self.client.get(reverse("login"))
+        for texto in ("cconor-navbar", "cconor-footer", f'action="{reverse("logout")}"', f'href="{reverse("cotizador")}"'):
+            self.assertNotContains(anonimo, texto)
+        self.assertContains(anonimo, "Iniciar sesión")
 
         self.asesor.first_name, self.asesor.last_name = "Ana", "Asesora"
         self.asesor.save()
         self.client.force_login(self.asesor)
         con_sesion = self.client.get(reverse("inicio"))
+        self.assertContains(con_sesion, 'class="cconor-iniciales" aria-hidden="true">AA</span>')
+        self.assertContains(con_sesion, "<span>Ana</span>")
+        self.assertContains(con_sesion, 'data-bs-toggle="dropdown"')
+        self.assertContains(con_sesion, f"Sesión iniciada como {self.asesor.get_username()}")
         self.assertContains(con_sesion, f'<form method="post" action="{reverse("logout")}"')
         self.assertContains(con_sesion, "csrfmiddlewaretoken")
-        self.assertContains(con_sesion, "SALIR (Ana Asesora)")
+        self.assertContains(con_sesion, "Cerrar sesión")
+        self.assertNotContains(con_sesion, "SALIR")
         # El botón del menú cierra la sesión de verdad.
         self.assertRedirects(self.client.post(reverse("logout")), reverse("login"))
         self.assertEqual(self.client.get(reverse("comparador")).status_code, 302)
 
-    def test_p8_inicio_muestra_el_panel_solo_con_sesion(self):
-        anonimo = self.client.get(reverse("inicio"))
-        self.assertContains(anonimo, "COTIZAR PRODUCTOS")
-        self.assertNotContains(anonimo, 'id="homePanel"')
-        self.assertNotContains(anonimo, "js/inicio.js")
+    def test_p8_inicio_es_el_panel_y_ya_no_hay_portada_publica(self):
+        self.assertEqual(self.client.get(reverse("inicio")).status_code, 302)
 
         self.asesor.first_name = "Ana"
         self.asesor.save()
@@ -524,9 +563,29 @@ class ProteccionTests(TestCase):
         self.assertContains(con_sesion, f'data-cotizador-url="{reverse("cotizador")}"')
         self.assertNotContains(con_sesion, "COTIZAR PRODUCTOS")
 
-    def test_p9_el_panel_de_inicio_sin_nombre_usa_el_usuario(self):
+    def test_p9_sin_nombre_se_usa_el_usuario(self):
         self.client.force_login(self.asesor)
-        self.assertContains(self.client.get(reverse("inicio")), f"Hola, {self.asesor.get_username()}")
+        respuesta = self.client.get(reverse("inicio"))
+        self.assertContains(respuesta, f"Hola, {self.asesor.get_username()}")
+        usuario = self.asesor.get_username()
+        self.assertContains(respuesta, f'class="cconor-iniciales" aria-hidden="true">{usuario[:2].upper()}</span>')
+        self.assertContains(respuesta, f"<span>{usuario}</span>")
+
+    def test_p10_sin_barra_superior_y_pie_de_una_linea(self):
+        """Plataforma interna: sin teléfono, correo ni redes arriba; el pie no tiene navegación ni contacto."""
+        self.client.force_login(self.asesor)
+        for nombre in ("inicio", "cotizador", "resumen", "comparador"):
+            with self.subTest(pagina=nombre):
+                respuesta = self.client.get(reverse(nombre))
+                self.assertEqual(respuesta.status_code, 200)
+                self.assertNotContains(respuesta, "cconor-topbar")
+                self.assertNotContains(respuesta, 'href="tel:')
+                self.assertNotContains(respuesta, "bi-facebook")
+                self.assertContains(respuesta, "Distribuidores:")
+                self.assertContains(respuesta, "Portal de Cotización Multi-Proveedor")
+                self.assertNotContains(respuesta, "<h6>Navegación</h6>")
+                self.assertNotContains(respuesta, "<h6>Contacto</h6>")
+                self.assertNotContains(respuesta, "contacto@cconor.com")
 
 
 class CondicionesPredeterminadasTests(TestCase):

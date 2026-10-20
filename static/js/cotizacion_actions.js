@@ -1,4 +1,4 @@
-/* P6: resumen, originales y correo por revisión exacta. Sin mocks ni cálculo financiero. */
+/* P6: Mis cotizaciones (diseño 12A): lista, revisión exacta, originales y correo. Sin mocks ni cálculo financiero. */
 (function () {
     'use strict';
     function money(value) {
@@ -46,34 +46,58 @@
         return (warnings || []).some(w => w.requires_confirmation !== false && !w.confirmed);
     }
     window.CCONORDocumentTools = Object.freeze({ money, positiveInteger, identity, documentURL, emissionOutcome, fetchPDF, pendingConfirmation });
+    // Textos para el asesor; el servidor decide qué avisos bloquean la emisión.
+    const WARNING_LABELS = { MARGEN_CERO: 'Margen cero', COSTO_DESCONOCIDO: 'Costo desconocido: utilidad incompleta',
+        VENTA_BAJO_COSTO: 'Venta bajo costo', VENTA_CERO: 'Venta de partida en cero', TOTAL_CERO: 'Total de cotización en cero',
+        STOCK_CERO: 'El proveedor informa existencias en cero', STOCK_INSUFICIENTE: 'Existencias del proveedor menores que la cantidad',
+        STOCK_DESCONOCIDO: 'Existencias desconocidas: comprobar disponibilidad con el proveedor' };
+    const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+    function dateLabel(iso) {
+        const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+        return match ? `${Number(match[3])} ${MONTHS[Number(match[2]) - 1]} ${match[1]}` : String(iso || '');
+    }
     document.addEventListener('DOMContentLoaded', function () {
         const $ = id => document.getElementById(id);
         if (!$('commercialSummaryApp')) return;
         const api = window.apiClient.commercial;
-        const state = { detail: null, actor: undefined, authorized: false, busy: false, pending: null, page: 1, pages: 1, objectURL: null };
+        const state = { detail: null, actor: undefined, authorized: false, busy: false, pending: null, page: 1, pages: 1, objectURL: null, filter: '', checkedAt: 0 };
         let readEpoch = 0, listEpoch = 0, listAbort, listTimer;
         function text(id, value) { $(id).textContent = value; }
         function node(tag, value, classes = '') { const el = document.createElement(tag); el.textContent = value; el.className = classes; return el; }
-        function error(err = '') { text('documentError', err.message || err); $('documentError').classList.toggle('d-none', !err); }
+        function show(id, visible) { $(id).classList.toggle('d-none', !visible); }
+        function kindOf(d) { return d.schema_version === 1 ? ['v1', 'Histórico'] : d.status === 'ISSUED' ? ['issued', 'Emitida'] : ['draft', 'Borrador']; }
+        function pill(d) { const [kind, label] = kindOf(d); return node('span', label, `mis-pill mis-pill-${kind}`); }
+        function editorURL(d) { return `/cotizador/?${new URLSearchParams({ folio: d.folio, revision: d.revision })}`; }
+        function error(err = '') {
+            text('documentErrorText', err ? err.message || err : ''); show('documentError', !!err);
+            show('documentErrorLogin', !!err && err.status === 401);
+        }
         function locks() {
             const d = state.detail, blocked = state.busy || !!state.pending || !state.authorized;
-            for (const id of ['openDocumentBtn', 'documentFolio', 'documentRevision', 'historySearchInput', 'historyStatusFilter', 'refreshHistoryBtn']) $(id).disabled = blocked || state.actor === undefined;
-            $('documentConnectionBtn').disabled = state.busy;
-            $('revisionSelector').disabled = blocked || !d;
-            for (const id of ['editDocumentBtn', 'cloneDocumentBtn', 'downloadPdfBtn', 'printQuoteBtn', 'emitDocumentBtn', 'confirmSendEmailBtn']) $(id).disabled = blocked || !d;
-            $('editDocumentBtn').disabled = blocked || !d || d.schema_version !== 2 || d.status !== 'DRAFT';
-            $('cloneDocumentBtn').disabled = blocked || !d || (d.schema_version === 2 && d.status !== 'ISSUED');
-            text('cloneDocumentBtn', d?.schema_version === 1 ? 'Preparar revisión comercial v2' : 'Nueva revisión');
-            $('emitDocumentBtn').disabled = blocked || !d?.emission_enabled || d.status !== 'DRAFT' || pendingConfirmation(d.warnings);
-            const canEmail = !blocked && d?.schema_version === 2 && d.status === 'ISSUED';
-            $('emailFields').disabled = !canEmail; $('confirmSendEmailBtn').disabled = !canEmail;
-            $('resolveDocumentBtn').classList.toggle('d-none', !state.pending);
+            const draft = d?.schema_version === 2 && d.status === 'DRAFT', issued = d?.schema_version === 2 && d.status === 'ISSUED', legacy = d?.schema_version === 1;
+            $('historySearchInput').disabled = blocked || state.actor === undefined;
+            for (const button of $('historyStatusFilter').querySelectorAll('button')) button.disabled = blocked || state.actor === undefined;
+            for (const button of $('historyList').querySelectorAll('button')) {
+                button.disabled = blocked;
+                button.classList.toggle('is-selected', !!d && button.dataset.folio === d.folio);
+            }
+            for (const button of $('revisionSelector').querySelectorAll('button')) button.disabled = blocked;
+            // Solo los botones que aplican al estado de la revisión abierta.
+            show('editDocumentBtn', draft); show('emitDocumentBtn', draft); show('openEmailBtn', issued); show('cloneDocumentBtn', issued || legacy);
+            $('editDocumentBtn').disabled = blocked || !draft;
+            $('emitDocumentBtn').disabled = blocked || !draft || !d.emission_enabled || pendingConfirmation(d.warnings);
+            $('openEmailBtn').disabled = blocked || !issued;
+            $('cloneDocumentBtn').disabled = blocked || !(issued || legacy);
+            text('cloneDocumentBtn', legacy ? 'Preparar revisión comercial' : 'Nueva revisión');
+            for (const id of ['downloadPdfBtn', 'printQuoteBtn']) $(id).disabled = blocked || !d;
+            text('downloadPdfLabel', draft ? 'PDF borrador' : 'Descargar PDF');
+            $('emailFields').disabled = blocked || !issued; $('confirmSendEmailBtn').disabled = blocked || !issued;
+            show('resolveDocumentBtn', !!state.pending);
             $('resolveDocumentBtn').disabled = state.busy;
             text('resolveDocumentBtn', state.pending?.kind === 'email' ? 'Ya verifiqué el resultado del correo' : 'Resolver / reintentar la misma operación');
-            for (const button of $('historyTableBody').querySelectorAll('button')) button.disabled = blocked;
             $('historyPreviousBtn').disabled = blocked || state.page <= 1;
             $('historyNextBtn').disabled = blocked || state.page >= state.pages;
-            text('documentStatus', state.pending ? 'Operación pendiente de resolver' : state.busy ? 'Procesando…' : !state.authorized ? 'Sin conexión autorizada' : d ? `${d.status === 'ISSUED' ? 'Emitida' : 'Borrador'} · Formato v${d.schema_version}` : 'Selecciona una revisión');
+            text('documentActivity', state.pending ? 'Operación pendiente de resolver' : state.busy ? 'Procesando…' : !state.authorized ? 'Sin conexión autorizada' : '');
         }
         async function session() {
             try {
@@ -82,10 +106,10 @@
                     const err = Error('La sesión cambió de asesor. Vuelve a la sesión original; no se reenviaron datos.');
                     err.status = 401; throw err;
                 }
-                state.actor = caps.actor_id; state.authorized = true;
+                state.actor = caps.actor_id; state.authorized = true; state.checkedAt = Date.now();
             } catch (err) {
                 state.authorized = false; clearDocument();
-                listAbort?.abort(); listEpoch += 1; $('historyTableBody').replaceChildren();
+                listAbort?.abort(); listEpoch += 1; $('historyList').replaceChildren(); text('historyStatus', ''); show('historyPager', false);
                 error(err); throw err;
             }
         }
@@ -94,33 +118,27 @@
             state.detail = null;
             if (state.objectURL) URL.revokeObjectURL(state.objectURL);
             state.objectURL = null;
-            $('documentFrame').removeAttribute('src'); $('documentFrame').classList.add('d-none');
-            $('printableQuote').classList.add('d-none'); $('legacyDocumentNotice').classList.add('d-none');
-            $('documentEmpty').classList.remove('d-none'); $('documentItems').replaceChildren();
+            $('documentFrame').removeAttribute('src'); show('documentFrame', false);
+            show('legacyDocumentNotice', false);
+            show('documentView', false); show('documentEmpty', true);
             $('documentWarnings').replaceChildren(); $('revisionSelector').replaceChildren();
             for (const id of ['emailRecipientInput', 'emailSubjectInput', 'emailMessageInput']) $(id).value = '';
-            text('emailStatus', ''); text('documentIdentity', 'Sin revisión cargada.');
-            text('documentNotice', 'Sin documento vigente en pantalla. Abre o recarga una revisión exacta; no se sustituye por otra automáticamente.');
+            if ($('emailDialog').open) $('emailDialog').close();
+            for (const id of ['emailStatus', 'documentNotice', 'documentTitle', 'documentIdentity', 'documentMeta', 'documentTotalLabel', 'documentTotalValue']) text(id, '');
         }
-        function customerPreview(client) {
-            $('printableQuote').classList.remove('d-none');
-            text('documentCompanyName', client.company.name);
-            text('documentCompanyDetails', [client.company.rfc, client.company.tagline, client.company.phone, client.company.email, client.company.advisor].filter(Boolean).join(' · '));
-            text('documentClientName', client.client.business_name);
-            text('documentClientDetails', [client.client.rfc, client.client.contact, client.client.email, client.client.phone, client.client.project].filter(Boolean).join(' · '));
-            text('documentLabel', client.document_label);
-            text('documentDates', `${client.folio} · Revisión ${client.revision} · Fecha ${client.issue_date} · Vigencia hasta ${client.valid_until} (${client.validity_label})`);
-            $('documentItems').replaceChildren();
-            client.items.forEach((item, index) => {
-                const row = document.createElement('tr');
-                for (const value of [index + 1, item.code, [item.name, item.description, item.brand, item.model].filter(Boolean).join(' · '), item.unit_label, item.qty, item.unit_price_label || 'Consultar original', money(item.amount)]) row.append(node('td', value));
-                $('documentItems').append(row);
-            });
-            text('documentPrecisionNote', 'Los unitarios abreviados se identifican como aproximados. Prevalece el importe definitivo de cada partida; el descuento es global antes de IVA.');
-            $('documentConditions').replaceChildren(...client.conditions.map(c => node('li', c)));
-            for (const [id, key] of [['documentSaleSubtotal', 'sale_subtotal'], ['documentDiscount', 'discount_amount'], ['documentSubtotal', 'subtotal'], ['documentTax', 'iva'], ['documentTotal', 'total']]) text(id, money(client[key]));
-            text('documentDiscountLabel', `Descuento (${client.discount_percent_label}) antes de IVA`);
-            text('documentTaxLabel', `IVA (${client.iva_rate_label})`);
+        function warnings(d) {
+            const box = $('documentWarnings');
+            if (!d.emission_enabled) box.append(node('div', 'La emisión está deshabilitada en este entorno.', 'alert alert-info small py-2'));
+            const pending = d.warnings.filter(w => w.requires_confirmation !== false && !w.confirmed);
+            if (pending.length) {
+                const panel = node('div', '', 'mis-avisos');
+                panel.append(node('strong', `${pending.length} aviso${pending.length === 1 ? '' : 's'} por revisar antes de emitir`, 'd-block mb-1'));
+                for (const w of pending) panel.append(node('div', `${WARNING_LABELS[w.code] || w.code}. Se acepta en el cotizador.`, 'small'));
+                const link = node('a', 'Revisar en el cotizador', 'btn btn-sm btn-outline-primary mt-2'); link.href = editorURL(d);
+                panel.append(link); box.append(panel);
+            }
+            for (const w of d.warnings.filter(w => w.requires_confirmation === false)) box.append(node('div', `${WARNING_LABELS[w.code] || w.code}: aviso informativo, no requiere aceptación.`, 'alert alert-info small py-2'));
+            for (const w of d.warnings.filter(w => w.requires_confirmation !== false && w.confirmed)) box.append(node('div', `${WARNING_LABELS[w.code] || w.code}: aceptado.`, 'small text-success mb-2'));
         }
         async function displayPDF(detail, epoch) {
             try {
@@ -129,7 +147,7 @@
                 if (state.objectURL) URL.revokeObjectURL(state.objectURL);
                 state.objectURL = URL.createObjectURL(data.blob);
                 $('documentFrame').src = state.objectURL;
-                $('documentFrame').classList.remove('d-none');
+                show('documentFrame', true);
             } catch (err) { if (epoch === readEpoch) error(err); }
         }
         async function open(folio, revision) {
@@ -138,34 +156,45 @@
             try {
                 const number = positiveInteger(revision);
                 if (typeof folio !== 'string' || !folio || folio.length > 20) throw Error('Indica un folio válido.');
-                $('documentFolio').value = folio; $('documentRevision').value = number;
                 await session();
                 const d = (await api.summary(folio, number)).data;
                 if (epoch !== readEpoch) return;
                 if (d.actor_id !== state.actor) throw Error('La sesión cambió durante la lectura. Recarga con el asesor original.');
                 identity(d); state.detail = d;
-                $('documentFolio').value = d.folio; $('documentRevision').value = d.revision;
-                const query = new URLSearchParams({ folio: d.folio, revision: d.revision });
-                history.replaceState(null, '', `${location.pathname}?${query}`);
-                text('documentIdentity', `${d.folio} · Revisión ${d.revision} · Versión ${d.edit_version} · ${d.client_name}`);
-                $('documentEmpty').classList.add('d-none');
-                for (const r of d.revisiones) { const option = node('option', `Revisión ${r.revision} · ${r.status === 'ISSUED' ? 'Emitida' : 'Borrador'} · v${r.schema_version}`); option.value = r.revision; $('revisionSelector').append(option); }
-                $('revisionSelector').value = d.revision;
-                if (d.schema_version === 1) {
-                    $('legacyDocumentNotice').classList.remove('d-none');
-                    text('documentNotice', 'Original histórico interno. Para el cliente prepara una revisión comercial v2 revisada.');
+                history.replaceState(null, '', `${location.pathname}?${new URLSearchParams({ folio: d.folio, revision: d.revision })}`);
+                show('documentEmpty', false); show('documentView', true);
+                const [kind, label] = kindOf(d), client = d.cliente;
+                text('documentTitle', `${d.folio} · Rev. ${d.revision}`);
+                $('documentStatus').className = `mis-pill mis-pill-${kind}`; text('documentStatus', label);
+                text('documentIdentity', [d.client_name, client?.client?.email].filter(Boolean).join(' · '));
+                if (client) {
+                    text('documentMeta', `${d.status === 'ISSUED' ? 'Emitida' : 'Fecha'} ${dateLabel(client.issue_date)} · vigente hasta ${dateLabel(client.valid_until)} · ${client.items.length} partida${client.items.length === 1 ? '' : 's'}`);
+                    text('documentTotalLabel', d.status === 'ISSUED' ? 'Total con IVA' : 'Total estimado (sin emitir)');
+                    text('documentTotalValue', money(d.status === 'ISSUED' ? d.total : client.total));
                 } else {
-                    $('emailRecipientInput').value = d.cliente.client.email || '';
-                    $('emailSubjectInput').value = `Cotización ${d.folio} · Revisión ${d.revision} - ${d.cliente.company.name}`;
-                    text('documentNotice', d.status === 'ISSUED' ? 'Se muestra el PDF original archivado. No se recalcula ni regenera esta emisión.' :
-                        'Borrador guardado. El PDF llevará BORRADOR; no se puede enviar por correo hasta emitir.');
-                    if (d.status === 'DRAFT') {
-                        customerPreview(d.cliente);
-                        if (!d.emission_enabled) $('documentWarnings').append(node('div', 'La emisión HTTP está deshabilitada en este entorno.', 'alert alert-info small'));
-                        for (const w of d.warnings) $('documentWarnings').append(w.requires_confirmation === false ?
-                            node('div', `${w.code}: aviso informativo, no requiere aceptación`, 'alert alert-info small py-2') :
-                            node('div', `${w.code}: ${w.confirmed ? 'aceptación vigente' : 'requiere confirmación autorizada en el cotizador'}`, 'alert alert-warning small py-2'));
-                    } else displayPDF(d, epoch);
+                    text('documentMeta', 'Histórico de uso interno');
+                    text('documentTotalLabel', d.total === null ? '' : 'Total con IVA'); text('documentTotalValue', d.total === null ? '' : money(d.total));
+                }
+                for (const r of d.revisiones) {
+                    const tab = node('button', `Rev. ${r.revision} · ${kindOf(r)[1]}`, 'mis-revision'), active = r.revision === d.revision;
+                    tab.type = 'button'; tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', String(active));
+                    tab.classList.toggle('is-active', active);
+                    tab.addEventListener('click', () => { if (!active) open(d.folio, r.revision); });
+                    $('revisionSelector').append(tab);
+                }
+                if (d.schema_version === 1) {
+                    show('legacyDocumentNotice', true);
+                    text('documentNotice', 'Original histórico de consulta interna.');
+                } else {
+                    $('emailRecipientInput').value = client.client.email || '';
+                    $('emailSubjectInput').value = `Cotización ${d.folio} · Revisión ${d.revision} - ${client.company.name}`;
+                    text('emailDialogInfo', `${d.folio} · Rev. ${d.revision} · se adjunta el PDF original emitido.`);
+                    text('emailAttachment', `Cotizacion_${d.folio}_r${d.revision}.pdf · original emitido`);
+                    text('documentNotice', d.status === 'ISSUED' ? 'Se muestra el PDF original archivado; no se recalcula ni se regenera.' :
+                        'Borrador guardado: su PDF lleva la marca BORRADOR y el correo se habilita al emitir.');
+                    // Vista previa = el PDF real (borrador con su marca u original archivado), igual al que se descarga.
+                    if (d.status === 'DRAFT') warnings(d);
+                    displayPDF(d, epoch);
                 }
             } catch (err) { if (epoch === readEpoch) { clearDocument(); error(err); } }
             finally { state.busy = false; locks(); }
@@ -173,19 +202,23 @@
         async function list(page = 1) {
             if (state.pending) return;
             clearTimeout(listTimer); listAbort?.abort(); const epoch = ++listEpoch;
-            listAbort = new AbortController(); $('historyTableBody').replaceChildren(); text('historyStatus', 'Consultando tus cotizaciones…');
+            listAbort = new AbortController(); $('historyList').replaceChildren(); text('historyStatus', 'Consultando tus cotizaciones…');
             try {
-                const response = await api.list({ q: $('historySearchInput').value.trim(), status: $('historyStatusFilter').value, page: String(page) }, listAbort.signal);
+                const response = await api.list({ q: $('historySearchInput').value.trim(), status: state.filter, page: String(page) }, listAbort.signal);
                 if (epoch !== listEpoch) return;
-                if (response.actor_id !== state.actor) throw Error('La sesión cambió. Revisa la conexión antes de consultar.');
+                if (response.actor_id !== state.actor) throw Error('La sesión cambió. Recarga la página antes de consultar.');
                 state.page = response.pagination.page; state.pages = response.pagination.pages;
-                text('historyStatus', response.data.length ? `${response.pagination.count} cotizaciones propias con revisiones capturadas.` : 'No se encontraron cotizaciones propias con estos filtros.');
-                text('historyPage', `Página ${state.page} de ${state.pages}`);
+                const count = response.pagination.count;
+                text('historyStatus', response.data.length ? `${count} cotizaci${count === 1 ? 'ón' : 'ones'}` : 'No hay cotizaciones con estos filtros.');
+                text('historyPage', `Página ${state.page} de ${state.pages}`); show('historyPager', state.pages > 1);
                 for (const d of response.data) {
-                    const row = document.createElement('tr');
-                    for (const value of [d.folio, d.client_name, d.issue_date, d.revision, `${d.status === 'ISSUED' ? 'Emitida' : 'Borrador'} / v${d.schema_version}`, money(d.total)]) row.append(node('td', value));
-                    const cell = document.createElement('td'), button = node('button', 'Abrir', 'btn btn-outline-primary btn-sm'); button.type = 'button';
-                    button.addEventListener('click', () => open(d.folio, d.revision)); cell.append(button); row.append(cell); $('historyTableBody').append(row);
+                    const item = node('button', '', 'mis-item'); item.type = 'button'; item.dataset.folio = d.folio;
+                    const top = node('span', '', 'mis-item-fila'), middle = node('span', '', 'mis-item-fila');
+                    top.append(node('strong', `${d.folio} · Rev. ${d.revision}`), pill(d));
+                    middle.append(node('span', d.client_name), node('strong', d.status === 'ISSUED' ? money(d.total) : ''));
+                    item.append(top, middle, node('span', dateLabel(d.issue_date), 'small text-secondary'));
+                    item.addEventListener('click', () => open(d.folio, d.revision));
+                    $('historyList').append(item);
                 }
             } catch (err) { if (err.name !== 'AbortError' && epoch === listEpoch) { text('historyStatus', err.message); state.pages = 1; state.page = 1; text('historyPage', ''); } }
             finally { if (epoch === listEpoch) locks(); }
@@ -208,7 +241,7 @@
                     const current = (await api.summary(intent.folio, intent.revision)).data;
                     if (current.actor_id !== intent.actor) { const err = Error('La sesión cambió durante la lectura; no se emitió.'); err.status = 401; throw err; }
                     const outcome = emissionOutcome(current, intent);
-                    if (outcome === 'CONFLICT') { state.pending = null; clearDocument(); throw Error('La revisión cambió. Abre explícitamente la versión del servidor antes de emitir.'); }
+                    if (outcome === 'CONFLICT') { state.pending = null; clearDocument(); throw Error('La revisión cambió. Abre de nuevo la versión del servidor antes de emitir.'); }
                     result = outcome === 'DONE' ? current : (await api.emit(intent.folio, intent.revision, intent.body)).data;
                 } else result = (await api.clone(intent.folio, intent.revision, intent.body)).data;
                 target = [result.folio, result.revision]; state.pending = null;
@@ -222,33 +255,35 @@
             } finally { state.busy = false; locks(); }
             if (target) {
                 await open(...target);
-                if (!state.detail) text('documentNotice', `La operación se confirmó para ${target[0]}, revisión ${target[1]}. Falta recargar su lectura; no vuelvas a crearla ni emitir otra revisión por este fallo.`);
+                if (!state.detail) error(`La operación se confirmó para ${target[0]}, revisión ${target[1]}. Falta recargar su lectura; no vuelvas a crearla ni emitir otra revisión por este fallo.`);
                 await list(state.page);
             }
         }
         async function email() {
             if (state.busy || state.pending || state.detail?.schema_version !== 2 || state.detail.status !== 'ISSUED') return;
             const recipient = $('emailRecipientInput');
-            if (!recipient.value.trim() || !recipient.checkValidity()) { error('Indica un correo destinatario válido.'); return; }
+            if (!recipient.value.trim() || !recipient.checkValidity()) { text('emailStatus', 'Indica un correo destinatario válido.'); recipient.focus(); return; }
             const d = state.detail, to = recipient.value.trim();
             if (!window.confirm(`Enviar a ${to} el PDF original de ${d.folio}, revisión ${d.revision}?`)) return;
             state.busy = true; locks();
             try {
                 await session();
                 await api.email(d.folio, { ...identity(d), email: to, subject: $('emailSubjectInput').value.trim(), message: $('emailMessageInput').value, attach_pdf: true });
-                text('emailStatus', `Servidor de correo aceptó ${d.folio}, revisión ${d.revision}, para ${to}. Esto no certifica entrega al destinatario.`); error();
+                $('emailDialog').close();
+                text('documentNotice', `El servidor de correo aceptó ${d.folio}, revisión ${d.revision}, para ${to}. Esto no certifica la entrega al destinatario.`); error();
             } catch (err) {
                 if (err.uncertain) {
                     state.pending = { kind: 'email', folio: d.folio, revision: d.revision };
-                    text('emailStatus', 'Resultado desconocido: el correo puede haberse enviado. Verifica recepción o registros antes de habilitar otro envío; no se reintentará automáticamente.');
-                }
+                    text('emailStatus', 'Resultado desconocido: el correo puede haberse enviado. Verifica la recepción antes de habilitar otro envío; no se reintentará automáticamente.');
+                    text('documentNotice', 'Correo con resultado desconocido: verifica la recepción antes de volver a enviar.');
+                } else text('emailStatus', err.message || String(err));
                 error(err);
             } finally { state.busy = false; locks(); }
         }
         async function pdf(print = false) {
             if (state.busy || state.pending || !state.detail) return;
             const d = state.detail, epoch = readEpoch;
-            if (d.schema_version === 1 && !window.confirm('Este original v1 puede contener costos/proveedores. Es solo para consulta interna. Continuar?')) return;
+            if (d.schema_version === 1 && !window.confirm('Este original histórico puede contener costos/proveedores. Es solo para consulta interna. Continuar?')) return;
             const tab = print ? window.open('about:blank', '_blank') : null;
             if (tab) tab.opener = null;
             state.busy = true; locks();
@@ -263,9 +298,7 @@
             } catch (err) { tab?.close(); error(err); if (err.status === 409) clearDocument(); }
             finally { state.busy = false; locks(); }
         }
-        $('openDocumentBtn').addEventListener('click', () => open($('documentFolio').value.trim(), $('documentRevision').value));
-        $('revisionSelector').addEventListener('change', () => open(state.detail.folio, $('revisionSelector').value));
-        $('editDocumentBtn').addEventListener('click', () => { if (state.detail) location.assign(`/cotizador/?${new URLSearchParams({ folio: state.detail.folio, revision: state.detail.revision })}`); });
+        $('editDocumentBtn').addEventListener('click', () => { if (state.detail) location.assign(editorURL(state.detail)); });
         $('emitDocumentBtn').addEventListener('click', () => mutate('emit'));
         $('cloneDocumentBtn').addEventListener('click', () => {
             if (state.detail?.schema_version === 1) {
@@ -274,16 +307,33 @@
         });
         $('resolveDocumentBtn').addEventListener('click', () => {
             if (state.pending?.kind === 'email') {
-                if (window.confirm('Ya verificaste recepción/registros? Habilitar otro envío no demuestra si el anterior llegó y podría duplicarlo.')) { state.pending = null; locks(); }
+                if (window.confirm('Ya verificaste recepción/registros? Habilitar otro envío no demuestra si el anterior llegó y podría duplicarlo.')) { state.pending = null; text('emailStatus', ''); locks(); }
             } else if (state.pending) mutate(state.pending.kind);
         });
+        $('openEmailBtn').addEventListener('click', () => {
+            if ($('openEmailBtn').disabled) return;
+            text('emailStatus', ''); $('emailDialog').showModal(); $('emailRecipientInput').focus();
+        });
+        for (const id of ['emailCancelBtn', 'emailCloseBtn']) $(id).addEventListener('click', () => $('emailDialog').close());
         $('confirmSendEmailBtn').addEventListener('click', email);
         $('downloadPdfBtn').addEventListener('click', () => pdf(false)); $('printQuoteBtn').addEventListener('click', () => pdf(true));
-        $('refreshHistoryBtn').addEventListener('click', () => list(1));
-        $('historyStatusFilter').addEventListener('change', () => list(1));
-        $('historySearchInput').addEventListener('input', () => { clearTimeout(listTimer); listAbort?.abort(); listEpoch += 1; $('historyTableBody').replaceChildren(); listTimer = setTimeout(() => list(1), 350); });
+        $('documentErrorClose').addEventListener('click', () => error());
+        for (const button of $('historyStatusFilter').querySelectorAll('button')) button.addEventListener('click', () => {
+            state.filter = button.dataset.status;
+            for (const other of $('historyStatusFilter').querySelectorAll('button')) {
+                other.classList.toggle('is-active', other === button); other.setAttribute('aria-pressed', String(other === button));
+            }
+            list(1);
+        });
+        $('historySearchInput').addEventListener('input', () => { clearTimeout(listTimer); listAbort?.abort(); listEpoch += 1; $('historyList').replaceChildren(); listTimer = setTimeout(() => list(1), 350); });
         $('historyPreviousBtn').addEventListener('click', () => list(state.page - 1)); $('historyNextBtn').addEventListener('click', () => list(state.page + 1));
-        $('documentConnectionBtn').addEventListener('click', () => initialize());
+        // La sesión se revisa sola al volver a la pestaña (como mucho cada 15 s), igual que en el cotizador.
+        function recheck() {
+            if (document.visibilityState !== 'visible' || state.busy || state.pending || Date.now() - state.checkedAt < 15000) return;
+            const wasAuthorized = state.authorized;
+            session().then(() => { error(); locks(); if (!wasAuthorized) list(1); }, () => locks());
+        }
+        document.addEventListener('visibilitychange', recheck); window.addEventListener('focus', recheck);
         window.addEventListener('beforeunload', event => { if (state.pending || state.busy) { event.preventDefault(); event.returnValue = ''; } });
         async function initialize() {
             try {

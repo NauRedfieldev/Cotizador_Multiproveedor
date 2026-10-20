@@ -639,8 +639,8 @@ Pruebas: casos de conversión, redondeo, unidades y campo de cada error en
 
 ### 14.6 Inicio como panel de cotizaciones (diseño 7D)
 
-- **Con sesión**, `/` (`templates/inicio.html`) muestra un panel; **sin sesión** conserva la
-  portada de siempre (hero, beneficios y categorías), que sigue siendo pública.
+- `/` (`templates/inicio.html`) muestra el panel y exige sesión. La portada pública (hero, beneficios y
+  categorías) se quitó el 2026-10-20 junto con sus estilos de `home.css` (ver §14.7).
 - **Contenido:** saludo («Hola, nombre»), «Buscar productos» (comparador) y «+ Nueva cotización»;
   tres tarjetas (borradores por terminar, emitidas, emitidas este mes) y dos paneles,
   **Borradores** y **Emitidas**, con las 3 más recientes de cada uno.
@@ -662,7 +662,60 @@ Pruebas: casos de conversión, redondeo, unidades y campo de cada error en
 Pruebas: `test_p8`/`test_p9` en `test_vistas_cotizacion.py` (panel solo con sesión) y cuatro casos
 de `inicio.js` en `tools/test_cotizador_comercial.cjs` (formatos, enlaces, llenado y error).
 
+### 14.7 Encabezado y pie del sitio (plataforma interna)
+
+- **Sin barra superior** en todas las páginas (`templates/base.html`): se quitaron teléfono,
+  correo, ubicación y redes sociales, porque la plataforma es de uso interno de CCONOR. El menú
+  con el logo queda arriba, sin marco. También se quitaron sus estilos (`.cconor-topbar`).
+- **Pie de una línea (diseño 10B):** «CCONOR · © 2026 Soluciones Tecnológicas», distribuidores
+  (SYSCOM, Exel del Norte) y «Portal de Cotización Multi-Proveedor». Sin «Navegación» ni
+  «Contacto». En celular se apila en tres líneas centradas.
+- El aviso emergente del cotizador sube 36 px (`top: 124px`), la altura de la barra quitada, para
+  conservar la misma separación bajo el menú. Caché: `custom.css?v=9`.
+- Los datos de contacto de la empresa siguen en el PDF y en el correo (`pdf.py`, `views.py`).
+
+Prueba: `test_p10_sin_barra_superior_y_pie_de_una_linea` (Inicio, cotizador, resumen y comparador).
+
+**Sesión (diseños 13B y 13C, 2026-10-20).** Sin sesión no se muestra nada del sistema: `base.html`
+dibuja el menú superior y el pie solo con `user.is_authenticated`, `/` también usa `login_required` y
+cualquier página lleva a `/login/?next=…`, una tarjeta centrada con el logo (sin menú ni pie). En el
+menú, «SALIR (usuario)» se cambió por un desplegable de Bootstrap con las iniciales en un círculo verde
+azulado y el primer nombre (o el usuario si no hay nombre); dentro: nombre completo, «Sesión iniciada
+como …» y «Cerrar sesión» (POST con CSRF). Se cierra al pulsar fuera o con Esc. Los mensajes de Django
+solo crean su contenedor cuando hay mensajes. Caché: `custom.css?v=10`, `home.css?v=5`. Pruebas:
+`test_p2`, `test_p7`, `test_p8` y `test_p9` en `test_vistas_cotizacion.py`.
+
+### 14.8 Comparador: botón «Buscar» y tipo de cambio (diseño 11B)
+
+- Fila de búsqueda: búsqueda libre, modelo exacto, categoría y «Buscar», con la misma altura que
+  los campos (`.comparador-buscar`) y la lupa junto al texto.
+- El tipo de cambio va en su propia línea como frase: «Tipo de cambio para precios en dólares:
+  1 USD = $ [Ej. 18.50] MXN» (el ejemplo en gris e itálica; lo escrito, en negritas). Ya aplicado
+  se muestra como etiqueta verde «✓ 1 USD = $X MXN», la hora de captura (UTC) y «Cambiar», que abre
+  el campo con el valor anterior. Sustituye la línea gris que aparecía sobre los resultados.
+- Sin cambio de funcionamiento: el valor se sigue enviando con cada búsqueda (GET) y no se recuerda
+  entre visitas. Estilos dentro de `comparador.html`.
+- **Avisos como ventana emergente** (igual que el cotizador): el error («No se pudo buscar») y
+  «Algunos proveedores no respondieron» (en ámbar) salen arriba a la derecha bajo el menú, con X
+  para cerrar (Bootstrap). Si el error es del tipo de cambio, «Escribir tipo de cambio» cierra el
+  aviso y pone el cursor en el campo (`data-enfocar` en `static/js/main.js?v=3`).
+- La flecha del título pasa de naranja a verde azulado (`--cconor-eleccion`, color de lo elegido en 4C).
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
+
+> **Rediseño 12A (2026-10-20, rama `feature/ui-interfaz-general`).** La pantalla pasó a lista y
+> detalle lado a lado: a la izquierda buscador, filtros (Todas, Borradores, Emitidas) y la lista
+> (folio · revisión, estado, cliente, total de las emitidas, fecha); a la derecha la cotización
+> elegida con total, pestañas de revisiones, **solo los botones de su estado** (borrador: Editar en
+> el cotizador, Emitir, PDF borrador, Imprimir; emitida: Enviar por correo, Descargar PDF, Imprimir,
+> Nueva revisión; histórico v1: PDF con advertencia y «Preparar revisión comercial») y la vista
+> previa, que es siempre **el PDF real** (borrador con su marca u original archivado), idéntico al que
+> se descarga; se quitó la vista HTML que lo imitaba. El correo se abre en una ventana (diseño 12D). Se
+> quitaron la captura manual de folio y revisión, «Revisar sesión» e «Iniciar sesión en otra
+> pestaña»: la sesión se revisa al volver a la pestaña (como mucho cada 15 s) y, si venció, el aviso
+> emergente ofrece «Iniciar sesión». Se conservan intactas las reglas de esta sección (identidad
+> exacta, emisión sin avisos pendientes, envío sin reintento automático, operación incierta, enlace
+> `?folio=&revision=`). Archivos: `templates/resumen.html`, `static/js/cotizacion_actions.js?v=7`.
 
 ### 15.1 Alcance y acceso
 

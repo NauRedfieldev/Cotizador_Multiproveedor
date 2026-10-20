@@ -39,21 +39,6 @@ body {
     margin: 0;
 }
 
-/* ==========================================================================
-   TOPBAR: estilos de enlaces. El contenedor (.cconor-topbar) se define una
-   sola vez en la sección TEMA INSTITUCIONAL B2B al final del archivo.
-   ========================================================================== */
-.cconor-topbar a {
-    color: #FFFFFF;
-    text-decoration: none;
-    transition: opacity 0.2s ease;
-    opacity: 0.9;
-}
-
-.cconor-topbar a:hover {
-    opacity: 1;
-}
-
 /* (Navbar antigua eliminada: .cconor-navbar y .cconor-nav-link se definen una
    sola vez en la sección TEMA INSTITUCIONAL B2B al final del archivo.
    .brand-title/.brand-subtitle sin uso en ningún template.) */
@@ -365,20 +350,13 @@ body {
 /* ==========================================================================
    FOOTER
    ========================================================================== */
+/* 10B: una sola línea delgada (marca, distribuidores y nombre del portal). */
 .cconor-footer {
     background-color: var(--cconor-azul-marino);
     color: var(--cconor-gris-violeta);
-    padding: 3rem 0 1.5rem 0;
+    padding: 1.1rem 0;
     margin-top: auto;
-    font-size: 0.9rem;
-}
-
-.cconor-footer h6 {
-    color: #FFFFFF;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 1.2rem;
+    font-size: 0.85rem;
 }
 
 .cconor-footer a {
@@ -389,13 +367,6 @@ body {
 
 .cconor-footer a:hover {
     color: #FFFFFF;
-}
-
-.cconor-footer-bottom {
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    padding-top: 1.5rem;
-    margin-top: 2rem;
-    font-size: 0.8rem;
 }
 
 /* ==========================================================================
@@ -585,7 +556,6 @@ body {
         background: #FFFFFF !important;
     }
 
-    .cconor-topbar,
     .cconor-navbar,
     .cconor-footer,
     .modal,
@@ -620,18 +590,10 @@ body {
 }
 
 /* ==========================================================================
-   TEMA INSTITUCIONAL B2B (azul): topbar + navbar del sitio.
+   TEMA INSTITUCIONAL B2B (azul): navbar del sitio (sin barra superior: plataforma interna).
    Se aplica con las mismas clases, por lo que todas las páginas comparten
    el encabezado sin duplicar estilos.
    ========================================================================== */
-.cconor-topbar {
-    background-color: #0D2753;
-    font-size: 0.8rem;
-    padding: 0.4rem 0;
-    min-height: 36px;
-}
-
-.cconor-topbar .container,
 .cconor-navbar .container {
     max-width: 1350px;
 }
@@ -652,7 +614,6 @@ body {
 
 /* Regla global SEGURA: evita desbordes sin deformar (las clases con
    mayor especificidad, como .brand-logo, siempre tienen prioridad). */
-.cconor-topbar img,
 .cconor-navbar img,
 main img {
     max-width: 100%;
@@ -992,8 +953,9 @@ body:has(#commercialQuoteApp) .cconor-navbar.sticky-top {
     .quote-sticky-bar { transition: none; }
 }
 
-/* El aviso emergente queda debajo del menú arriba y debajo de la barra al bajar. */
-.quote-error-toast { top: 160px; }
+/* El aviso emergente queda debajo del menú arriba y debajo de la barra al bajar
+   (124 px = 160 px de antes menos los 36 px de la barra superior que se quitó). */
+.quote-error-toast { top: 124px; }
 body.quote-scrolled .quote-error-toast { top: 84px; }
 
 /* Paso 4 (6D): botones de la misma altura; avisos en ámbar solo cuando existen. */
@@ -1008,4 +970,54 @@ body.quote-scrolled .quote-error-toast { top: 84px; }
 
 .quote-warnings-card {
     border-color: #FEC84B !important;
+}
+
+/* 13B: menú de usuario (iniciales + nombre) que despliega «Cerrar sesión». */
+.cconor-usuario {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.25rem 0.75rem 0.25rem 0.25rem !important;
+    border-radius: 999px;
+    background: transparent;
+    font-weight: 600;
+    color: var(--cconor-azul-marino) !important;
+}
+
+.cconor-usuario:hover,
+.cconor-usuario[aria-expanded="true"] {
+    background: #F4F3FA;
+}
+
+.cconor-iniciales {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    background: var(--cconor-eleccion);
+    color: #FFFFFF;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.cconor-menu-usuario {
+    min-width: 260px;
+    padding: 0.75rem 0 0;
+    border: 1px solid #EAE7F3;
+    border-radius: 14px;
+    box-shadow: 0 16px 40px rgba(17, 22, 56, 0.18);
+}
+
+.cconor-cerrar-sesion {
+    border-radius: 10px;
+    color: #B42318;
+    font-weight: 600;
+}
+
+.cconor-cerrar-sesion:hover,
+.cconor-cerrar-sesion:focus {
+    background: #FEF3F2;
+    color: #B42318;
 }

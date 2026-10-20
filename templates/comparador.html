@@ -11,6 +11,21 @@
         padding: 0; background: #F2F1F8; border-style: dashed; border-color: #CFCBDA; color: #8A8FA6; font-size: 12px; }
     .oferta-sin-foto i { font-size: 28px; }
     .oferta-texto { min-width: 0; }
+    /* «Buscar» recto: la misma altura que los campos de la fila (form-control de Bootstrap). */
+    .comparador-buscar { height: calc(1.5em + 0.75rem + 2px); padding-top: 0; padding-bottom: 0; }
+    /* 11B: tipo de cambio como frase «1 USD = $ … MXN»; ya aplicado, etiqueta verde con «Cambiar». */
+    .fx-campo { width: 210px; flex-wrap: nowrap; }
+    .fx-campo .form-control { font-weight: 600; }
+    .fx-campo .form-control::placeholder { font-style: italic; font-weight: 400; color: #9AA0B4; }
+    .fx-aplicado { display: inline-flex; align-items: center; gap: 6px; padding: 0.35rem 0.85rem; border-radius: 999px;
+        background: #E6F2F0; color: #00796B; font-weight: 700; }
+    .fx-cambiar { display: inline-block; }
+    .fx-cambiar > summary { display: inline; cursor: pointer; font-weight: 600; text-decoration: underline; color: var(--cconor-azul-marino); }
+    .fx-cambiar > summary::-webkit-details-marker { display: none; }
+    .fx-cambiar[open] > summary { margin-right: 0.5rem; }
+    /* Aviso de proveedores caídos: mismo aviso emergente que el de error, en ámbar. */
+    .comparador-aviso { border-color: #FEC84B; }
+    .comparador-aviso .quote-error-icon { background: #FFF4E5; color: #B54708; }
     @media (max-width: 575.98px) { .oferta-foto { width: 80px; height: 80px; } }
 </style>
 {% endblock %}
@@ -21,7 +36,7 @@
     <!-- ENCABEZADO PRINCIPAL -->
     <div class="mb-4">
         <h2 class="fw-bold d-flex align-items-center gap-2 mb-2" style="color: var(--cconor-azul-marino);">
-            <i class="bi bi-caret-right-fill" style="color: var(--cconor-naranja);"></i>
+            <i class="bi bi-caret-right-fill" style="color: var(--cconor-eleccion);" aria-hidden="true"></i>
             <span>Comparador de Proveedores</span>
         </h2>
         <p class="text-muted mb-0 fs-6">
@@ -29,28 +44,29 @@
         </p>
     </div>
 
-    <!-- FORMULARIO DE BÚSQUEDA (M7b: GET, sin CSRF, sin api.js) -->
+    <!-- FORMULARIO DE BÚSQUEDA (M7b: GET, sin CSRF, sin api.js). 11B: «Buscar» recto en la fila;
+         el tipo de cambio va en su propia línea como frase y, ya aplicado, como etiqueta con «Cambiar». -->
     <form method="get" action="{% url 'cotizar_productos' %}" class="cconor-card p-3 mb-4">
         <div class="row g-3 align-items-end">
-            <div class="col-md-4">
+            <div class="col-md-5">
                 <label for="q" class="form-label small fw-bold text-uppercase text-secondary mb-1">
                     <i class="bi bi-search me-1"></i> Búsqueda libre
                 </label>
-                <input type="search" class="form-control form-control-sm" id="q" name="q"
-                       value="{{ request.GET.q }}" placeholder="Ej: switch poe 24 puertos">
+                <input type="search" class="form-control" id="q" name="q"
+                       value="{{ request.GET.q }}" placeholder="Ej. switch poe 24 puertos">
             </div>
             <div class="col-md-3">
                 <label for="sku" class="form-label small fw-bold text-uppercase text-secondary mb-1">
                     <i class="bi bi-upc-scan me-1"></i> Modelo exacto (SKU)
                 </label>
-                <input type="text" class="form-control form-control-sm font-monospace" id="sku" name="sku"
-                       value="{{ request.GET.sku }}" placeholder="Ej: 2CD2043G2-I">
+                <input type="text" class="form-control font-monospace" id="sku" name="sku"
+                       value="{{ request.GET.sku }}" placeholder="Ej. 2CD2043G2-I">
             </div>
             <div class="col-md-2">
                 <label for="categoria" class="form-label small fw-bold text-uppercase text-secondary mb-1">
                     <i class="bi bi-tags me-1"></i> Categoría
                 </label>
-                <select class="form-select form-select-sm" id="categoria" name="categoria">
+                <select class="form-select" id="categoria" name="categoria">
                     <option value="">Todas</option>
                     {% for c in categorias %}
                     <option value="{{ c.pk }}" {% if request.GET.categoria == c.pk|stringformat:'s' %}selected{% endif %}>{{ c }}</option>
@@ -58,40 +74,65 @@
                 </select>
             </div>
             <div class="col-md-2">
-                <label for="tipo_cambio" class="form-label small fw-bold text-uppercase text-secondary mb-1">
-                    <i class="bi bi-currency-dollar me-1"></i> Tipo de cambio (USD)
-                </label>
-                <input type="text" class="form-control form-control-sm" id="tipo_cambio" name="tipo_cambio"
-                       value="{{ request.GET.tipo_cambio }}" inputmode="decimal"
-                       pattern="[0-9]+(\.[0-9]+)?" placeholder="17.50">
-            </div>
-            <div class="col-md-1 d-grid">
-                <button type="submit" class="btn btn-cconor-primary btn-sm">
-                    <i class="bi bi-search"></i> Buscar
+                <button type="submit" class="btn btn-cconor-primary comparador-buscar w-100 d-inline-flex align-items-center justify-content-center gap-2 text-nowrap">
+                    <i class="bi bi-search" aria-hidden="true"></i> Buscar
                 </button>
             </div>
         </div>
+        <div class="comparador-fx border-top mt-3 pt-3 d-flex flex-wrap align-items-center gap-2">
+            <label for="tipo_cambio" class="fw-semibold mb-0">Tipo de cambio para precios en dólares:</label>
+            {% if tipo_cambio %}
+            <span class="fx-aplicado"><i class="bi bi-check-lg" aria-hidden="true"></i> 1 USD = ${{ tipo_cambio.valor }} MXN</span>
+            <span class="small text-secondary">capturado {{ tipo_cambio.fecha|date:'d/m/Y H:i' }} UTC</span>
+            <details class="fx-cambiar">
+                <summary>Cambiar</summary>
+                <span class="d-inline-flex align-items-center gap-2"><span class="fw-semibold">1 USD =</span>
+                <span class="input-group fx-campo">
+                    <span class="input-group-text">$</span>
+                    <input type="text" class="form-control" id="tipo_cambio" name="tipo_cambio"
+                           value="{{ request.GET.tipo_cambio }}" inputmode="decimal"
+                           pattern="[0-9]+(\.[0-9]+)?" placeholder="Ej. 18.50">
+                    <span class="input-group-text">MXN</span>
+                </span></span>
+            </details>
+            {% else %}
+            <span class="d-inline-flex align-items-center gap-2"><span class="fw-semibold">1 USD =</span>
+                <span class="input-group fx-campo">
+                    <span class="input-group-text">$</span>
+                    <input type="text" class="form-control" id="tipo_cambio" name="tipo_cambio"
+                           value="{{ request.GET.tipo_cambio }}" inputmode="decimal"
+                           pattern="[0-9]+(\.[0-9]+)?" placeholder="Ej. 18.50">
+                    <span class="input-group-text">MXN</span>
+                </span></span>
+            <span class="small text-secondary">Obligatorio si el proveedor da precios en USD (SYSCOM).</span>
+            {% endif %}
+        </div>
     </form>
 
-    <!-- ESTADOS: ERROR / PROVEEDORES CAÍDOS -->
+    <!-- ESTADOS: aviso emergente, igual que el del cotizador (1A). Se cierra con la X (Bootstrap, sin JS propio). -->
     {% if error %}
-    <div class="alert alert-danger d-flex align-items-start gap-2" role="alert">
-        <i class="bi bi-exclamation-triangle-fill mt-1"></i>
-        <div>{{ error }}</div>
+    <div class="alert quote-error-toast fade show" role="alert">
+        <span class="quote-error-icon" aria-hidden="true"><i class="bi bi-exclamation-triangle-fill"></i></span>
+        <div class="flex-grow-1">
+            <div class="fw-bold">No se pudo buscar</div>
+            <div class="small text-secondary">{{ error }}</div>
+            {% if "tipo de cambio" in error %}
+            <button type="button" class="btn btn-sm btn-outline-primary mt-2" data-enfocar="tipo_cambio">Escribir tipo de cambio</button>
+            {% endif %}
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar aviso"></button>
     </div>
     {% elif proveedores_caidos_nombres %}
-    <div class="alert alert-warning d-flex align-items-start gap-2" role="alert">
-        <i class="bi bi-cloud-slash-fill mt-1"></i>
-        <div>No respondieron: {{ proveedores_caidos_nombres|join:", " }}. Se muestran los demás proveedores.</div>
+    <div class="alert quote-error-toast comparador-aviso fade show" role="status">
+        <span class="quote-error-icon" aria-hidden="true"><i class="bi bi-cloud-slash-fill"></i></span>
+        <div class="flex-grow-1">
+            <div class="fw-bold">Algunos proveedores no respondieron</div>
+            <div class="small text-secondary">No respondieron: {{ proveedores_caidos_nombres|join:", " }}. Se muestran los demás proveedores.</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar aviso"></button>
     </div>
     {% endif %}
 
-    <!-- CONTEXTO FX APLICADO A LA BÚSQUEDA -->
-    {% if tipo_cambio %}
-    <p class="small text-secondary mb-3">
-        <i class="bi bi-arrow-repeat me-1"></i>Tipo de cambio: {{ tipo_cambio.valor }} MXN/USD ({{ tipo_cambio.origen }}, {{ tipo_cambio.fecha|date:'d/m/Y H:i' }} UTC)
-    </p>
-    {% endif %}
 
     <!-- OFERTAS: primero las que el título nombra (M6); dentro de cada nivel, de más barata a más cara en pesos -->
     {% for o in ofertas %}
