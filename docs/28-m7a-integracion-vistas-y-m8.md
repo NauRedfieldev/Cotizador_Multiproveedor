@@ -676,6 +676,22 @@ de `inicio.js` en `tools/test_cotizador_comercial.cjs` (formatos, enlaces, llena
 
 Prueba: `test_p10_sin_barra_superior_y_pie_de_una_linea` (Inicio, cotizador, resumen y comparador).
 
+### 14.8 Comparador: botón «Buscar» y tipo de cambio (diseño 11B)
+
+- Fila de búsqueda: búsqueda libre, modelo exacto, categoría y «Buscar», con la misma altura que
+  los campos (`.comparador-buscar`) y la lupa junto al texto.
+- El tipo de cambio va en su propia línea como frase: «Tipo de cambio para precios en dólares:
+  1 USD = $ [Ej. 18.50] MXN» (el ejemplo en gris e itálica; lo escrito, en negritas). Ya aplicado
+  se muestra como etiqueta verde «✓ 1 USD = $X MXN», la hora de captura (UTC) y «Cambiar», que abre
+  el campo con el valor anterior. Sustituye la línea gris que aparecía sobre los resultados.
+- Sin cambio de funcionamiento: el valor se sigue enviando con cada búsqueda (GET) y no se recuerda
+  entre visitas. Estilos dentro de `comparador.html`.
+- **Avisos como ventana emergente** (igual que el cotizador): el error («No se pudo buscar») y
+  «Algunos proveedores no respondieron» (en ámbar) salen arriba a la derecha bajo el menú, con X
+  para cerrar (Bootstrap). Si el error es del tipo de cambio, «Escribir tipo de cambio» cierra el
+  aviso y pone el cursor en el campo (`data-enfocar` en `static/js/main.js?v=3`).
+- La flecha del título pasa de naranja a verde azulado (`--cconor-eleccion`, color de lo elegido en 4C).
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 ### 15.1 Alcance y acceso

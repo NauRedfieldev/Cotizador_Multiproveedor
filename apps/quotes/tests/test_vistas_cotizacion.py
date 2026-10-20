@@ -410,6 +410,40 @@ class VistaCotizacionTests(TestCase):
         self.assertNotContains(respuesta, "Ver en Beta")                       # beta no trae ficha: sin enlace
         self.assertContains(respuesta, "Sin foto", count=1)                    # beta no trae foto
 
+    async def test_v21_tipo_de_cambio_como_frase_y_etiqueta_con_cambiar(self):
+        """11B: sin tipo de cambio, el campo «1 USD = $ … MXN» con ejemplo; aplicado, etiqueta y «Cambiar»."""
+        sin_tipo = await self.buscar([adaptador("alfa", mxn("1", "100.00"))])
+        self.assertContains(sin_tipo, 'placeholder="Ej. 18.50"')
+        self.assertContains(sin_tipo, "Obligatorio si el proveedor da precios en USD")
+        self.assertNotContains(sin_tipo, 'class="fx-aplicado"')
+        self.assertNotContains(sin_tipo, "<summary>Cambiar</summary>")
+
+        con_tipo = await self.buscar([adaptador("alfa", usd("1", "10.25"))], tipo_cambio="17.50")
+        self.assertEqual(con_tipo.status_code, 200)
+        self.assertContains(con_tipo, "1 USD = $17.50 MXN")
+        self.assertContains(con_tipo, "<summary>Cambiar</summary>")
+        self.assertContains(con_tipo, 'value="17.50"', count=1)    # el valor viaja en la siguiente búsqueda
+        self.assertContains(con_tipo, 'id="tipo_cambio"', count=1)
+        self.assertNotContains(con_tipo, "MXN/USD (manual")         # la línea gris anterior ya no aparece
+
+    async def test_v22_los_avisos_salen_como_ventana_emergente(self):
+        """Error y proveedores caídos: aviso emergente con X; sin tipo de cambio, botón que lleva al campo."""
+        sin_tipo = await self.buscar([adaptador("alfa", usd("1", "10.25")), adaptador("beta", mxn("1", "200.00"))])
+        self.assertEqual(sin_tipo.status_code, 400)
+        self.assertContains(sin_tipo, 'class="alert quote-error-toast fade show" role="alert"', status_code=400)
+        self.assertContains(sin_tipo, "No se pudo buscar", status_code=400)
+        self.assertContains(sin_tipo, 'data-enfocar="tipo_cambio">Escribir tipo de cambio</button>', status_code=400)
+        self.assertContains(sin_tipo, 'data-bs-dismiss="alert"', status_code=400)
+        self.assertNotContains(sin_tipo, "alert-danger", status_code=400)
+
+        caido = await self.buscar([adaptador("alfa", mxn("1", "100.00")), adaptador("beta", error=TimeoutError())])
+        self.assertContains(caido, "Algunos proveedores no respondieron")
+        self.assertContains(caido, "comparador-aviso")
+        self.assertNotContains(caido, "Escribir tipo de cambio")
+        self.assertNotContains(caido, "alert-warning")
+        # La flecha del título usa el verde azulado del sitio, ya no el naranja.
+        self.assertContains(caido, 'bi-caret-right-fill" style="color: var(--cconor-eleccion);"')
+
     async def test_v18_sin_relacionados_no_aparece_el_titulo_del_bloque(self):
         respuesta = await self.buscar([adaptador("alfa", mxn("1", "100.00"))])
         self.assertNotContains(respuesta, "Otros resultados relacionados")
