@@ -996,7 +996,7 @@ body:has(#commercialQuoteApp) .cconor-navbar.sticky-top {
 .quote-error-toast { top: 160px; }
 body.quote-scrolled .quote-error-toast { top: 84px; }
 
-/* Paso 4 (6B): botones de la misma altura; avisos en ámbar solo cuando existen. */
+/* Paso 4 (6D): botones de la misma altura; avisos en ámbar solo cuando existen. */
 .quote-actions .btn {
     min-height: 44px;
     padding: 0.5rem 1.25rem;

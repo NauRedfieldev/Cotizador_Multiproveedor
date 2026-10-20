@@ -626,9 +626,10 @@ datos guardados no cambian.
   conexión» ni «Iniciar sesión»: la sesión y los permisos se revisan solos al volver a la
   pestaña (como mucho cada 15 s) y el aviso de sesión vencida ofrece iniciar sesión.
 - **Paso 4:** el recuadro «Avisos de esta cotización (N)» solo aparece cuando el cálculo
-  trae avisos. Botones de 44 px: «Limpiar partidas» en rojo a la izquierda (borra todas
-  las partidas); «Ver resumen» y «Guardar borrador» a la derecha. Se quitó «Abrir revisión
-  conocida»: otra cotización se abre desde «Mis cotizaciones» (enlace al pie del paso 4).
+  trae avisos. Botones de 44 px alineados a la derecha (diseño 6D): «Limpiar partidas» en
+  rojo (borra todas las partidas), «Ver resumen» y «Guardar borrador». Se quitó «Abrir
+  revisión conocida»: otra cotización se abre desde «Mis cotizaciones» (enlace al pie del
+  paso 4).
 - **Colores de botones (todo el sitio, opción 4C):** principales y de contorno en azul
   marino `#111638`; opción elegida, números de paso y casillas en verde azulado `#00796B`
   (`custom.css`, `home.css`). Rojo, gris y amarillo se conservan para quitar, neutro y estado.
