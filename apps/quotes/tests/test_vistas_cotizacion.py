@@ -463,6 +463,26 @@ class ProteccionTests(TestCase):
         self.assertRedirects(self.client.post(reverse("logout")), reverse("login"))
         self.assertEqual(self.client.get(reverse("comparador")).status_code, 302)
 
+    def test_p8_inicio_muestra_el_panel_solo_con_sesion(self):
+        anonimo = self.client.get(reverse("inicio"))
+        self.assertContains(anonimo, "COTIZAR PRODUCTOS")
+        self.assertNotContains(anonimo, 'id="homePanel"')
+        self.assertNotContains(anonimo, "js/inicio.js")
+
+        self.asesor.first_name = "Ana"
+        self.asesor.save()
+        self.client.force_login(self.asesor)
+        con_sesion = self.client.get(reverse("inicio"))
+        self.assertContains(con_sesion, 'id="homePanel"')
+        self.assertContains(con_sesion, "Hola, Ana")
+        self.assertContains(con_sesion, "js/inicio.js")
+        self.assertContains(con_sesion, f'data-cotizador-url="{reverse("cotizador")}"')
+        self.assertNotContains(con_sesion, "COTIZAR PRODUCTOS")
+
+    def test_p9_el_panel_de_inicio_sin_nombre_usa_el_usuario(self):
+        self.client.force_login(self.asesor)
+        self.assertContains(self.client.get(reverse("inicio")), f"Hola, {self.asesor.get_username()}")
+
 
 class CondicionesPredeterminadasTests(TestCase):
     """M2: condiciones activas que el cotizador precarga en cada cotización nueva."""

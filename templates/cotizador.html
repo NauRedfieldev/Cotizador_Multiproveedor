@@ -2,22 +2,44 @@
 {% load static %}
 {% block title %}CCONOR - Cotizador comercial{% endblock %}
 {% block content %}
-<div class="container py-3" id="commercialQuoteApp">
+<div class="container py-3" id="commercialQuoteApp" data-login-url="{% url 'login' %}?next={% url 'cotizador' %}">
     {{ condiciones_predeterminadas|json_script:"defaultConditions" }}
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-        <div><h2 class="fw-bold mb-1">Cotizador</h2><p class="text-muted mb-0">Captura interna · Cálculo y guardado en el servidor</p></div>
-        <span class="badge bg-secondary" id="quoteStatus" role="status" aria-live="polite">Conectando…</span>
+    {# Encabezado compacto (5A): identidad, estado con color y «Nueva cotización». #}
+    <div id="quoteTopHeader" class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+        <div class="d-flex flex-column gap-2">
+            <h2 class="fw-bold mb-0">Cotizador</h2>
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <span id="quoteIdentity" class="fw-semibold">Cotización nueva</span>
+                <span id="quoteStatus" class="quote-status quote-status--neutral" role="status" aria-live="polite"><span class="quote-status-dot" aria-hidden="true"></span><span id="quoteStatusText">Conectando…</span></span>
+            </div>
+            <details class="quote-info small text-muted">
+                <summary><i class="bi bi-info-circle me-1" aria-hidden="true"></i>Proveedor, costos, tipo de cambio y utilidad son internos: el cliente no los ve. <span class="quote-info-more">Más información</span></summary>
+                <p class="mb-0 mt-2">Guardar un borrador no emite ni envía documentos. «Ver resumen» abre únicamente la revisión guardada, sin cambios pendientes.</p>
+            </details>
+        </div>
+        <button type="button" id="newQuoteBtn" class="btn btn-outline-primary"><i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Nueva cotización</button>
     </div>
-    <div class="alert alert-info small">Proveedor, costos, tipo de cambio y utilidad son información interna. Guardar un borrador no emite ni envía documentos. Ver resumen abre únicamente la revisión guardada sin cambios pendientes.</div>
+    {# Barra fija (5B): aparece al bajar; el menú del sitio deja de ser fijo en esta página. #}
+    <div id="quoteStickyBar" class="quote-sticky-bar" aria-hidden="true">
+        <div class="container d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <strong class="d-none d-md-inline">Cotizador</strong>
+                <span class="text-muted d-none d-md-inline" aria-hidden="true">|</span>
+                <span id="stickyIdentity" class="fw-semibold">Cotización nueva</span>
+                <span id="stickyStatus" class="quote-status quote-status--neutral"><span class="quote-status-dot" aria-hidden="true"></span><span id="stickyStatusText"></span></span>
+                <span class="small text-muted d-none d-lg-inline">Total con IVA <strong id="stickyTotal" class="text-dark">—</strong></span>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="button" id="stickyNewBtn" class="btn btn-outline-primary btn-sm d-none d-md-inline-block" tabindex="-1"><i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Nueva cotización</button>
+                <button type="button" id="stickySaveBtn" class="btn btn-cconor-primary btn-sm" tabindex="-1">Guardar borrador</button>
+            </div>
+        </div>
+    </div>
     <div id="transitionNotice" class="alert alert-warning d-none">Preparación comercial desde histórico v1: agrega y valida las nuevas entradas; no se copian costos, unidades ni márgenes antiguos. La cabecera de origen se conserva al crear el borrador; revisa y edita cliente/condiciones después de guardarlo, antes de emitir. El original permanece intacto.</div>
-    <div id="quoteError" class="alert alert-danger d-none" role="alert"></div>
-    <div class="d-flex flex-wrap gap-2 mb-3">
-        <button type="button" id="refreshPermissionsBtn" class="btn btn-outline-secondary btn-sm">Revisar conexión y permisos</button>
-        <a href="{% url 'login' %}?next={% url 'cotizador' %}" target="_blank" rel="noopener" class="btn btn-outline-secondary btn-sm">Iniciar sesión en otra pestaña</a>
-        <button type="button" id="newQuoteBtn" class="btn btn-outline-primary btn-sm">Nueva cotización</button>
-    </div>
-    <div class="cconor-card p-3 mb-4">
-        <h5 class="fw-bold">Cliente y borrador</h5>
+    <div id="quoteNotice" class="alert alert-info small d-none" role="status"></div>
+
+    <section class="cconor-card p-3 mb-4" aria-labelledby="step1Title">
+        <div class="step-title"><span class="step-badge" aria-hidden="true">1</span><h5 class="fw-bold mb-0" id="step1Title">Datos del cliente</h5></div>
         <fieldset id="quoteHeader" disabled>
             <div class="row g-3">
                 <div class="col-md-5"><label for="clientName" class="form-label">Razón social *</label><input id="clientName" class="form-control form-control-sm" maxlength="255" autocomplete="organization" required></div>
@@ -34,75 +56,108 @@
                 <div class="col-md-6"><label for="quoteNotes" class="form-label">Notas internas (solo al crear)</label><textarea id="quoteNotes" class="form-control form-control-sm" rows="3" maxlength="6000" placeholder="No se publican en el documento"></textarea></div>
             </div>
         </fieldset>
-    </div>
-    <div class="cconor-card p-3 mb-4">
-        <h5 class="fw-bold">Productos y conceptos</h5>
+    </section>
+
+    <section class="cconor-card p-3 mb-4" aria-labelledby="step2Title">
+        <div class="step-title"><span class="step-badge" aria-hidden="true">2</span><div><h5 class="fw-bold mb-0" id="step2Title">Tipo de cambio del día</h5><div class="small text-muted">Necesario para ver precios en dólares. Aplica a toda la cotización.</div></div></div>
+        <div class="d-flex flex-wrap align-items-end gap-2">
+            <div><label for="newExchangeRate" class="form-label">Pesos por dólar (MXN)</label><input id="newExchangeRate" class="form-control" inputmode="decimal" placeholder="Valor del día" disabled></div>
+            <button type="button" id="applyFxBtn" class="btn btn-cconor-primary" disabled>Aplicar</button>
+            <button type="button" id="clearFxBtn" class="btn btn-outline-secondary" disabled>Quitar</button>
+            <span id="exchangeRate" class="fx-status" role="status" aria-live="polite">Sin tipo de cambio</span>
+        </div>
+        <div id="fxEvidence" class="small text-muted mt-2"></div>
+        <div id="fxPermissionHint" class="small text-muted"></div>
+    </section>
+
+    <section class="cconor-card p-3 mb-4" aria-labelledby="step3Title">
+        <div class="step-title"><span class="step-badge" aria-hidden="true">3</span><h5 class="fw-bold mb-0" id="step3Title">Productos y conceptos</h5></div>
         <div class="row g-2 align-items-end">
             <div class="col-md-6"><label for="productSearchInput" class="form-label">Código, modelo o descripción</label><input id="productSearchInput" class="form-control" autocomplete="off" placeholder="Buscar en catálogos" disabled></div>
             <div class="col-md-3"><label for="providerFilter" class="form-label">Proveedor (interno)</label><select id="providerFilter" class="form-select"><option value="">Todos</option></select></div>
             <div class="col-md-3"><button id="searchProductBtn" type="button" class="btn btn-cconor-primary w-100" disabled>Buscar</button></div>
         </div>
-        <div class="small text-muted mt-2">La búsqueda no modifica el tipo de cambio elegido ni las partidas capturadas. Para precios en dólares, primero aplica un tipo de cambio en «Ajustes globales». Una base IVA de origen no verificada impide agregar la oferta comercial.</div>
+        <div class="small text-muted mt-2">Para precios en dólares, primero aplica el tipo de cambio del paso 2. Buscar no cambia las partidas ya agregadas.</div>
         <div id="searchWarning" class="alert alert-warning small mt-2 d-none" role="status"></div>
         <div id="searchStatus" class="small mt-2" role="status" aria-live="polite"></div>
         <div id="resultsList" class="list-group mt-2"></div>
-        <button type="button" id="addManualBtn" class="btn btn-outline-primary mt-3" disabled>Añadir producto / servicio manual</button>
+        <button type="button" id="addManualBtn" class="btn btn-outline-primary mt-3" disabled>+ Añadir producto o servicio manual</button>
         <div id="manualPermissionHint" class="small text-muted mt-1"></div>
-    </div>
-    <div class="cconor-table-container mb-4 shadow-sm">
-        <div class="table-responsive"><table class="table cconor-table align-middle" id="quoteItemsTable">
-            <thead><tr><th>#</th><th>Concepto / proveedor interno</th><th>Unidad vendida</th><th>Cantidad</th><th>Venta por unidad MXN</th><th>Importe antes de descuento</th><th>Acciones</th></tr></thead>
-            <tbody id="quoteItemsBody"><tr><td colspan="7" class="text-center text-muted py-4">Tu cotización está vacía. Busca productos o añade un concepto manual.</td></tr></tbody>
-        </table></div>
-    </div>
-    <div class="row g-4 mb-4">
-        <div class="col-lg-6">
-            <div class="cconor-card p-3">
-                <h5 class="fw-bold">Ajustes globales</h5>
-                <div class="row g-3">
-                    <div class="col-6"><label for="taxRate" class="form-label">IVA de venta (fracción: 0.16 = 16%)</label><input id="taxRate" class="form-control form-control-sm" inputmode="decimal" value="0.16" disabled><div id="taxPermissionHint" class="small text-muted"></div></div>
-                    <div class="col-6"><label for="discountPercent" class="form-label">Descuento global antes de IVA (%)</label><input id="discountPercent" class="form-control form-control-sm" inputmode="decimal" value="0" disabled><div id="discountPermissionHint" class="small text-muted"></div></div>
-                    <div class="col-12"><label for="exchangeRate" class="form-label">Tipo de cambio elegido (pesos por dólar, interno)</label><input id="exchangeRate" class="form-control form-control-sm bg-light" value="Sin tipo de cambio" readonly><div id="fxEvidence" class="small text-muted"></div></div>
-                    <div class="col-6"><label for="newExchangeRate" class="form-label">Capturar tipo de cambio (pesos por dólar)</label><input id="newExchangeRate" class="form-control form-control-sm" inputmode="decimal" placeholder="Valor explícito, sin tasa supuesta" disabled></div>
-                    <div class="col-6 d-flex align-items-end gap-1"><button type="button" id="applyFxBtn" class="btn btn-outline-primary btn-sm" disabled>Aplicar tipo de cambio</button><button type="button" id="clearFxBtn" class="btn btn-outline-secondary btn-sm" disabled>Quitar</button></div>
-                    <div class="col-12 small text-muted" id="fxPermissionHint"></div>
+        <div class="cconor-table-container mt-3">
+            <div class="table-responsive"><table class="table cconor-table align-middle mb-0" id="quoteItemsTable">
+                <thead><tr><th>#</th><th>Concepto / proveedor interno</th><th>Unidad vendida</th><th>Cantidad</th><th>Venta por unidad MXN</th><th>Importe antes de descuento</th><th>Acciones</th></tr></thead>
+                <tbody id="quoteItemsBody"><tr><td colspan="7" class="text-center text-muted py-4">Tu cotización está vacía. Busca productos o añade un concepto manual.</td></tr></tbody>
+            </table></div>
+        </div>
+    </section>
+
+    <section class="mb-4" aria-labelledby="step4Title">
+        <div class="step-title step-title-outside"><span class="step-badge" aria-hidden="true">4</span><h5 class="fw-bold mb-0" id="step4Title">Revisar y guardar</h5></div>
+        <div class="row g-4 mb-4">
+            <div class="col-lg-6">
+                <div class="cconor-card p-3">
+                    <h6 class="fw-bold mb-1">Ajustes del total</h6>
+                    <p class="small text-muted">Se aplican al total; puedes cambiarlos en cualquier momento.</p>
+                    <div class="row g-3">
+                        <div class="col-6"><label for="taxRate" class="form-label">IVA (%)</label><input id="taxRate" class="form-control form-control-sm" inputmode="decimal" value="16" disabled><div id="taxPermissionHint" class="small text-muted"></div></div>
+                        <div class="col-6"><label for="discountPercent" class="form-label">Descuento antes de IVA (%)</label><input id="discountPercent" class="form-control form-control-sm" inputmode="decimal" value="0" disabled><div id="discountPermissionHint" class="small text-muted"></div></div>
+                    </div>
+                </div>
+                {# Solo aparece cuando el cálculo trae avisos. #}
+                <div id="quoteWarningsCard" class="cconor-card quote-warnings-card p-3 mt-4 d-none">
+                    <h6 id="quoteWarningsTitle" class="fw-bold">Avisos de esta cotización</h6>
+                    <p class="small text-muted">Puedes guardar un borrador con avisos. Los que piden aceptación se aceptan sobre la versión guardada; cambiar datos deja sin vigencia las aceptaciones anteriores.</p>
+                    <div id="quoteWarnings" aria-live="polite"></div>
                 </div>
             </div>
+            <div class="col-lg-6"><div class="summary-panel">
+                <h5 class="fw-bold">Resumen económico interno</h5>
+                <div id="calculationStatus" class="small mb-2" role="status" aria-live="polite">Sin cálculo vigente</div>
+                <div class="summary-row"><span>Costos conocidos sin IVA</span><span id="costBaseDisplay">—</span></div>
+                <div id="costCompleteness" class="small text-muted mb-2"></div>
+                <div class="summary-row"><span>Venta antes del descuento</span><span id="saleSubtotalDisplay">—</span></div>
+                <div class="summary-row"><span>Descuento global antes de IVA</span><span id="discountDisplay">—</span></div>
+                <div class="summary-row"><span>Subtotal después del descuento</span><span id="subtotalDisplay">—</span></div>
+                <div class="summary-row"><span>IVA</span><span id="ivaDisplay">—</span></div>
+                <div class="summary-row summary-total"><span>Total con IVA</span><span id="totalFinalDisplay">—</span></div>
+                <div class="summary-row"><span>Utilidad bruta estimada (sin IVA)</span><span id="marginDisplay">—</span></div>
+                <p class="small text-muted mb-0">Unitarios aproximados identificados por el servidor. Prevalece el importe definitivo de la partida; no hay descuento repartido por línea.</p>
+            </div></div>
         </div>
-        <div class="col-lg-6"><div class="summary-panel">
-            <h5 class="fw-bold">Resumen económico interno</h5>
-            <div id="calculationStatus" class="small mb-2" role="status" aria-live="polite">Sin cálculo vigente</div>
-            <div class="summary-row"><span>Costos conocidos sin IVA</span><span id="costBaseDisplay">—</span></div>
-            <div id="costCompleteness" class="small text-muted mb-2"></div>
-            <div class="summary-row"><span>Venta antes del descuento</span><span id="saleSubtotalDisplay">—</span></div>
-            <div class="summary-row"><span>Descuento global antes de IVA</span><span id="discountDisplay">—</span></div>
-            <div class="summary-row"><span>Subtotal después del descuento</span><span id="subtotalDisplay">—</span></div>
-            <div class="summary-row"><span>IVA</span><span id="ivaDisplay">—</span></div>
-            <div class="summary-row summary-total"><span>Total con IVA</span><span id="totalFinalDisplay">—</span></div>
-            <div class="summary-row"><span>Utilidad bruta estimada (sin IVA)</span><span id="marginDisplay">—</span></div>
-            <p class="small text-muted mb-0">Unitarios aproximados identificados por el servidor. Prevalece el importe definitivo de la partida; no hay descuento repartido por línea.</p>
-        </div></div>
-    </div>
-    <div class="cconor-card p-3 mb-4">
-        <h5 class="fw-bold">Advertencias y confirmaciones</h5>
-        <p class="small text-muted">Puedes guardar un borrador con avisos. Solo se aceptan advertencias de una versión guardada; cambiar datos deja sin vigencia las aceptaciones anteriores.</p>
-        <div id="quoteWarnings" aria-live="polite">Sin cálculo vigente.</div>
-    </div>
-    <div class="d-flex flex-wrap gap-2 mb-4">
-        <button type="button" id="saveQuoteBtn" class="btn btn-cconor-primary" disabled>Guardar borrador</button>
-        <button type="button" id="clearTableBtn" class="btn btn-outline-secondary" disabled>Limpiar partidas del borrador</button>
-        <button type="button" id="viewSummaryBtn" class="btn btn-outline-primary" disabled title="Requiere una revisión guardada sin cambios pendientes">Ver resumen</button>
-    </div>
-    <div class="cconor-card p-3 mb-4">
-        <h5 class="fw-bold">Abrir revisión conocida</h5>
-        <div class="row g-2 align-items-end">
-            <div class="col-md-6"><label for="openFolio" class="form-label">Folio</label><input id="openFolio" class="form-control form-control-sm" maxlength="20"></div>
-            <div class="col-md-3"><label for="openRevision" class="form-label">Número de revisión</label><input id="openRevision" class="form-control form-control-sm" inputmode="numeric" value="1"></div>
-            <div class="col-md-3"><button id="openQuoteBtn" type="button" class="btn btn-outline-primary btn-sm w-100" disabled>Abrir revisión exacta</button></div>
+        {# 6D: los tres botones alineados a la derecha; «Limpiar» (destructivo) en rojo. #}
+        <div class="quote-actions d-flex flex-wrap justify-content-end align-items-center gap-2">
+            <button type="button" id="clearTableBtn" class="btn btn-outline-danger" disabled><i class="bi bi-trash3" aria-hidden="true"></i>Limpiar partidas</button>
+            <button type="button" id="viewSummaryBtn" class="btn btn-outline-primary" disabled title="Requiere una revisión guardada sin cambios pendientes">Ver resumen</button>
+            <button type="button" id="saveQuoteBtn" class="btn btn-cconor-primary" disabled>Guardar borrador</button>
         </div>
-        <p class="small text-muted mt-2 mb-0">No hay listado global ni borrado de historial. Revisiones emitidas e históricas se abren en solo lectura.</p>
-    </div>
+        <p class="small text-muted text-end mt-3 mb-0">¿Buscas otra cotización? <a href="{% url 'resumen' %}" class="fw-semibold">Ábrela desde Mis cotizaciones →</a></p>
+    </section>
+
     <div class="quote-notice">Esta cotización no es un pedido ni aparta mercancía. El preview no guarda; guardar no emite. No hay guardado automático.</div>
+
+    <div id="quoteError" class="quote-error-toast d-none" role="alert">
+        <span class="quote-error-icon" aria-hidden="true"><i class="bi bi-exclamation-triangle-fill"></i></span>
+        <div class="flex-grow-1">
+            <div id="quoteErrorTitle" class="fw-bold">No se pudo completar</div>
+            <div id="quoteErrorText" class="small text-secondary"></div>
+            <button type="button" id="quoteErrorAction" class="btn btn-sm btn-outline-primary mt-2 d-none"></button>
+        </div>
+        <button type="button" id="quoteErrorClose" class="btn-close" aria-label="Cerrar aviso"></button>
+    </div>
+    <dialog id="quoteIssuesDialog" class="quote-issues-dialog" aria-labelledby="quoteIssuesTitle">
+        <div class="p-4">
+            <div class="d-flex gap-3 align-items-start mb-3">
+                <span class="quote-error-icon" aria-hidden="true"><i class="bi bi-exclamation-triangle-fill"></i></span>
+                <div class="flex-grow-1">
+                    <h5 id="quoteIssuesTitle" class="fw-bold mb-1">Revisa estos puntos antes de guardar</h5>
+                    <p class="small text-muted mb-0">Te llevamos a cada uno con un clic.</p>
+                </div>
+                <button type="button" id="quoteIssuesClose" class="btn-close" aria-label="Cerrar"></button>
+            </div>
+            <ul id="quoteIssuesList" class="list-group mb-3"></ul>
+            <div class="text-end"><button type="button" id="quoteIssuesOk" class="btn btn-cconor-primary">Entendido</button></div>
+        </div>
+    </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=12"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=18"></script>{% endblock %}

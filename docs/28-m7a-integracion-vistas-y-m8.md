@@ -593,6 +593,75 @@ nueva. Son solo un valor inicial: el asesor los edita o borra antes de guardar.
 Pruebas: `CondicionesPredeterminadasTests` (`test_vistas_cotizacion.py`) y casos M2 de
 `tools/test_cotizador_comercial.cjs`. Estado y textos oficiales: [docs/30](30-puesta-en-marcha.md) M2 y B1.
 
+### 14.5 Ajustes visuales del cotizador (2026-10-19)
+
+Solo presentación (plantilla, `cotizador.js`, `custom.css`): el cálculo, el API y los
+datos guardados no cambian.
+
+- **Pasos numerados:** 1 Datos del cliente → 2 Tipo de cambio del día → 3 Productos y
+  conceptos → 4 Revisar y guardar. El tipo de cambio va antes de la búsqueda porque las
+  ofertas en dólares lo necesitan; IVA y descuento quedan en «Ajustes del total».
+- **Avisos:** al guardar se revisan todos los pendientes a la vez. Uno solo se muestra
+  como aviso emergente persistente con «Ir al campo/Ir a la partida»; varios abren una
+  ventana con la lista y un botón por pendiente. El campo o la partida se marcan en rojo
+  hasta corregirlos. Los errores del servidor usan el mismo aviso; los de búsqueda por
+  falta de tipo de cambio ofrecen «Ir al tipo de cambio». El cálculo automático mientras
+  se captura no lanza avisos: el resumen indica qué dato falta. Solo lectura e
+  histórico v1 se informan con un mensaje azul, no como error.
+- **Detalle de partida:** tres columnas (Del proveedor / Concepto y costo · ¿Cómo lo
+  vendes? · Precio al cliente) con opciones en botones. «Igual que el proveedor» usa
+  una sola unidad (factor 1); «Por partes» pide la unidad del proveedor, la tuya y
+  cuántas trae («1 Bobina = 100 Metro»). La casilla «Revisé…» sigue siendo obligatoria.
+  El resumen por partida (costo y precio por unidad, importe, utilidad) viene del preview
+  del servidor; los redondeos de pantalla se marcan con ≈.
+- **IVA en porcentaje:** la pantalla muestra «16»; el navegador envía la fracción exacta
+  `0.1600` (conversión de texto con BigInt, sin float). Igual para el IVA incluido de
+  costos o precios manuales.
+
+- **Encabezado:** título, folio · revisión y una etiqueta de estado con color (gris nueva,
+  ámbar cambios sin guardar, verde guardado, azul solo lectura, rojo sesión vencida o
+  conflicto) y «Nueva cotización». Al bajar, el menú del sitio con el logo deja de ser fijo
+  (solo en esta página) y aparece una barra fija con folio, estado, total y los botones de
+  nueva cotización y guardar (delegan en los principales). Ya no hay botones «Revisar
+  conexión» ni «Iniciar sesión»: la sesión y los permisos se revisan solos al volver a la
+  pestaña (como mucho cada 15 s) y el aviso de sesión vencida ofrece iniciar sesión.
+- **Paso 4:** el recuadro «Avisos de esta cotización (N)» solo aparece cuando el cálculo
+  trae avisos. Botones de 44 px alineados a la derecha (diseño 6D): «Limpiar partidas» en
+  rojo (borra todas las partidas), «Ver resumen» y «Guardar borrador». Se quitó «Abrir
+  revisión conocida»: otra cotización se abre desde «Mis cotizaciones» (enlace al pie del
+  paso 4).
+- **Colores de botones (todo el sitio, opción 4C):** principales y de contorno en azul
+  marino `#111638`; opción elegida, números de paso y casillas en verde azulado `#00796B`
+  (`custom.css`, `home.css`). Rojo, gris y amarillo se conservan para quitar, neutro y estado.
+
+Pruebas: casos de conversión, redondeo, unidades y campo de cada error en
+`tools/test_cotizador_comercial.cjs`; recorrido en navegador aislado.
+
+### 14.6 Inicio como panel de cotizaciones (diseño 7D)
+
+- **Con sesión**, `/` (`templates/inicio.html`) muestra un panel; **sin sesión** conserva la
+  portada de siempre (hero, beneficios y categorías), que sigue siendo pública.
+- **Contenido:** saludo («Hola, nombre»), «Buscar productos» (comparador) y «+ Nueva cotización»;
+  tres tarjetas (borradores por terminar, emitidas, emitidas este mes) y dos paneles,
+  **Borradores** y **Emitidas**, con las 3 más recientes de cada uno.
+- **Datos:** `static/js/inicio.js` pide dos veces el listado de «Mis cotizaciones»
+  (`GET /api/v1/quotes/?status=DRAFT|ISSUED&page=1`, una fila por folio, última revisión). No
+  hay endpoint nuevo ni cambio de datos guardados. Los conteos salen de `pagination.count`;
+  «emitidas este mes» cuenta las filas de la primera página cuya `issue_date` es del mes en
+  curso (si todas lo son y hay más páginas, muestra «N+»). Los importes se muestran como texto
+  del servidor, sin convertir a número.
+- **Acciones:** borrador → `/cotizador/?folio=…&revision=…` («Continuar editando»); emitida →
+  `/resumen/?folio=…&revision=…` («Ver resumen») y `/cotizaciones/<folio>/pdf/?revision=…`
+  («PDF»). Un histórico v1 solo ofrece «Ver resumen» (su PDF puede traer costos y se abre desde
+  el resumen, con su advertencia). **«Nueva revisión» no está en el panel:** esa operación,
+  con su confirmación y manejo de resultado incierto, se hace desde el resumen.
+- **Sin permisos o con error:** el aviso en ámbar muestra el mensaje del servidor y las listas
+  quedan con un texto de «no se pudieron cargar»; nunca se inventan datos.
+- **Caché:** `home.css?v=4`, `inicio.js?v=1`.
+
+Pruebas: `test_p8`/`test_p9` en `test_vistas_cotizacion.py` (panel solo con sesión) y cuatro casos
+de `inicio.js` en `tools/test_cotizador_comercial.cjs` (formatos, enlaces, llenado y error).
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 ### 15.1 Alcance y acceso
