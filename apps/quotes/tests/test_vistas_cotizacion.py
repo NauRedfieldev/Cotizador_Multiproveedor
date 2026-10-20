@@ -24,7 +24,7 @@ from apps.providers.tests.soporte import (
     producto,
     sin_red,
 )
-from apps.quotes.views import LIMITE_COTIZACIONES
+from apps.quotes.views import CLAVE_TIPO_CAMBIO, LIMITE_COTIZACIONES
 
 PLANTILLA = "comparador.html"
 
@@ -443,6 +443,45 @@ class VistaCotizacionTests(TestCase):
         self.assertNotContains(caido, "alert-warning")
         # La flecha del título usa el verde azulado del sitio, ya no el naranja.
         self.assertContains(caido, 'bi-caret-right-fill" style="color: var(--cconor-eleccion);"')
+
+    async def test_v23_el_tipo_de_cambio_se_recuerda_en_la_sesion(self):
+        """Se reutiliza con su hora original; otro valor lo reemplaza, uno inválido no y vacío lo olvida."""
+        adaptadores = [adaptador("alfa", usd("1", "10.00")), adaptador("beta", mxn("1", "200.00"))]
+        primera = await self.buscar(adaptadores, tipo_cambio="17.50")
+        self.assertEqual(primera.status_code, 200)
+        capturado = primera.context["tipo_cambio"].fecha
+
+        segunda = await self.buscar(adaptadores)  # sin enviarlo
+        self.assertEqual(segunda.status_code, 200)
+        self.assertEqual((segunda.context["tipo_cambio"].valor, segunda.context["tipo_cambio"].fecha), (Decimal("17.50"), capturado))
+        self.assertContains(segunda, "se conserva durante tu sesión")
+        self.assertNotContains(segunda, "Capturado otro día")
+        self.assertContains(segunda, 'value="17.50"')                  # viaja en la siguiente búsqueda
+
+        with sin_red():
+            blanco = await self.async_client.get(reverse("cotizar_productos"))
+        self.assertContains(blanco, "1 USD = $17.50 MXN")
+
+        await self.buscar(adaptadores, tipo_cambio="18.00")
+        invalido = await self.buscar(adaptadores, tipo_cambio="18,00")
+        self.assertEqual(invalido.status_code, 400)
+        tercera = await self.buscar(adaptadores)
+        self.assertEqual(tercera.context["tipo_cambio"].valor, Decimal("18.00"))
+
+        vacio = await self.buscar(adaptadores, tipo_cambio="")
+        self.assertEqual(vacio.status_code, 400)                        # USD sin tipo de cambio, como antes
+        sesion = await self.async_client.asession()
+        self.assertIsNone(await sesion.aget(CLAVE_TIPO_CAMBIO))
+
+    async def test_v24_un_tipo_de_cambio_de_otro_dia_se_marca(self):
+        sesion = await self.async_client.asession()
+        await sesion.aset(CLAVE_TIPO_CAMBIO, {"valor": "17.50", "fecha": "2020-01-02T10:00:00+00:00"})
+        await sesion.asave()
+        with sin_red():
+            respuesta = await self.async_client.get(reverse("cotizar_productos"))
+        self.assertContains(respuesta, "1 USD = $17.50 MXN")
+        self.assertContains(respuesta, "Capturado otro día: confirma que siga vigente.")
+        self.assertContains(respuesta, "capturado 02/01/2020 10:00 UTC")
 
     async def test_v18_sin_relacionados_no_aparece_el_titulo_del_bloque(self):
         respuesta = await self.buscar([adaptador("alfa", mxn("1", "100.00"))])

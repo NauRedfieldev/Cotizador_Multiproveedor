@@ -9,6 +9,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from asgiref.sync import sync_to_async
@@ -31,7 +32,7 @@ from apps.providers.contracts import ProductQuery, ProviderOffer
 from apps.providers.models import Provider
 from apps.providers.service import search_all
 
-from .comparison import NIVEL_SIN_COINCIDENCIA, comparar_configurado, tipo_cambio_manual
+from .comparison import NIVEL_SIN_COINCIDENCIA, TipoCambio, comparar_configurado, tipo_cambio_manual
 from .models import DefaultCommercialCondition, Quote, QuoteRevision
 from .pdf import build_demo_quote, generate_quote_pdf, money, safe_filename
 from .snapshots import ArchivedPDFError, RevisionConflict, obtener_documento
@@ -246,13 +247,46 @@ class _EntradaInvalida(ValueError):
     """Error de los parámetros; su mensaje se muestra tal cual al usuario."""
 
 
+# Tipo de cambio del comparador recordado en la sesión: {"valor": "18.50", "fecha": ISO con zona}.
+CLAVE_TIPO_CAMBIO = "comparador_tipo_cambio"
+
+
 @require_GET
 @login_required
 async def cotizar_productos(request):
-    """GET /comparador/?q=&sku=&categoria=&tipo_cambio= → comparador.html."""
+    """GET /comparador/?q=&sku=&categoria=&tipo_cambio= → comparador.html.
+
+    El último tipo de cambio válido se recuerda en la sesión (solo en el comparador; el cotizador
+    tiene su propio contexto con permisos) y se usa mientras no se envíe otro. Enviarlo vacío lo
+    olvida; cerrar sesión también.
+    """
+    recordado = await request.session.aget(CLAVE_TIPO_CAMBIO)
+    if "tipo_cambio" not in request.GET and recordado:
+        parametros = request.GET.copy()
+        parametros["tipo_cambio"] = recordado["valor"]
+        request.GET = parametros
     status, contexto = await buscar(request)
+    await _recordar_tipo_cambio(request, contexto, recordado)
     # Fuera del event loop: los context processors pueden leer la sesión (ORM síncrono).
     return await sync_to_async(render)(request, PLANTILLA_COMPARADOR, contexto, status=status)
+
+
+async def _recordar_tipo_cambio(request, contexto, recordado):
+    """Guarda el tipo de cambio aplicado y conserva su hora original de captura mientras no cambie."""
+    texto = request.GET.get("tipo_cambio", "").strip()
+    tipo = contexto["tipo_cambio"]
+    if tipo is None and recordado and texto == recordado["valor"] and not contexto["error"]:
+        # Formulario en blanco: buscar() no lee parámetros, pero se muestra el recordado.
+        tipo = tipo_cambio_manual(texto, fecha=datetime.fromisoformat(recordado["fecha"]))
+    if tipo is not None:
+        if recordado and recordado["valor"] == f"{tipo.valor:f}":
+            tipo = TipoCambio(tipo.valor, tipo.origen, datetime.fromisoformat(recordado["fecha"]))
+        else:
+            await request.session.aset(CLAVE_TIPO_CAMBIO, {"valor": f"{tipo.valor:f}", "fecha": tipo.fecha.isoformat()})
+        contexto["tipo_cambio"] = tipo
+        contexto["tipo_cambio_otro_dia"] = timezone.localdate(tipo.fecha) != timezone.localdate()
+    elif not texto and recordado:
+        await request.session.apop(CLAVE_TIPO_CAMBIO)  # vacío a propósito: se olvida
 
 
 async def buscar(request):

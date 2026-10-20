@@ -17,7 +17,7 @@ from apps.providers.models import Provider
 from apps.providers.tests.soporte import adaptadores_registrados, crear_proveedor, sin_red
 from apps.quotes import api
 from apps.quotes.tests.test_vistas_cotizacion import adaptador, crear_asesor, mxn, usd
-from apps.quotes.views import LIMITE_COTIZACIONES
+from apps.quotes.views import CLAVE_TIPO_CAMBIO, LIMITE_COTIZACIONES
 from apps.quotes.tests.test_commercial_persistence import CommercialFixtures
 from apps.quotes.tests.test_api_cotizaciones import alta_comercial
 from apps.quotes.models import QuoteSelectionContext
@@ -108,6 +108,11 @@ class ApiBusquedaTests(TestCase):
         ])
         self.assertEqual(cuerpo["data"][0]["product_url"], "https://www.ejemplo.invalid/producto/1.html")
         self.assertNotIn("image_url", cuerpo["data"][0])
+
+    async def test_a1d_la_busqueda_del_cotizador_no_toca_el_tipo_de_cambio_del_comparador(self):
+        await self.buscar([adaptador("alfa", usd("7", "10.25")), adaptador("beta")], tipo_cambio="17.50")
+        sesion = await self.async_client.asession()
+        self.assertIsNone(await sesion.aget(CLAVE_TIPO_CAMBIO))
 
     async def test_a2_auto_match_incluye_el_canonico(self):
         categoria = await Category.objects.acreate(name="Redes sintéticas")

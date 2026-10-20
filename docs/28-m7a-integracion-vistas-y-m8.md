@@ -700,6 +700,12 @@ solo crean su contenedor cuando hay mensajes. Caché: `custom.css?v=10`, `home.c
   para cerrar (Bootstrap). Si el error es del tipo de cambio, «Escribir tipo de cambio» cierra el
   aviso y pone el cursor en el campo (`data-enfocar` en `static/js/main.js?v=3`).
 - La flecha del título pasa de naranja a verde azulado (`--cconor-eleccion`, color de lo elegido en 4C).
+- **Tipo de cambio recordado en la sesión** (2026-10-20): el último valor válido del comparador se
+  guarda en la sesión (`comparador_tipo_cambio`: valor y hora de captura con zona) y se reutiliza al volver
+  o al buscar sin escribirlo, con su hora original. Otro valor lo reemplaza; uno inválido no; enviarlo
+  vacío (desde «Cambiar») lo olvida; cerrar sesión también. Se avisa con «se conserva durante tu sesión»
+  y, si es de otro día, «Capturado otro día: confirma que siga vigente». Solo el comparador: la búsqueda
+  del cotizador no lee ni escribe esta clave (tiene su propio contexto de tipo de cambio con permisos).
 
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
