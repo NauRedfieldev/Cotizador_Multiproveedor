@@ -46,7 +46,7 @@
 
     <!-- FORMULARIO DE BÚSQUEDA (M7b: GET, sin CSRF, sin api.js). 11B: «Buscar» recto en la fila;
          el tipo de cambio va en su propia línea como frase y, ya aplicado, como etiqueta con «Cambiar». -->
-    <form method="get" action="{% url 'cotizar_productos' %}" class="cconor-card p-3 mb-4">
+    <form method="get" action="{% url 'cotizar_productos' %}" class="cconor-card p-3 mb-4" data-tipo-cambio-recargar>
         <div class="row g-3 align-items-end">
             <div class="col-md-5">
                 <label for="q" class="form-label small fw-bold text-uppercase text-secondary mb-1">
@@ -83,7 +83,12 @@
             <label for="tipo_cambio" class="fw-semibold mb-0">Tipo de cambio para precios en dólares:</label>
             {% if tipo_cambio %}
             <span class="fx-aplicado"><i class="bi bi-check-lg" aria-hidden="true"></i> 1 USD = ${{ tipo_cambio.valor }} MXN</span>
-            <span class="small text-secondary">capturado {{ tipo_cambio.fecha|date:'d/m/Y H:i' }} UTC</span>
+            <span class="small text-secondary">{% if tipo_cambio.origen == "syscom" %}SYSCOM · {% else %}capturado {% endif %}{{ tipo_cambio.fecha|date:'d/m/Y H:i' }} UTC · se conserva durante tu sesión</span>
+            {% if tipo_cambio_syscom_nuevo %}
+            <span class="fx-sugerido">SYSCOM ahora: <strong>${{ tipo_cambio_syscom_nuevo }}</strong>
+                <button type="submit" name="usar_tipo_cambio" value="actualizar" class="btn btn-sm btn-outline-primary">Actualizar</button></span>
+            {% endif %}
+            {% if tipo_cambio_otro_dia %}<span class="small fw-semibold" style="color: #B54708;">Capturado otro día: confirma que siga vigente.</span>{% endif %}
             <details class="fx-cambiar">
                 <summary>Cambiar</summary>
                 <span class="d-inline-flex align-items-center gap-2"><span class="fw-semibold">1 USD =</span>
@@ -104,7 +109,13 @@
                            pattern="[0-9]+(\.[0-9]+)?" placeholder="Ej. 18.50">
                     <span class="input-group-text">MXN</span>
                 </span></span>
-            <span class="small text-secondary">Obligatorio si el proveedor da precios en USD (SYSCOM).</span>
+            {% if tipo_cambio_sugerido %}
+            <span class="fx-sugerido">SYSCOM hoy: <strong>${{ tipo_cambio_sugerido }}</strong>{% if tipo_cambio_sugerido_etiqueta %} <span class="small text-secondary">({{ tipo_cambio_sugerido_etiqueta }})</span>{% endif %}
+                <button type="submit" name="usar_tipo_cambio" value="syscom" class="btn btn-sm btn-outline-primary">Usar</button></span>
+            {% elif tipo_cambio_syscom_fallo %}
+            <span class="small text-secondary">No se pudo consultar el de SYSCOM; escríbelo a mano.</span>
+            {% endif %}
+            <span class="small text-secondary">Obligatorio si el proveedor da precios en USD (SYSCOM). Se conserva durante tu sesión.</span>
             {% endif %}
         </div>
     </form>

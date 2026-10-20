@@ -76,6 +76,17 @@ en una pestaña nueva (`noopener noreferrer`) en el comparador y en los resultad
 la captura de la búsqueda, la cotización ni el PDF del cliente. El contrato (`ProviderOffer`) rechaza
 cualquier valor que no sea una URL `https` sin espacios ni comillas.
 
+### 3.3 Tipo de cambio público (`consultar_tipo_cambio`)
+
+`GET {base_url}/tipocambio` es **público** (sin token) y responde en pesos por dólar, como texto
+decimal y sin fecha: `normal` (contado), `preferencial`, `un_dia`, `una_semana`, `dos_semanas`,
+`tres_semanas` y `un_mes` (formato confirmado con una consulta real autorizada el 2026-10-20).
+`consultar_tipo_cambio(base_url, campo, client)` devuelve el `Decimal` exacto del campo pedido y lanza
+`ProviderResponseError` si falta, no es número, es 0 o negativo, o la respuesta no es JSON/HTTP 200;
+nunca inventa un valor. El campo se elige con `SYSCOM_TIPO_CAMBIO_CAMPO` (`.env`, por defecto
+`normal`; M4 en docs/30: CCONOR debe confirmar si paga de contado o a plazo). Solo lo usa la
+sugerencia del comparador (docs/28 §14.8); no participa en búsquedas ni cotizaciones.
+
 ## 4. Token y credenciales
 
 **Credenciales:**

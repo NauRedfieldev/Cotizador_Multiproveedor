@@ -4,6 +4,8 @@ Usa el mismo flujo que el comparador; aquí se prueba el contrato JSON de docs/2
 ofertas guardadas en sesión. El modo degradado en sí ya lo cubren V1–V16.
 """
 import json
+
+import httpx
 from decimal import Decimal
 from unittest import mock
 
@@ -17,7 +19,7 @@ from apps.providers.models import Provider
 from apps.providers.tests.soporte import adaptadores_registrados, crear_proveedor, sin_red
 from apps.quotes import api
 from apps.quotes.tests.test_vistas_cotizacion import adaptador, crear_asesor, mxn, usd
-from apps.quotes.views import LIMITE_COTIZACIONES
+from apps.quotes.views import CLAVE_TIPO_CAMBIO, LIMITE_COTIZACIONES
 from apps.quotes.tests.test_commercial_persistence import CommercialFixtures
 from apps.quotes.tests.test_api_cotizaciones import alta_comercial
 from apps.quotes.models import QuoteSelectionContext
@@ -108,6 +110,11 @@ class ApiBusquedaTests(TestCase):
         ])
         self.assertEqual(cuerpo["data"][0]["product_url"], "https://www.ejemplo.invalid/producto/1.html")
         self.assertNotIn("image_url", cuerpo["data"][0])
+
+    async def test_a1d_la_busqueda_del_cotizador_no_toca_el_tipo_de_cambio_del_comparador(self):
+        await self.buscar([adaptador("alfa", usd("7", "10.25")), adaptador("beta")], tipo_cambio="17.50")
+        sesion = await self.async_client.asession()
+        self.assertIsNone(await sesion.aget(CLAVE_TIPO_CAMBIO))
 
     async def test_a2_auto_match_incluye_el_canonico(self):
         categoria = await Category.objects.acreate(name="Redes sintéticas")
@@ -213,6 +220,77 @@ class ApiBusquedaTests(TestCase):
                                 "code": "UNAUTHENTICATED", "details": {}})
         self.assertEqual(llamadas, [])
         self.assertIsNone(await cache.aget("cotizar:127.0.0.1"))
+
+    # 15A/16A: tipo de cambio de la sesión, uno solo para el chip del menú, el comparador y el cotizador.
+    async def tc(self, metodo="get", cuerpo=None, consulta=None):
+        url = reverse("api_tipo_cambio_sesion")
+        consulta = consulta or mock.AsyncMock(return_value=Decimal("18.54"))
+        with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta), sin_red():
+            if metodo == "get":
+                respuesta = await self.async_client.get(url)
+            else:
+                respuesta = await getattr(self.async_client, metodo)(url, json.dumps(cuerpo), content_type="application/json")
+        return respuesta, json.loads(respuesta.content) if respuesta["Content-Type"] == "application/json" else None
+
+    async def recordado(self):
+        return await (await self.async_client.asession()).aget(CLAVE_TIPO_CAMBIO)
+
+    async def test_a12_sin_tipo_de_cambio_ni_syscom(self):
+        respuesta, cuerpo = await self.tc()
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(cuerpo, {"success": True, "data": {"session": None, "syscom": None, "syscom_failed": False}})
+
+    async def test_a13_guardar_a_mano_lo_comparte_con_el_comparador(self):
+        respuesta, cuerpo = await self.tc("put", {"value": "18.70"})
+        self.assertEqual(respuesta.status_code, 200)
+        guardado = await self.recordado()
+        self.assertEqual((guardado["valor"], guardado["origen"]), ("18.70", "manual"))
+        self.assertEqual(cuerpo["data"]["session"], {"value": "18.70", "date": guardado["fecha"], "source": "manual"})
+        with sin_red():
+            comparador = await self.async_client.get(reverse("cotizar_productos"))
+        self.assertContains(comparador, "1 USD = $18.70 MXN")
+        self.assertFalse(await QuoteSelectionContext.objects.aexists())   # no toca ninguna cotización
+
+    async def test_a14_usar_syscom_toma_el_valor_del_servidor(self):
+        await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
+        _, antes = await self.tc()
+        self.assertEqual(antes["data"]["syscom"], {"value": "18.54", "label": "contado"})
+        await self.tc("put", {"value": "18.54"})            # el mismo valor a mano; «Usar» lo marca como SYSCOM
+        respuesta, cuerpo = await self.tc("put", {"use_syscom": True})
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual((cuerpo["data"]["session"]["value"], cuerpo["data"]["session"]["source"]), ("18.54", "syscom"))
+        fecha = (await self.recordado())["fecha"]
+        await self.tc("put", {"value": "18.54000000"})      # el mismo valor (así lo devuelve el cotizador) conserva hora y origen
+        self.assertEqual(await self.recordado(), {"valor": "18.54", "fecha": fecha, "origen": "syscom"})
+        await self.tc("put", {"value": "18.60"})
+        self.assertEqual((await self.recordado())["origen"], "manual")
+
+    async def test_a15_si_syscom_no_responde_no_cambia_nada(self):
+        await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
+        await self.tc("put", {"value": "18.70"})
+        await cache.aclear()
+        falla = mock.AsyncMock(side_effect=httpx.ConnectError("sin red"))
+        respuesta, cuerpo = await self.tc("put", {"use_syscom": True}, consulta=falla)
+        self.assertEqual(respuesta.status_code, 503)
+        self.assertEqual(cuerpo["code"], "UNAVAILABLE")
+        self.assertEqual((await self.recordado())["valor"], "18.70")
+        _, estado = await self.tc(consulta=falla)
+        self.assertEqual((estado["data"]["syscom"], estado["data"]["syscom_failed"]), (None, True))
+
+    async def test_a16_entradas_invalidas_dan_400_sin_guardar(self):
+        for cuerpo in ({"value": "17,50"}, {"value": "0"}, {"value": "1e3"}, {"value": 18.5}, {"value": ""}, {},
+                       {"use_syscom": False}, {"value": "18", "use_syscom": True}, {"otro": "1"}):
+            with self.subTest(cuerpo=cuerpo):
+                respuesta, _ = await self.tc("put", cuerpo)
+                self.assertEqual(respuesta.status_code, 400)
+                self.assertIsNone(await self.recordado())
+
+    async def test_a17_tipo_cambio_sesion_pide_sesion_y_solo_get_o_put(self):
+        respuesta, _ = await self.tc("post", {"value": "18.70"})
+        self.assertEqual(respuesta.status_code, 405)
+        await self.async_client.alogout()
+        respuesta, cuerpo = await self.tc("put", {"value": "18.70"})
+        self.assertEqual((respuesta.status_code, cuerpo["code"]), (401, "UNAUTHENTICATED"))
 
 
 @override_settings(CCONOR_EMPRESA={"name": "QA sintética", "rfc": "", "tagline": "", "phone": "", "email": ""},

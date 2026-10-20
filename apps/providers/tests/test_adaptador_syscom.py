@@ -18,7 +18,7 @@ from django.test import SimpleTestCase, TestCase, tag
 from django.utils import timezone
 
 from apps.providers.adapters.base import NewToken
-from apps.providers.adapters.syscom import SyscomAdapter
+from apps.providers.adapters.syscom import SyscomAdapter, consultar_tipo_cambio
 from apps.providers.contracts import ProductQuery, ProviderOffer
 from apps.providers.errors import (
     ProviderAuthError,
@@ -488,6 +488,45 @@ class ParseOfferTests(SimpleTestCase):
         # link_privado lleva datos de la cuenta: nunca se usa como ficha.
         privado = {**producto_muestra(), "link": None, "link_privado": "/producto/PRIVADO-900001.html"}
         self.assertIsNone(self.syscom.parse_offer(privado).product_url)
+
+
+class TipoCambioTests(SimpleTestCase):
+    """S19 GET /tipocambio es público (sin token) y devuelve pesos por dólar como texto decimal."""
+
+    async def consultar(self, respuesta, campo="normal"):
+        peticiones = []
+
+        def responder(request):
+            peticiones.append(request)
+            return respuesta
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+            valor = await consultar_tipo_cambio("https://syscom.ejemplo.invalid/api/v1/", campo, client)
+        return valor, peticiones
+
+    async def test_el_valor_pedido_llega_exacto_y_sin_token(self):
+        cuerpo = {"normal": "18.54", "preferencial": "18.54", "un_dia": "18.59", "un_mes": "18.79"}
+        valor, peticiones = await self.consultar(httpx.Response(200, json=cuerpo))
+        self.assertEqual((valor, str(valor)), (Decimal("18.54"), "18.54"))
+        self.assertEqual(str(peticiones[0].url), "https://syscom.ejemplo.invalid/api/v1/tipocambio")
+        self.assertNotIn("Authorization", peticiones[0].headers)
+        valor, _ = await self.consultar(httpx.Response(200, json=cuerpo), campo="un_mes")
+        self.assertEqual(valor, Decimal("18.79"))
+
+    async def test_una_respuesta_que_no_sirve_es_error_y_nunca_un_valor_inventado(self):
+        casos = {
+            "sin el campo": httpx.Response(200, json={"preferencial": "18.54"}),
+            "cero": httpx.Response(200, json={"normal": "0"}),
+            "negativo": httpx.Response(200, json={"normal": "-1"}),
+            "texto": httpx.Response(200, json={"normal": "N/A"}),
+            "no es JSON": httpx.Response(200, text="<html>"),
+            "error del servidor": httpx.Response(500, json={}),
+        }
+        for caso, respuesta in casos.items():
+            with self.subTest(caso), self.assertRaises(ProviderResponseError):
+                await self.consultar(respuesta)
+        with self.assertRaises(ValueError):
+            await self.consultar(httpx.Response(200, json={"normal": "18.54"}), campo="otro")
 
 
 @tag("django_db")

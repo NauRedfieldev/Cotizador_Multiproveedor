@@ -18,7 +18,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     
     <!-- Custom Styles (v=2 invalida la caché del navegador tras el rediseño) -->
-    <link rel="stylesheet" href="{% static 'css/custom.css' %}?v=10">
+    <link rel="stylesheet" href="{% static 'css/custom.css' %}?v=11">
     
     {% block extra_css %}{% endblock %}
 </head>
@@ -60,6 +60,27 @@
                         <a class="nav-link cconor-nav-link {% if request.resolver_match.url_name == 'resumen' %}active{% endif %}" href="{% url 'resumen' %}">
                             <i class="bi bi-list-check me-1"></i> MIS COTIZACIONES
                         </a>
+                    </li>
+                    <!-- 15A: tipo de cambio de la sesión (static/js/main.js); oculto hasta cargarlo. -->
+                    <li class="nav-item dropdown" id="fxChipItem" data-url="{% url 'api_tipo_cambio_sesion' %}" hidden>
+                        <button type="button" id="fxChip" class="cconor-fx-chip border-0" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                            <i class="bi bi-check-lg" id="fxChipIcon" aria-hidden="true"></i><span id="fxChipText">USD</span><i class="bi bi-chevron-down small" aria-hidden="true"></i>
+                        </button>
+                        <div class="dropdown-menu dropdown-menu-end cconor-fx-menu">
+                            <div class="fw-bold">Tipo de cambio de tu sesión</div>
+                            <div class="cconor-fx-valor" id="fxMenuValue">Sin capturar</div>
+                            <div class="small text-secondary" id="fxMenuOrigin"></div>
+                            <div class="small fw-semibold" id="fxMenuOtroDia" style="color: #B54708;"></div>
+                            <div class="fx-sugerido mt-2" id="fxMenuSyscom" hidden><span id="fxMenuSyscomText"></span>
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="fxMenuUseSyscom">Usar</button></div>
+                            <form class="d-flex gap-2 mt-2 pt-2 border-top" id="fxMenuForm" novalidate>
+                                <label class="visually-hidden" for="fxMenuInput">Otro valor, en pesos por dólar</label>
+                                <input id="fxMenuInput" class="form-control form-control-sm" inputmode="decimal" placeholder="Otro valor, ej. 18.50" autocomplete="off">
+                                <button type="submit" class="btn btn-sm btn-cconor-primary">Aplicar</button>
+                            </form>
+                            <div class="small text-danger mt-1" id="fxMenuError" role="alert"></div>
+                            <div class="small text-secondary mt-2">Se usa en el comparador y como atajo en el cotizador. Se conserva durante tu sesión.</div>
+                        </div>
                     </li>
                     <!-- 13B: menú de usuario. El logout de Django solo acepta POST, con CSRF. -->
                     <li class="nav-item dropdown">
@@ -125,7 +146,7 @@
     <script src="{% static 'js/api.js' %}?v=7"></script>
 
     <!-- Script General (v=2 invalida la caché del navegador) -->
-    <script src="{% static 'js/main.js' %}?v=3"></script>
+    <script src="{% static 'js/main.js' %}?v=4"></script>
     
     {% block extra_js %}{% endblock %}
 </body>

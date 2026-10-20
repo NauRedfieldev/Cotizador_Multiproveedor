@@ -700,6 +700,41 @@ solo crean su contenedor cuando hay mensajes. Caché: `custom.css?v=10`, `home.c
   para cerrar (Bootstrap). Si el error es del tipo de cambio, «Escribir tipo de cambio» cierra el
   aviso y pone el cursor en el campo (`data-enfocar` en `static/js/main.js?v=3`).
 - La flecha del título pasa de naranja a verde azulado (`--cconor-eleccion`, color de lo elegido en 4C).
+- **Tipo de cambio recordado en la sesión** (2026-10-20): el último valor válido del comparador se
+  guarda en la sesión (`comparador_tipo_cambio`: valor y hora de captura con zona) y se reutiliza al volver
+  o al buscar sin escribirlo, con su hora original. Otro valor lo reemplaza; uno inválido no; enviarlo
+  vacío (desde «Cambiar») lo olvida; cerrar sesión también. Se avisa con «se conserva durante tu sesión»
+  y, si es de otro día, «Capturado otro día: confirma que siga vigente». Solo el comparador: la búsqueda
+  del cotizador no lee ni escribe esta clave (tiene su propio contexto de tipo de cambio con permisos).
+- **Sugerencia del tipo de cambio de SYSCOM (14A, 2026-10-20):** si no hay uno aplicado y SYSCOM está
+  activo, junto al campo aparece «SYSCOM hoy: $X (contado) · Usar». **Nunca se aplica solo.** «Usar» es un
+  botón del mismo formulario (`usar_tipo_cambio=syscom`): el servidor toma el valor de SYSCOM (no el del
+  formulario), busca con él y lo guarda con origen `syscom`, que la etiqueta muestra como «SYSCOM · fecha».
+  Lo escrito a mano manda sobre «Usar». El valor se guarda en caché 30 min (1 min tras un fallo); si
+  SYSCOM no responde: «No se pudo consultar el de SYSCOM; escríbelo a mano.» Sin SYSCOM activo no se
+  consulta ni se muestra nada. Campo: `SYSCOM_TIPO_CAMBIO_CAMPO` (docs/17 §3.3).
+- **Aviso si SYSCOM cambia (2026-10-20):** si el valor aplicado vino de SYSCOM y SYSCOM ya da otro,
+  junto a la etiqueta aparece «SYSCOM ahora: $X · Actualizar». **Nunca se actualiza solo**: «Actualizar»
+  (`usar_tipo_cambio=actualizar`) toma el valor nuevo de SYSCOM, busca con él y lo guarda con su hora. Un
+  valor capturado a mano no recibe este aviso.
+- **Un solo tipo de cambio por sesión (15A y 16A, 2026-10-20).** La misma clave `comparador_tipo_cambio`
+  sirve al comparador, al menú y al cotizador. `GET/PUT /api/v1/fx/session/` (`api.tipo_cambio_sesion`,
+  solo con sesión) devuelve `{session: {value, date, source} | null, syscom: {value, label} | null,
+  syscom_failed}`. `PUT {"value": "18.70"}` lo guarda como manual (mismos límites que el cotizador:
+  18 dígitos, 8 decimales, > 0); `PUT {"use_syscom": true}` toma el de SYSCOM del servidor (503 si no
+  responde, sin cambiar nada). El mismo valor escrito otra vez (18.54 = 18.54000000) conserva su hora y
+  origen. No toca ninguna cotización.
+  - **15A · chip en el menú** (`base.html`, `static/js/main.js`): verde «✓ USD $X · SYSCOM/manual» o
+    gris «USD sin capturar». Al pulsarlo: valor, origen y hora, «Capturado otro día», «SYSCOM hoy · Usar»
+    (o «SYSCOM ahora · Actualizar» si el de la sesión vino de SYSCOM y cambió) y «Otro valor · Aplicar».
+    En el comparador, cambiarlo vuelve a buscar con el valor nuevo.
+  - **16A · cotizador, paso 2**: atajos «Tu sesión: $X (origen, hora) · Usar» y «SYSCOM hoy: $X · Usar»;
+    con un tipo de cambio ya aplicado, «Tu sesión» solo si es distinto, y «SYSCOM ahora · Actualizar» si
+    se capturó otro día o el de la sesión vino de SYSCOM. «Usar» llena el campo y pulsa «Aplicar» (mismo
+    permiso de tipo de cambio de siempre); al aplicarse también queda como el de la sesión. **Nada se
+    aplica solo.**
+  - La cotización sigue guardando el origen `manual` (decisión del usuario): el cliente nunca ve el tipo
+    de cambio; el PDF comercial v2 no lo muestra (solo los PDF históricos v1 lo traían).
 
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
