@@ -4,10 +4,57 @@
 {% block title %}CCONOR Soluciones Tecnológicas - Inicio{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/home.css' %}?v=3">
+<link rel="stylesheet" href="{% static 'css/home.css' %}?v=4">
 {% endblock %}
 
 {% block content %}
+{% if user.is_authenticated %}
+{# Panel de cotizaciones propias (diseño 7D). Los datos llegan por la API de «Mis cotizaciones» (static/js/inicio.js). #}
+<section class="panel-home" id="homePanel" aria-labelledby="panelGreeting"
+         data-cotizador-url="{% url 'cotizador' %}" data-resumen-url="{% url 'resumen' %}">
+    <div class="container">
+        <div class="panel-head">
+            <h1 id="panelGreeting" class="panel-greeting">Hola, {{ user.first_name|default:user.get_username }}</h1>
+            <div class="panel-head-actions">
+                <a href="{% url 'comparador' %}" class="btn btn-outline-primary">Buscar productos</a>
+                <a href="{% url 'cotizador' %}" class="btn btn-cconor-primary">+ Nueva cotización</a>
+            </div>
+        </div>
+        <div id="panelStatus" class="alert alert-warning d-none" role="status"></div>
+
+        <div class="row g-3 panel-kpis">
+            <div class="col-md-4"><div class="panel-kpi">
+                <span class="panel-kpi-label"><span class="panel-dot panel-dot-draft"></span>Borradores por terminar</span>
+                <span class="panel-kpi-number" id="kpiDrafts">—</span>
+                <span class="panel-kpi-note">Aún sin total sellado</span>
+            </div></div>
+            <div class="col-md-4"><div class="panel-kpi">
+                <span class="panel-kpi-label"><span class="panel-dot panel-dot-issued"></span>Cotizaciones emitidas</span>
+                <span class="panel-kpi-number" id="kpiIssued">—</span>
+                <span class="panel-kpi-note">En total, con PDF original</span>
+            </div></div>
+            <div class="col-md-4"><div class="panel-kpi">
+                <span class="panel-kpi-label"><span class="panel-dot panel-dot-month"></span>Emitidas este mes</span>
+                <span class="panel-kpi-number" id="kpiMonth">—</span>
+                <span class="panel-kpi-note" id="kpiMonthLabel">&nbsp;</span>
+            </div></div>
+        </div>
+
+        <div class="row g-3 mt-1 panel-columns">
+            <div class="col-lg-6"><section class="panel-column" aria-labelledby="draftsTitle">
+                <h2 class="panel-column-title" id="draftsTitle"><span class="panel-dot panel-dot-draft"></span>Borradores <span class="panel-count" id="draftsCount">0</span></h2>
+                <div id="draftsList" class="panel-cards" aria-live="polite"></div>
+            </section></div>
+            <div class="col-lg-6"><section class="panel-column" aria-labelledby="issuedTitle">
+                <h2 class="panel-column-title" id="issuedTitle"><span class="panel-dot panel-dot-issued"></span>Emitidas <span class="panel-count" id="issuedCount">0</span></h2>
+                <div id="issuedList" class="panel-cards" aria-live="polite"></div>
+            </section></div>
+        </div>
+
+        <p class="panel-more"><span id="panelMoreText"></span> <a href="{% url 'resumen' %}" id="panelMoreLink">Mis cotizaciones →</a></p>
+    </div>
+</section>
+{% else %}
 <!-- ==========================================================================
      HERO PRINCIPAL
      ========================================================================== -->
@@ -180,4 +227,7 @@
         </div>
     </div>
 </section>
+{% endif %}
 {% endblock %}
+
+{% block extra_js %}{% if user.is_authenticated %}<script src="{% static 'js/inicio.js' %}?v=1"></script>{% endif %}{% endblock %}

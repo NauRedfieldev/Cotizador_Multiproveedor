@@ -637,6 +637,31 @@ datos guardados no cambian.
 Pruebas: casos de conversión, redondeo, unidades y campo de cada error en
 `tools/test_cotizador_comercial.cjs`; recorrido en navegador aislado.
 
+### 14.6 Inicio como panel de cotizaciones (diseño 7D)
+
+- **Con sesión**, `/` (`templates/inicio.html`) muestra un panel; **sin sesión** conserva la
+  portada de siempre (hero, beneficios y categorías), que sigue siendo pública.
+- **Contenido:** saludo («Hola, nombre»), «Buscar productos» (comparador) y «+ Nueva cotización»;
+  tres tarjetas (borradores por terminar, emitidas, emitidas este mes) y dos paneles,
+  **Borradores** y **Emitidas**, con las 3 más recientes de cada uno.
+- **Datos:** `static/js/inicio.js` pide dos veces el listado de «Mis cotizaciones»
+  (`GET /api/v1/quotes/?status=DRAFT|ISSUED&page=1`, una fila por folio, última revisión). No
+  hay endpoint nuevo ni cambio de datos guardados. Los conteos salen de `pagination.count`;
+  «emitidas este mes» cuenta las filas de la primera página cuya `issue_date` es del mes en
+  curso (si todas lo son y hay más páginas, muestra «N+»). Los importes se muestran como texto
+  del servidor, sin convertir a número.
+- **Acciones:** borrador → `/cotizador/?folio=…&revision=…` («Continuar editando»); emitida →
+  `/resumen/?folio=…&revision=…` («Ver resumen») y `/cotizaciones/<folio>/pdf/?revision=…`
+  («PDF»). Un histórico v1 solo ofrece «Ver resumen» (su PDF puede traer costos y se abre desde
+  el resumen, con su advertencia). **«Nueva revisión» no está en el panel:** esa operación,
+  con su confirmación y manejo de resultado incierto, se hace desde el resumen.
+- **Sin permisos o con error:** el aviso en ámbar muestra el mensaje del servidor y las listas
+  quedan con un texto de «no se pudieron cargar»; nunca se inventan datos.
+- **Caché:** `home.css?v=4`, `inicio.js?v=1`.
+
+Pruebas: `test_p8`/`test_p9` en `test_vistas_cotizacion.py` (panel solo con sesión) y cuatro casos
+de `inicio.js` en `tools/test_cotizador_comercial.cjs` (formatos, enlaces, llenado y error).
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 ### 15.1 Alcance y acceso

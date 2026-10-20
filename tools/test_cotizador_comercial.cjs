@@ -285,3 +285,85 @@ test('P6: resumen/documentos no usan DOM HTML externo, storage ni window.print s
     const source = fs.readFileSync(path.join(root, 'static/js/cotizacion_actions.js'), 'utf8');
     assert.doesNotMatch(source, /\.innerHTML\s*=|parseFloat\(|localStorage\.|window\.print\(/);
 });
+
+// Inicio (panel 7D): static/js/inicio.js con un DOM mínimo, sin red.
+function fakeNode(tag) {
+    return { tag, className: '', textContent: '', href: '', children: [], dataset: {}, classList: { remove() {}, add() {} },
+        append(...nodes) { this.children.push(...nodes); }, replaceChildren() { this.children = []; } };
+}
+function homeContext(panel = null, fetch = async () => { throw Error('No red'); }) {
+    const nodes = new Map();
+    const context = vm.createContext({ window: {}, console, URLSearchParams, fetch,
+        // api.js siembra sus mocks históricos en las páginas que no son cotizador/resumen; el panel no los lee.
+        localStorage: { getItem: () => null, setItem() {} },
+        document: { cookie: 'csrftoken=synthetic-csrf', createElement: fakeNode,
+            getElementById: id => id === 'homePanel' ? panel : panel ? (nodes.get(id) || nodes.set(id, fakeNode('div')).get(id)) : null } });
+    for (const name of ['api.js', 'inicio.js']) vm.runInContext(fs.readFileSync(path.join(root, 'static/js', name), 'utf8'), context);
+    return { tools: context.window.CCONORHomeTools, nodes };
+}
+function anchorsOf(node, found = []) {
+    if (node.tag === 'a') found.push(node);
+    for (const child of node.children || []) if (typeof child === 'object') anchorsOf(child, found);
+    return found;
+}
+test('inicio: importes, fechas y conteo del mes sin float', () => {
+    const { tools } = homeContext();
+    assert.equal(tools.money('48230.5'), '$48,230.50');
+    assert.equal(tools.money('1234567.891'), '$1,234,567.891');
+    assert.equal(tools.money(null), 'Sin total sellado');
+    assert.equal(tools.money('1e2'), '—');
+    assert.equal(tools.shortDate('2026-10-05'), '5 oct');
+    assert.equal(tools.shortDate('mal'), '');
+    const now = new Date(2026, 9, 20);
+    assert.equal(tools.monthLabel(now), 'Octubre 2026');
+    const rows = [{ issue_date: '2026-10-18' }, { issue_date: '2026-09-30' }, { issue_date: '2026-10-02' }, { issue_date: '2025-10-18' }];
+    assert.equal(tools.monthCount(rows, 1, now), '2');
+    assert.equal(tools.monthCount([{ issue_date: '2026-10-18' }], 2, now), '1+');
+    assert.equal(tools.monthCount(rows, 2, now), '2');
+    assert.equal(tools.items(1), '1 partida');
+    assert.equal(tools.items(5), '5 partidas');
+});
+test('inicio: enlaces a borrador, resumen y PDF con la revisión exacta', () => {
+    const { tools } = homeContext();
+    assert.equal(tools.revisionQuery({ folio: 'COT-2026-0007', revision: 2 }), 'folio=COT-2026-0007&revision=2');
+    assert.equal(tools.pdfHref({ folio: 'COT-2026-0007', revision: 2 }), '/cotizaciones/COT-2026-0007/pdf/?revision=2');
+    assert.equal(tools.pdfHref({ folio: 'A/B', revision: 1 }), '/cotizaciones/A%2FB/pdf/?revision=1');
+    const urls = { cotizador: '/cotizador/', resumen: '/resumen/' };
+    const draft = { folio: 'COT-2026-0007', revision: 2, client_name: 'Cliente', items_count: 5, issue_date: '2026-10-20', schema_version: 2 };
+    assert.deepEqual(anchorsOf(tools.draftCard(draft, urls)).map(a => a.href), ['/cotizador/?folio=COT-2026-0007&revision=2']);
+    const issued = { ...draft, total: '48230.50' };
+    assert.deepEqual(anchorsOf(tools.issuedCard(issued, urls)).map(a => a.href),
+        ['/resumen/?folio=COT-2026-0007&revision=2', '/cotizaciones/COT-2026-0007/pdf/?revision=2']);
+    // Un histórico v1 no ofrece PDF desde el panel: solo el resumen, que advierte sobre costos.
+    assert.deepEqual(anchorsOf(tools.issuedCard({ ...issued, schema_version: 1 }, urls)).map(a => a.href),
+        ['/resumen/?folio=COT-2026-0007&revision=2']);
+});
+test('inicio: el panel consulta borradores y emitidas y llena tarjetas y conteos', async () => {
+    const panel = fakeNode('section'); panel.dataset = { cotizadorUrl: '/cotizador/', resumenUrl: '/resumen/' };
+    const calls = [];
+    const row = (n, status, total) => ({ folio: `COT-2026-000${n}`, revision: 1, status, total, schema_version: 2, client_name: `Cliente ${n}`, issue_date: '2026-10-18', items_count: n });
+    const fetch = async url => {
+        calls.push(url);
+        const issued = url.includes('status=ISSUED');
+        const data = issued ? [row(1, 'ISSUED', '100.00'), row(2, 'ISSUED', '200.00'), row(3, 'ISSUED', '300.00'), row(4, 'ISSUED', '400.00')] : [row(5, 'DRAFT', null)];
+        return response(200, { success: true, actor_id: 7, data, pagination: { page: 1, pages: 1, count: data.length } });
+    };
+    const { nodes } = homeContext(panel, fetch);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepEqual(calls.sort(), ['/api/v1/quotes/?status=DRAFT&page=1', '/api/v1/quotes/?status=ISSUED&page=1']);
+    assert.equal(nodes.get('kpiDrafts').textContent, '1');
+    assert.equal(nodes.get('kpiIssued').textContent, '4');
+    assert.equal(nodes.get('draftsList').children.length, 1);
+    assert.equal(nodes.get('issuedList').children.length, 3);          // solo las 3 más recientes
+    assert.equal(nodes.get('panelMoreLink').textContent, 'Ver las 5 en Mis cotizaciones →');
+    assert.match(nodes.get('panelMoreText').textContent, /3 más recientes/);
+});
+test('inicio: sin permiso o con error muestra el aviso y deja los conteos vacíos', async () => {
+    const panel = fakeNode('section'); panel.dataset = { cotizadorUrl: '/cotizador/', resumenUrl: '/resumen/' };
+    const fetch = async () => response(403, { success: false, error: 'Tu cuenta no tiene acceso comercial.' });
+    const { nodes } = homeContext(panel, fetch);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(nodes.get('panelStatus').textContent, 'Tu cuenta no tiene acceso comercial.');
+    assert.equal(nodes.get('kpiDrafts')?.textContent ?? '', '');
+    assert.equal(nodes.get('draftsList').children.length, 1);         // texto de lista vacía, nunca datos inventados
+});

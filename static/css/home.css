@@ -453,3 +453,219 @@
 .btn-hero-outline:hover {
     background: #F1F2F8;
 }
+
+/* ==========================================================================
+   PANEL DE COTIZACIONES (diseño 7D) · solo con sesión iniciada
+   ========================================================================== */
+
+.panel-home {
+    background: #F8F7FE;
+    padding: 28px 0 56px;
+    min-height: 60vh;
+}
+
+.panel-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.panel-greeting {
+    margin: 0;
+    font-size: 30px;
+    font-weight: 700;
+    color: #111638;
+}
+
+.panel-head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.panel-head-actions .btn,
+.panel-card .btn {
+    display: inline-flex;
+    align-items: center;
+    font-weight: 600;
+}
+
+.panel-head-actions .btn {
+    min-height: 44px;
+    padding: 0 1.25rem;
+}
+
+.panel-card .btn {
+    min-height: 36px;
+    padding: 0 0.875rem;
+}
+
+.panel-kpi {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    height: 100%;
+    padding: 18px 24px;
+    background: #FFFFFF;
+    border: 1px solid #EAE7F3;
+    border-radius: 16px;
+}
+
+.panel-kpi-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #5A5F7A;
+}
+
+.panel-kpi-number {
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: #111638;
+}
+
+.panel-kpi-note,
+.panel-muted {
+    font-size: 13px;
+    color: #5A5F7A;
+}
+
+.panel-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: currentColor;
+    flex: none;
+}
+
+.panel-dot-draft { color: #F79009; }
+.panel-dot-issued { color: #17B26A; }
+.panel-dot-month { color: #00796B; }
+
+.panel-column {
+    height: 100%;
+    padding: 16px;
+    background: #F0EEF8;
+    border: 1px solid #EAE7F3;
+    border-radius: 16px;
+}
+
+.panel-column-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 12px;
+    font-size: 17px;
+    font-weight: 700;
+    color: #111638;
+}
+
+.panel-column-title .panel-dot { width: 10px; height: 10px; }
+
+.panel-count {
+    min-width: 22px;
+    height: 22px;
+    padding: 0 7px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #FFFFFF;
+    border: 1px solid #EAE7F3;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.panel-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.panel-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+    background: #FFFFFF;
+    border: 1px solid #EAE7F3;
+    border-radius: 16px;
+    color: #111638;
+}
+
+.panel-card-top,
+.panel-card-foot,
+.panel-card-split {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.panel-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 14px;
+}
+
+.panel-card-split { flex-direction: row; align-items: flex-end; }
+.panel-card-actions { justify-content: flex-start; }
+.panel-total { font-size: 18px; }
+
+.panel-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.panel-pill-draft { background: #FFF4E5; color: #93370D; }
+.panel-pill-draft .panel-dot { color: #F79009; }
+.panel-pill-issued { background: #ECFDF3; color: #067647; }
+.panel-pill-issued .panel-dot { color: #17B26A; }
+.panel-pill-legacy { background: #F2F4F7; color: #475467; }
+.panel-pill-legacy .panel-dot { color: #98A2B3; }
+
+.panel-empty {
+    margin: 0;
+    padding: 16px;
+    background: #FFFFFF;
+    border: 1px dashed #CFCBDA;
+    border-radius: 16px;
+    font-size: 14px;
+    color: #5A5F7A;
+}
+
+.panel-more {
+    margin: 16px 0 0;
+    text-align: right;
+    font-size: 14px;
+    color: #5A5F7A;
+}
+
+.panel-more a {
+    margin-left: 6px;
+    font-weight: 600;
+    color: #111638;
+    text-decoration: none;
+}
+
+@media (max-width: 575.98px) {
+    .panel-head-actions,
+    .panel-head-actions .btn { width: 100%; justify-content: center; }
+    .panel-more { text-align: left; }
+}
