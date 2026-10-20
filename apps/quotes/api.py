@@ -145,6 +145,7 @@ def _oferta(presentada):
         "precio_mxn": _texto(presentada.precio_comparable),
         "es_mejor_precio": presentada.es_mejor_precio,
         "stock": oferta.stock,
+        "product_url": oferta.product_url,  # ficha pública en el proveedor; no se guarda en la captura
         "match": {
             "estado": match.estado.value,
             "estado_label": match.estado.label,

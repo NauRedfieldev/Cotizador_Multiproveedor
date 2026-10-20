@@ -61,6 +61,17 @@ class PruebasProviderOffer(SimpleTestCase):
         # Act / Assert
         self.assertEqual(oferta(raw={"a": 1}), oferta(raw={"b": 2}))
 
+    def test_foto_y_ficha_solo_como_url_https(self):
+        """La foto y la ficha se pintan en HTML: solo https, sin espacios ni comillas."""
+        self.assertEqual(oferta(image_url="https://img.ejemplo.invalid/a.png").image_url, "https://img.ejemplo.invalid/a.png")
+        self.assertEqual(oferta(product_url="https://www.ejemplo.invalid/p/1.html").product_url,
+                         "https://www.ejemplo.invalid/p/1.html")
+        for campo in ("image_url", "product_url"):
+            for valor in ("http://ejemplo.invalid/a", "javascript:alert(1)", "https://a b", 'https://a"b', "https://", 123,
+                          "https://" + "a" * 491):
+                with self.subTest(campo=campo, valor=valor), self.assertRaises(ValueError):
+                    oferta(**{campo: valor})
+
     def test_raw_no_aparece_en_el_repr(self):
         """4 El raw no aparece en el repr (puede ser enorme o contener datos del proveedor)."""
         # Act

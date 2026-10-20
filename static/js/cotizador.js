@@ -358,6 +358,13 @@
                 const info = document.createElement('div');
                 info.append(element('strong', offer.name), element('div', `${offer.provider_label} · ${offer.model || '—'} · ${money(offer.price_original)} ${offer.currency}`, 'small'),
                     element('div', offer.stock === null ? 'Disponibilidad desconocida' : offer.stock === 0 ? 'Sin existencias capturadas' : `Existencias capturadas: ${offer.stock}`, 'small'));
+                // Solo el enlace a la ficha del proveedor (sin foto en el cotizador); pestaña nueva.
+                if (typeof offer.product_url === 'string' && /^https:\/\/[^\s"'<>]+$/.test(offer.product_url)) {
+                    const ficha = element('a', `Ver en ${offer.provider_label} ↗`, 'small fw-semibold');
+                    Object.assign(ficha, { href: offer.product_url, target: '_blank', rel: 'noopener noreferrer' });
+                    info.append(element('div', '', 'small'));
+                    info.lastChild.append(ficha);
+                }
                 const verified = offer.vat?.vat_basis && offer.vat.vat_basis !== 'UNKNOWN';
                 if (!verified) info.append(element('div', 'Base IVA de origen no verificada: captura comercial bloqueada.', 'small text-danger'));
                 const add = element('button', 'Agregar captura', 'btn btn-sm btn-outline-primary'); add.type = 'button'; add.disabled = !editable() || !verified;

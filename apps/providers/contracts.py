@@ -13,6 +13,8 @@ DEFAULT_LIMIT = 60
 MAX_LIMIT = 1000  # SYSCOM admite limit 10–1000; cada adaptador lo traduce a su API
 
 _CURRENCY = re.compile(r"[A-Z]{3}")
+# Foto y ficha del producto: solo https, sin espacios ni comillas (se pintan en HTML).
+_URL_HTTPS = re.compile(r"https://[^\s\"'<>]{1,490}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +48,8 @@ class ProviderOffer:
     mpn: str | None = None
     stock: int | None = None  # None = el proveedor no informa existencias
     raw: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
+    image_url: str | None = None  # foto del producto (solo comparador; no se guarda en cotizaciones)
+    product_url: str | None = None  # ficha pública del producto en el sitio del proveedor
 
     def __post_init__(self) -> None:
         if not isinstance(self.external_id, str) or not self.external_id.strip():
@@ -58,6 +62,10 @@ class ProviderOffer:
             raise ValueError("currency debe ser un código ISO 4217 en mayúsculas.")
         if self.stock is not None and self.stock < 0:
             raise ValueError("stock no puede ser negativo.")
+        for campo in ("image_url", "product_url"):
+            valor = getattr(self, campo)
+            if valor is not None and (not isinstance(valor, str) or not _URL_HTTPS.fullmatch(valor)):
+                raise ValueError(f"{campo} debe ser una URL https válida.")
 
 
 @dataclass(frozen=True, slots=True)

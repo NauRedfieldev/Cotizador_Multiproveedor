@@ -467,6 +467,29 @@ class ParseOfferTests(SimpleTestCase):
                 self.assertEqual(getattr(oferta, campo), esperado)
 
 
+    def test_foto_y_ficha_solo_de_syscom_y_por_https(self):
+        """S18 img_portada https en *.syscom.mx y link relativo /producto/…html; lo demás se ignora (None)."""
+        foto = "https://ftp3.syscom.mx/usuarios/fotos/BancoFotografiasSyscom/AI/UPSCALE/900001/portada_0S400.PNG"
+        oferta = self.syscom.parse_offer({**producto_muestra(), "img_portada": foto,
+                                          "link": "/producto/CAM-IP-2MP-A1-MUESTRA-900001.html"})
+        self.assertEqual(oferta.image_url, foto)
+        self.assertEqual(oferta.product_url, "https://www.syscom.mx/producto/CAM-IP-2MP-A1-MUESTRA-900001.html")
+        fotos_invalidas = [None, 123, "", "http://ftp3.syscom.mx/a.png", "https://ejemplo.invalid/a.png",
+                           "https://ftp3.syscom.mx.ejemplo.invalid/a.png", "javascript:alert(1)",
+                           'https://ftp3.syscom.mx/a".png', "https://ftp3.syscom.mx/a b.png"]
+        for valor in fotos_invalidas:
+            with self.subTest(img_portada=valor):
+                self.assertIsNone(self.syscom.parse_offer({**producto_muestra(), "img_portada": valor}).image_url)
+        fichas_invalidas = [None, 123, "", "https://ejemplo.invalid/producto/x.html", "//ejemplo.invalid/producto/x.html",
+                            "/producto/../x.html", "/otra/x.html", "javascript:alert(1)", "/producto/x.html?a=1"]
+        for valor in fichas_invalidas:
+            with self.subTest(link=valor):
+                self.assertIsNone(self.syscom.parse_offer({**producto_muestra(), "link": valor}).product_url)
+        # link_privado lleva datos de la cuenta: nunca se usa como ficha.
+        privado = {**producto_muestra(), "link": None, "link_privado": "/producto/PRIVADO-900001.html"}
+        self.assertIsNone(self.syscom.parse_offer(privado).product_url)
+
+
 @tag("django_db")
 class SyscomEnSearchAllTests(TestCase):
     """El adaptador real dentro de search_all, con el registro real y ApiFalsa."""
