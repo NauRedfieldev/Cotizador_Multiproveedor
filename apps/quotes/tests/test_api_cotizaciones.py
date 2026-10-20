@@ -747,8 +747,10 @@ class CommercialAPITests(CommercialFixtures, TestCase):
     def test_pagina_cotizador_conectada_sin_filas_o_totales_demo(self):
         response = self.client.get(reverse("cotizador"))
         self.assertEqual(response.status_code, 200)
-        for text in ("commercialQuoteApp", "quoteConditions", "quoteWarnings", "addManualBtn", "Abrir revisión exacta"):
+        for text in ("commercialQuoteApp", "quoteConditions", "quoteWarnings", "addManualBtn", "Ábrela desde Mis cotizaciones"):
             self.assertContains(response, text)
+        self.assertContains(response, f'href="{reverse("resumen")}"')
+        self.assertNotContains(response, "Abrir revisión exacta")  # Abrir otra revisión se hace desde Mis cotizaciones.
         for demo in ("SYS-PRO-CAT6", "CT-DELL-P2422H", "$64,335.90", 'value="17.50"', "Openpay / Stripe"):
             self.assertNotContains(response, demo)
         self.assertContains(response, "viewSummaryBtn")

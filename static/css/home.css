@@ -432,3 +432,24 @@
         width: calc(100% - 32px);
     }
 }
+
+/* Colores de botones · opción 4C (azul marino), igual que custom.css. */
+.btn-hero-primary,
+.btn-hero-primary:hover {
+    background: #111638;
+    box-shadow: 0 8px 20px rgba(17, 22, 56, 0.22);
+}
+
+.btn-hero-primary:hover {
+    background: #262C5C;
+}
+
+.btn-hero-outline,
+.btn-hero-outline:hover {
+    color: #111638 !important;
+    border-color: #111638;
+}
+
+.btn-hero-outline:hover {
+    background: #F1F2F8;
+}

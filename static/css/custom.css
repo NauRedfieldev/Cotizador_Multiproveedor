@@ -705,3 +705,307 @@ main img {
     }
 }
 
+
+/* ==========================================================================
+   COTIZADOR: PASOS NUMERADOS, AVISOS (1A/1B) Y DETALLE DE PARTIDA
+   ========================================================================== */
+.step-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+/* Paso sin tarjeta: mismo sangrado que el borde + padding de .cconor-card (p-3). */
+.step-title-outside {
+    padding-left: calc(1rem + 1px);
+}
+
+.step-badge {
+    width: 2rem;
+    height: 2rem;
+    flex-shrink: 0;
+    border-radius: 999px;
+    background: #7311F5;
+    color: #FFFFFF;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.quote-info summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+.quote-info summary::-webkit-details-marker {
+    display: none;
+}
+
+.quote-info-more {
+    color: #5B0FC4;
+    font-weight: 600;
+    text-decoration: underline;
+}
+
+.fx-status {
+    display: inline-flex;
+    align-items: center;
+    min-height: 38px;
+    padding: 0 0.85rem;
+    border-radius: 10px;
+    background: #F1EFFA;
+    color: #5A5F7A;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.fx-status.fx-status-ok {
+    background: #ECFDF3;
+    color: #067647;
+}
+
+.quote-error-toast {
+    position: fixed;
+    top: 112px; /* debajo del menú fijo */
+    right: 24px;
+    z-index: 1080;
+    width: min(420px, calc(100vw - 32px));
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    padding: 1rem;
+    background: #FFFFFF;
+    border: 1px solid #FDA29B;
+    border-radius: 14px;
+    box-shadow: 0 12px 32px rgba(17, 22, 56, 0.18);
+    animation: toast-in 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.quote-error-toast.d-none {
+    display: none !important;
+}
+
+.quote-error-icon {
+    width: 2.25rem;
+    height: 2.25rem;
+    flex-shrink: 0;
+    border-radius: 999px;
+    background: #FEF3F2;
+    color: #D92D20;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.quote-issues-dialog {
+    width: min(580px, calc(100vw - 32px));
+    padding: 0;
+    border: 0;
+    border-radius: 18px;
+    box-shadow: 0 24px 60px rgba(17, 22, 56, 0.35);
+}
+
+.quote-issues-dialog::backdrop {
+    background: rgba(17, 22, 56, 0.45);
+}
+
+.issue-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    flex-shrink: 0;
+    border-radius: 999px;
+    background: #D92D20;
+}
+
+.line-detail > summary {
+    cursor: pointer;
+}
+
+.line-has-issue > td {
+    background: #FEF3F2 !important;
+}
+
+.line-source-box,
+.line-result-box {
+    background: #F8F7FE;
+    border-radius: 12px;
+    padding: 0.9rem 1rem;
+}
+
+.equivalence-chip {
+    background: #F1EFFA;
+    border-radius: 10px;
+    padding: 0.5rem 0.75rem;
+    font-weight: 600;
+    text-align: center;
+}
+
+/* ==========================================================================
+   COLORES DE BOTONES · OPCIÓN 4C (2026-10-19): AZUL MARINO + VERDE AZULADO
+   Principal y secundario en azul marino; opción elegida, pasos y casillas en
+   verde azulado. Rojo (quitar), gris (neutro) y amarillo (estado) no cambian.
+   ========================================================================== */
+:root {
+    --cconor-boton: #111638;
+    --cconor-boton-hover: #262C5C;
+    --cconor-eleccion: #00796B;
+    --cconor-eleccion-hover: #005F54;
+}
+
+.btn-cconor-primary,
+.btn-cconor-primary:focus {
+    background: var(--cconor-boton);
+    color: #FFFFFF;
+    box-shadow: 0 4px 14px rgba(17, 22, 56, 0.22);
+}
+
+.btn-cconor-primary:hover,
+.btn-cconor-primary:active {
+    background: var(--cconor-boton-hover) !important;
+    color: #FFFFFF !important;
+    box-shadow: 0 6px 18px rgba(17, 22, 56, 0.3);
+}
+
+.btn-cconor-primary:disabled {
+    background: var(--cconor-boton);
+    color: #FFFFFF;
+    box-shadow: none;
+}
+
+.btn-primary {
+    --bs-btn-bg: var(--cconor-boton);
+    --bs-btn-border-color: var(--cconor-boton);
+    --bs-btn-hover-bg: var(--cconor-boton-hover);
+    --bs-btn-hover-border-color: var(--cconor-boton-hover);
+    --bs-btn-active-bg: var(--cconor-boton-hover);
+    --bs-btn-active-border-color: var(--cconor-boton-hover);
+    --bs-btn-disabled-bg: var(--cconor-boton);
+    --bs-btn-disabled-border-color: var(--cconor-boton);
+    --bs-btn-focus-shadow-rgb: 17, 22, 56;
+}
+
+.btn-outline-primary {
+    --bs-btn-color: var(--cconor-boton);
+    --bs-btn-border-color: var(--cconor-boton);
+    --bs-btn-hover-color: #FFFFFF;
+    --bs-btn-hover-bg: var(--cconor-boton);
+    --bs-btn-hover-border-color: var(--cconor-boton);
+    --bs-btn-active-color: #FFFFFF;
+    --bs-btn-active-bg: var(--cconor-boton);
+    --bs-btn-active-border-color: var(--cconor-boton);
+    --bs-btn-disabled-color: var(--cconor-boton);
+    --bs-btn-disabled-border-color: var(--cconor-boton);
+    --bs-btn-focus-shadow-rgb: 17, 22, 56;
+}
+
+/* Botones de opción (btn-check): la elegida en verde azulado. */
+.btn-cconor-choice {
+    --bs-btn-color: var(--cconor-eleccion);
+    --bs-btn-border-color: var(--cconor-eleccion);
+    --bs-btn-hover-color: var(--cconor-eleccion-hover);
+    --bs-btn-hover-bg: #E6F2F0;
+    --bs-btn-hover-border-color: var(--cconor-eleccion);
+    --bs-btn-active-color: #FFFFFF;
+    --bs-btn-active-bg: var(--cconor-eleccion);
+    --bs-btn-active-border-color: var(--cconor-eleccion);
+    --bs-btn-disabled-color: var(--cconor-eleccion);
+    --bs-btn-disabled-border-color: var(--cconor-eleccion);
+    --bs-btn-focus-shadow-rgb: 0, 121, 107;
+}
+
+.step-badge {
+    background: var(--cconor-eleccion);
+}
+
+.form-check-input:checked {
+    background-color: var(--cconor-eleccion);
+    border-color: var(--cconor-eleccion);
+}
+
+.form-check-input:focus {
+    border-color: var(--cconor-eleccion);
+    box-shadow: 0 0 0 0.25rem rgba(0, 121, 107, 0.25);
+}
+
+/* ==========================================================================
+   COTIZADOR: ENCABEZADO COMPACTO (5A) Y BARRA FIJA AL BAJAR (5B)
+   Solo en esta página el menú del sitio deja de ser fijo: el logo se ve
+   arriba y al bajar queda la barra de la cotización.
+   ========================================================================== */
+body:has(#commercialQuoteApp) .cconor-navbar.sticky-top {
+    position: static;
+}
+
+.quote-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 30px;
+    padding: 0 0.75rem;
+    border-radius: 999px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    background: #F1F2F5;
+    color: #4B5263;
+}
+
+.quote-status-dot {
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+    border-radius: 999px;
+    background: #8A8FA8;
+}
+
+.quote-status--dirty { background: #FFF4E5; color: #93370D; }
+.quote-status--dirty .quote-status-dot { background: #F79009; }
+.quote-status--saved { background: #ECFDF3; color: #067647; }
+.quote-status--saved .quote-status-dot { background: #17B26A; }
+.quote-status--readonly { background: #EEF4FF; color: #1E3A8A; }
+.quote-status--readonly .quote-status-dot { background: #3B5BDB; }
+.quote-status--danger { background: #FEF3F2; color: #B42318; }
+.quote-status--danger .quote-status-dot { background: #D92D20; }
+
+.quote-sticky-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1030;
+    padding: 0.6rem 0;
+    background: #FFFFFF;
+    border-bottom: 1px solid #EAE7F3;
+    box-shadow: 0 8px 20px rgba(17, 22, 56, 0.08);
+    transform: translateY(-110%);
+    visibility: hidden;
+    transition: transform 0.2s ease, visibility 0.2s;
+}
+
+.quote-sticky-bar.is-visible {
+    transform: none;
+    visibility: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .quote-sticky-bar { transition: none; }
+}
+
+/* El aviso emergente queda debajo del menú arriba y debajo de la barra al bajar. */
+.quote-error-toast { top: 160px; }
+body.quote-scrolled .quote-error-toast { top: 84px; }
+
+/* Paso 4 (6B): botones de la misma altura; avisos en ámbar solo cuando existen. */
+.quote-actions .btn {
+    min-height: 44px;
+    padding: 0.5rem 1.25rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+}
+
+.quote-warnings-card {
+    border-color: #FEC84B !important;
+}

@@ -3,7 +3,9 @@
  */
 (function () {
     'use strict';
-    const fail = message => { throw new Error(message); };
+    // field: dato de la partida que falló, para marcarlo e «Ir al campo».
+    const fail = (message, field) => { const err = new Error(message); if (field) err.field = field; throw err; };
+    const within = (field, run) => { try { return run(); } catch (err) { err.field ??= field; throw err; } };
     function decimal(value, digits, places, { positive = false, max } = {}) {
         if (typeof value !== 'string') fail('El dinero debe conservarse como texto decimal.');
         const text = value.trim();
@@ -37,28 +39,54 @@
         if (!['MXN', 'USD'].includes(value.currency)) fail('Selecciona MXN o USD.');
         const data = { amount: decimal(value.amount, 18, 6), currency: value.currency, vat_basis: value.vat_basis };
         if (data.vat_basis === 'INCLUDED') data.vat_rate = decimal(value.vat_rate, 5, 4, { max: '10000' });
-        else if (data.vat_basis !== 'NET') fail('Indica si la entrada incluye IVA o es neta.');
+        else if (data.vat_basis !== 'NET') fail('Indica si el importe incluye IVA o es sin IVA.');
         return data;
     }
     function item(line) {
-        if (!line.units.confirmed) fail('Confirma unidades y factor de conversión.');
-        if (!line.units.source_label.trim() || !line.units.sale_label.trim()) fail('Indica la unidad original y la vendida.');
+        if (line.kind === 'MANUAL' && !line.name.trim()) fail('Escribe el nombre del concepto.', 'name');
+        if (!line.units.source_label.trim() || !line.units.sale_label.trim()) fail('Indica la unidad del proveedor y la unidad en que lo vendes.', 'units');
+        const conversion = within('factor', () => decimal(line.units.conversion_factor, 18, 6, { positive: true }));
+        const quantity = within('quantity', () => integer(line.quantity));
+        if (!line.units.confirmed) fail('Marca la casilla «Revisé…» para confirmar la unidad y la cantidad.', 'confirm');
         const data = { line_key: line.key, source: line.persisted ? { type: 'EXISTING' } : line.kind === 'API' ?
             { type: 'API', context_ref: line.offer.context_ref, offer_ref: line.offer.offer_ref } :
-            { type: 'MANUAL', name: line.name.trim() }, quantity: integer(line.quantity),
+            { type: 'MANUAL', name: line.name.trim() }, quantity,
             units: { source_label: line.units.source_label.trim(), sale_label: line.units.sale_label.trim(),
-                conversion_factor: decimal(line.units.conversion_factor, 18, 6, { positive: true }), confirmed: true },
+                conversion_factor: conversion, confirmed: true },
             description: line.description, pricing: { mode: line.mode } };
-        if (line.kind === 'MANUAL') {
-            if (!line.name.trim()) fail('El concepto manual requiere nombre.');
-            data.cost = line.knownCost ? price(line.cost) : null;
-        }
+        if (line.kind === 'MANUAL') data.cost = line.knownCost ? within('cost', () => price(line.cost)) : null;
         if (line.mode === 'MARGIN') {
-            if (line.kind === 'MANUAL' && !line.knownCost) fail('Sin costo conocido debes definir una venta manual.');
-            data.pricing.margin_percent = decimal(line.margin, 4, 2, { max: '9999' });
-        } else if (line.mode === 'MANUAL') data.pricing.sale = price(line.sale);
-        else fail('Modalidad de precio inválida.');
+            if (line.kind === 'MANUAL' && !line.knownCost) fail('Sin costo conocido, elige «Precio fijo» y captura el precio.', 'mode');
+            data.pricing.margin_percent = within('margin', () => decimal(line.margin, 4, 2, { max: '9999' }));
+        } else if (line.mode === 'MANUAL') data.pricing.sale = within('sale', () => price(line.sale));
+        else fail('Elige cómo calcular el precio.', 'mode');
         return data;
+    }
+    // IVA en pantalla como porcentaje (16); el servidor recibe la fracción exacta (0.1600).
+    function percentToFraction(value) {
+        const text = decimal(String(value ?? ''), 5, 2, { max: '10000' });
+        const [whole, fraction = ''] = text.split('.');
+        const scaled = BigInt(whole + fraction.padEnd(2, '0'));
+        return `${scaled / 10000n}.${String(scaled % 10000n).padStart(4, '0')}`;
+    }
+    function fractionToPercent(value) {
+        const text = decimal(String(value ?? ''), 5, 4, { max: '10000' });
+        const [whole, fraction = ''] = text.split('.');
+        const scaled = BigInt(whole + fraction.padEnd(4, '0'));
+        const rest = String(scaled % 100n).padStart(2, '0').replace(/0+$/, '');
+        return rest ? `${scaled / 100n}.${rest}` : String(scaled / 100n);
+    }
+    // Solo para mostrar: redondeo HALF_UP sobre el texto decimal, sin float.
+    function roundText(value, places) {
+        const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(String(value ?? ''));
+        if (!match) return null;
+        const [, sign, whole, fraction = ''] = match;
+        if (fraction.length <= places) return { text: sign + whole + (places ? '.' + fraction.padEnd(places, '0') : ''), exact: true };
+        let scaled = BigInt(whole + fraction.slice(0, places));
+        if (fraction[places] >= '5') scaled += 1n;
+        const digits = scaled.toString().padStart(places + 1, '0');
+        return { text: sign + digits.slice(0, digits.length - places) + (places ? '.' + digits.slice(-places) : ''),
+            exact: /^0*$/.test(fraction.slice(places)) };
     }
     function editOutcome(detail, intent) {
         if (detail.schema_version !== 2 || detail.status !== 'DRAFT') return 'CONFLICT';
@@ -79,10 +107,25 @@
     // Pista solo cuando la búsqueda falla por falta de tipo de cambio, según el permiso del usuario.
     function fxSearchHint(message, canChangeFx) {
         if (!/tipo de cambio/i.test(message || '')) return '';
-        return canChangeFx ? ' Aplícalo en «Ajustes globales» y vuelve a buscar.'
+        return canChangeFx ? ' Aplícalo en el paso 2 «Tipo de cambio del día» y vuelve a buscar.'
             : ' No tienes permiso para capturar el tipo de cambio; pide a un administrador que te lo habilite.';
     }
-    window.CCONORQuoteTools = Object.freeze({ decimal, integer, storedInteger, money, price, item, editOutcome, retainIntent, defaultConditionsText, fxSearchHint });
+    // «100.000000» → «100»: mismo valor decimal, más legible al recargar.
+    function trimZeros(value) {
+        const text = String(value ?? '');
+        return /^\d+\.\d+$/.test(text) ? text.replace(/0+$/, '').replace(/\.$/, '') : text;
+    }
+    // Descuento: con signo menos si resta algo; en cero, «$0.00» sin signo (igual que el PDF).
+    function discountText(value) {
+        const zero = /^0*(\.0*)?$/.test(String(value ?? '').trim());
+        return (zero ? '' : '-') + money(value) + ' MXN';
+    }
+    // Una unidad por partes = otra etiqueta de venta o factor distinto de 1.
+    function splitUnits(units) {
+        return units.source_label.trim() !== units.sale_label.trim() || !/^0*1(\.0*)?$/.test(String(units.conversion_factor).trim());
+    }
+    window.CCONORQuoteTools = Object.freeze({ decimal, integer, storedInteger, money, price, item, editOutcome, retainIntent,
+        defaultConditionsText, fxSearchHint, percentToFraction, fractionToPercent, roundText, splitUnits, trimZeros, discountText });
     if (typeof document === 'undefined') return;
     document.addEventListener('DOMContentLoaded', function () {
         const $ = id => document.getElementById(id);
@@ -103,27 +146,137 @@
             node.className = className;
             return node;
         }
-        function error(message = '') {
-            text('quoteError', message);
+        // 1A: aviso emergente persistente (se cierra a mano o al corregir); action = {label, run}.
+        let currentError = '', sessionError = '', fieldSeq = 0, lastSessionCheck = 0;
+        function error(message = '', { title = 'No se pudo completar', action = null } = {}) {
+            currentError = message;
+            text('quoteErrorTitle', title);
+            text('quoteErrorText', message);
+            $('quoteErrorAction').classList.toggle('d-none', !action);
+            text('quoteErrorAction', action?.label || '');
+            $('quoteErrorAction').onclick = action ? () => { error(); action.run(); } : null;
             $('quoteError').classList.toggle('d-none', !message);
         }
-        function showError(err) {
-            error(err.message + (err.status === 401 ? ' Abre el inicio de sesión en otra pestaña y conserva este formulario para reintentar.' : ''));
+        function showError(err, action = null) {
+            if (err.status === 401) {
+                state.sessionExpired = true;
+                error(err.message + ' Este formulario se conserva para reintentar.', { title: 'Inicia sesión de nuevo',
+                    action: { label: 'Iniciar sesión en otra pestaña', run: () => window.open($('commercialQuoteApp').dataset.loginUrl, '_blank', 'noopener') } });
+                sessionError = currentError;
+                locks();
+                return;
+            }
+            error(err.message, { action });
+        }
+        // Mensajes de contexto (solo lectura, histórico): informativos, no errores.
+        function notice(message = '') {
+            text('quoteNotice', message);
+            $('quoteNotice').classList.toggle('d-none', !message);
+        }
+        // Pendientes antes de guardar: todos a la vez, cada uno con su campo o partida.
+        function headerIssues(transition) {
+            const issues = [], add = (field, message) => issues.push({ field, message, place: transition ? 'Ajustes del total' : 'Datos del cliente' });
+            if (!transition) {
+                if (!$('clientName').value.trim()) add('clientName', 'Falta la razón social del cliente.');
+                if ($('clientEmail').value && !$('clientEmail').checkValidity()) add('clientEmail', 'El correo del cliente no es válido.');
+                const rfc = $('clientRfc').value.trim().toUpperCase();
+                if (rfc && !/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(rfc)) add('clientRfc', 'RFC inválido; escríbelo sin guiones ni espacios.');
+                try { integer($('validDays').value, 3650); } catch { add('validDays', 'La vigencia debe ser un número entero de días (1 a 3650).'); }
+                const conditions = $('quoteConditions').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+                if (conditions.length > 50 || conditions.some(s => s.length > 6000)) add('quoteConditions', 'Máximo 50 condiciones de hasta 6000 caracteres.');
+            }
+            const totals = (field, message) => issues.push({ field, message, place: 'Ajustes del total' });
+            try { percentToFraction($('taxRate').value); } catch { totals('taxRate', 'El IVA debe ser un porcentaje de 0 a 100, con hasta 2 decimales.'); }
+            try { decimal($('discountPercent').value, 5, 2, { max: '10000' }); } catch { totals('discountPercent', 'El descuento debe ser un porcentaje de 0 a 100, con hasta 2 decimales.'); }
+            return issues;
+        }
+        const usesUsd = line => line.originalCurrency === 'USD' || (line.kind === 'MANUAL' &&
+            ((line.knownCost && line.cost.currency === 'USD') || (line.mode === 'MANUAL' && line.sale.currency === 'USD')));
+        function quoteIssues() {
+            const issues = headerIssues(!!state.transition);
+            if (!state.fx && state.lines.some(usesUsd)) issues.push({ field: 'newExchangeRate', message: 'Aplica el tipo de cambio del día: hay precios en dólares.', place: 'Tipo de cambio' });
+            if (!state.lines.length) issues.push({ field: 'productSearchInput', message: 'Agrega al menos un producto o concepto.', place: 'Productos y conceptos' });
+            state.lines.forEach((line, index) => {
+                try { item(line); } catch (err) {
+                    issues.push({ lineKey: line.key, lineField: err.field, message: err.message, place: `Partida ${index + 1} · ${line.name || 'Concepto manual'}` });
+                }
+            });
+            return issues;
+        }
+        function clearFieldError(input) {
+            input.classList.remove('is-invalid');
+            if (input.nextElementSibling?.classList.contains('quote-feedback')) input.nextElementSibling.remove();
+        }
+        function clearIssues() {
+            for (const input of document.querySelectorAll('#commercialQuoteApp .is-invalid')) clearFieldError(input);
+            for (const line of state.lines) line.issue = null;
+        }
+        function markIssues(issues) {
+            clearIssues();
+            for (const issue of issues) {
+                if (issue.field) {
+                    const input = $(issue.field);
+                    input.classList.add('is-invalid');
+                    input.after(element('div', issue.message, 'invalid-feedback quote-feedback'));
+                } else {
+                    const line = state.lines.find(l => l.key === issue.lineKey);
+                    if (line) { line.issue = issue; line.expanded = true; }
+                }
+            }
+            renderLines(); locks();
+        }
+        function goTo(issue) {
+            let target = issue.field ? $(issue.field) : null;
+            if (issue.lineKey) {
+                const line = state.lines.find(l => l.key === issue.lineKey);
+                if (!line) return;
+                line.expanded = true; renderLines(); locks();
+                const box = [...$('quoteItemsBody').querySelectorAll('[data-line-detail]')].find(d => d.dataset.lineDetail === issue.lineKey);
+                target = box?.querySelector(`[data-field="${issue.lineField}"]:not([disabled])`) || box?.querySelector('input:not([disabled]), select:not([disabled])') || box;
+            }
+            target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            target?.focus?.({ preventScroll: true });
+        }
+        // 1A con un pendiente; 1B (ventana con la lista) con varios.
+        function presentIssues(issues) {
+            markIssues(issues);
+            if (issues.length === 1) {
+                const [issue] = issues;
+                error(issue.message, { title: 'No se pudo guardar', action: { label: issue.lineKey ? 'Ir a la partida' : 'Ir al campo', run: () => goTo(issue) } });
+                return;
+            }
+            error();
+            text('quoteIssuesTitle', `Revisa ${issues.length} puntos antes de guardar`);
+            $('quoteIssuesList').replaceChildren();
+            for (const issue of issues) {
+                const entry = element('li', '', 'list-group-item d-flex align-items-center gap-3');
+                const info = element('div', '', 'flex-grow-1');
+                info.append(element('div', issue.message, 'fw-semibold'), element('div', issue.place, 'small text-muted'));
+                const go = element('button', issue.lineKey ? 'Ir a la partida' : 'Ir al campo', 'btn btn-sm btn-outline-primary');
+                go.type = 'button';
+                go.addEventListener('click', () => { closeIssues(); goTo(issue); });
+                entry.append(element('span', '', 'issue-dot'), info, go);
+                $('quoteIssuesList').append(entry);
+            }
+            const dialog = $('quoteIssuesDialog');
+            if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+        }
+        function closeIssues() {
+            const dialog = $('quoteIssuesDialog');
+            if (typeof dialog.close === 'function' && dialog.open) dialog.close(); else dialog.removeAttribute('open');
         }
         function locks() {
             const allowed = editable();
             if (!allowed) for (const control of $('quoteItemsBody').querySelectorAll('input, select, button')) control.disabled = true;
             if (state.busy || state.pending) for (const control of $('quoteWarnings').querySelectorAll('button')) control.disabled = true;
             for (const control of $('resultsList').querySelectorAll('button')) control.disabled = !allowed || control.dataset.verified !== 'true';
-            $('refreshPermissionsBtn').disabled = state.busy;
             $('quoteHeader').disabled = !allowed || !!state.transition;
             $('quoteNotes').disabled = !allowed || !!state.saved || !!state.transition;
             $('viewSummaryBtn').disabled = state.busy || !!state.pending || !!state.fxPending || !state.saved || state.dirty || !state.caps;
-            for (const id of ['saveQuoteBtn', 'clearTableBtn', 'addManualBtn', 'searchProductBtn', 'productSearchInput', 'newQuoteBtn', 'openQuoteBtn', 'applyFxBtn', 'clearFxBtn', 'newExchangeRate', 'taxRate', 'discountPercent']) {
+            for (const id of ['saveQuoteBtn', 'clearTableBtn', 'addManualBtn', 'searchProductBtn', 'productSearchInput', 'newQuoteBtn', 'applyFxBtn', 'clearFxBtn', 'newExchangeRate', 'taxRate', 'discountPercent']) {
                 $(id).disabled = !allowed;
             }
             $('newQuoteBtn').disabled = state.busy || !!state.pending || !!state.fxPending;
-            $('openQuoteBtn').disabled = !state.caps || state.busy || !!state.pending || !!state.fxPending;
             $('saveQuoteBtn').disabled = state.busy || !!state.fxPending || (!state.pending && (!canEdit() || !state.lines.length || state.conflict));
             text('saveQuoteBtn', state.busy ? 'Procesando…' : state.pending ? 'Resolver / reintentar el mismo guardado' : state.saved ? 'Actualizar borrador' : 'Guardar borrador');
             $('addManualBtn').disabled = !allowed || !has('set_commercial_sale');
@@ -134,20 +287,46 @@
             text('discountPermissionHint', has('apply_commercial_discount') ? '' : 'Descuento conservado; sin permiso para modificarlo.');
             for (const id of ['applyFxBtn', 'clearFxBtn', 'newExchangeRate']) $(id).disabled = !allowed || !has('change_commercial_fx');
             if (state.fxPending) { $('newExchangeRate').disabled = true; $('clearFxBtn').disabled = true; $('applyFxBtn').disabled = state.busy; }
-            text('applyFxBtn', state.fxPending ? 'Resolver tipo de cambio' : 'Aplicar tipo de cambio');
-            text('fxPermissionHint', has('change_commercial_fx') ? 'Cambiar el tipo de cambio es una acción explícita; una búsqueda no lo reemplaza.' : 'Sin permiso para cambiar el tipo de cambio. El ya guardado se conserva al editar.');
-            text('quoteStatus', state.pending ? 'Resultado de guardado por resolver' : state.readonly ? 'Solo lectura' : state.conflict ? 'Conflicto: recarga explícita necesaria' :
-                state.busy ? 'Procesando…' : state.dirty ? 'Cambios pendientes de guardar' : state.saved ? 'Guardado' : state.caps ? 'Nuevo · sin guardar' : 'Sin conexión autorizada');
+            text('applyFxBtn', state.fxPending ? 'Resolver tipo de cambio' : 'Aplicar');
+            text('fxPermissionHint', has('change_commercial_fx') ? '' : 'Sin permiso para capturar el tipo de cambio; pide a un administrador que te lo habilite. El ya guardado se conserva al editar.');
+            const [statusText, statusKind] = state.sessionExpired ? ['Sesión vencida', 'danger'] :
+                state.pending ? ['Resultado de guardado por confirmar', 'dirty'] : state.readonly ? ['Solo lectura', 'readonly'] :
+                state.conflict ? ['Conflicto: recarga la revisión', 'danger'] : state.busy ? ['Procesando…', 'neutral'] :
+                state.dirty ? ['Cambios sin guardar', 'dirty'] : state.saved ? ['Guardado', 'saved'] :
+                state.caps ? ['Nueva · sin guardar', 'neutral'] : ['Sin conexión autorizada', 'danger'];
+            const identity = state.transition ? `Nueva revisión desde ${state.transition.folio}` :
+                state.saved ? `${state.saved.folio} · Revisión ${state.saved.revision}` : 'Cotización nueva';
+            for (const [box, label] of [['quoteStatus', 'quoteStatusText'], ['stickyStatus', 'stickyStatusText']]) {
+                $(box).className = `quote-status quote-status--${statusKind}`;
+                text(label, statusText);
+            }
+            text('quoteIdentity', identity); text('stickyIdentity', identity);
+            $('stickyNewBtn').disabled = $('newQuoteBtn').disabled;
+            $('stickySaveBtn').disabled = $('saveQuoteBtn').disabled;
+            text('stickySaveBtn', $('saveQuoteBtn').textContent);
+            syncStickyTotal();
         }
+        // Avisos: el recuadro solo se muestra si el cálculo trae alguno.
+        function showWarnings(count) {
+            $('quoteWarningsCard').classList.toggle('d-none', !count);
+            text('quoteWarningsTitle', `Avisos de esta cotización (${count})`);
+            if (!count) $('quoteWarnings').replaceChildren();
+        }
+        // Barra fija: refleja el total del resumen; los botones delegan en los principales.
+        function syncStickyTotal() { text('stickyTotal', $('totalFinalDisplay').textContent); }
         function clearSummary(message = 'Pendiente de cálculo actualizado') {
             state.preview = null;
             for (const id of ['costBaseDisplay', 'saleSubtotalDisplay', 'discountDisplay', 'subtotalDisplay', 'ivaDisplay', 'totalFinalDisplay', 'marginDisplay']) text(id, '—');
             text('calculationStatus', message);
             text('costCompleteness', '');
-            text('quoteWarnings', 'Sin cálculo vigente. Las aceptaciones anteriores no autorizan cambios nuevos.');
+            showWarnings(0);
+            syncStickyTotal();
             for (const row of $('quoteItemsBody').querySelectorAll('[data-line-key]')) {
                 row.querySelector('.sale-unit').textContent = '—';
                 row.querySelector('.sale-amount').textContent = '—';
+            }
+            for (const box of $('quoteItemsBody').querySelectorAll('[data-result-for]')) {
+                box.replaceChildren(element('div', 'Se calcula al completar los datos.', 'text-muted'));
             }
         }
         function changed() {
@@ -168,23 +347,19 @@
             if (state.lines.length) previewTimer = setTimeout(() => calculate().catch(() => {}), 350);
         }
         function header() {
-            const name = $('clientName').value.trim();
-            if (!name) fail('Captura la razón social para calcular o guardar.');
-            if ($('clientEmail').value && !$('clientEmail').checkValidity()) fail('Correo del cliente inválido.');
-            const rfc = $('clientRfc').value.trim().toUpperCase();
-            if (rfc && !/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(rfc)) fail('RFC inválido; usa el formato sin guiones.');
+            const [first] = headerIssues(false);
+            if (first) fail(first.message, first.field);
             const conditions = $('quoteConditions').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-            if (conditions.length > 50 || conditions.some(s => s.length > 6000)) fail('Máximo 50 condiciones de hasta 6000 caracteres.');
-            return { client_name: name, client_rfc: rfc, client_email: $('clientEmail').value.trim(),
+            return { client_name: $('clientName').value.trim(), client_rfc: $('clientRfc').value.trim().toUpperCase(), client_email: $('clientEmail').value.trim(),
                 client_contact: $('clientContact').value.trim(), client_phone: $('clientPhone').value.trim(), client_project: $('clientProject').value.trim(),
                 issue_date: $('issueDate').value, valid_days: integer($('validDays').value, 3650), conditions,
-                tax_rate: decimal($('taxRate').value, 5, 4, { max: '10000' }),
+                tax_rate: percentToFraction($('taxRate').value),
                 discount_percent: decimal($('discountPercent').value, 5, 2, { max: '10000' }), fx_context_id: state.fx?.id || null };
         }
         function payload() {
-            if (!state.lines.length) fail('Agrega al menos una partida.');
+            if (!state.lines.length) fail('Agrega al menos un producto o concepto.', 'productSearchInput');
             const inputs = state.transition ? { schema_version: 2, source_edit_version: state.transition.edit_version,
-                tax_rate: decimal($('taxRate').value, 5, 4, { max: '10000' }),
+                tax_rate: percentToFraction($('taxRate').value),
                 discount_percent: decimal($('discountPercent').value, 5, 2, { max: '10000' }), fx_context_id: state.fx?.id || null } : header();
             const body = { ...inputs, items: state.lines.map(line => {
                 try { return item(line); } catch (err) { fail(`Partida ${state.lines.indexOf(line) + 1}: ${err.message}`); }
@@ -195,7 +370,8 @@
         }
         function warnings(entries, persisted) {
             $('quoteWarnings').replaceChildren();
-            if (!entries?.length) { text('quoteWarnings', 'Sin advertencias comerciales en este cálculo.'); return; }
+            showWarnings(entries?.length || 0);
+            if (!entries?.length) return;
             const labels = { MARGEN_CERO: 'Margen cero', COSTO_DESCONOCIDO: 'Costo desconocido: utilidad incompleta',
                 VENTA_BAJO_COSTO: 'Venta bajo costo', VENTA_CERO: 'Venta de partida en cero', TOTAL_CERO: 'Total de cotización en cero',
                 STOCK_CERO: 'El proveedor informa existencias en cero', STOCK_INSUFICIENTE: 'Existencias del proveedor menores que la cantidad (en unidad vendida)',
@@ -226,7 +402,7 @@
             const result = preview.resultado;
             text('costBaseDisplay', money(result.costo_conocido) + ' MXN');
             text('saleSubtotalDisplay', money(result.subtotal_venta) + ' MXN');
-            text('discountDisplay', '-' + money(result.descuento) + ' MXN');
+            text('discountDisplay', discountText(result.descuento));
             text('subtotalDisplay', money(result.subtotal_neto) + ' MXN');
             text('ivaDisplay', money(result.iva) + ' MXN');
             text('totalFinalDisplay', money(result.total) + ' MXN');
@@ -241,7 +417,30 @@
                     row.querySelector('.sale-amount').textContent = money(line.amount);
                 }
             }
+            result.partidas.forEach((partida, index) => lineResult(partida, preview.cliente.items[index]));
+            syncStickyTotal();
             warnings(preview.warnings, persisted);
+        }
+        // Resumen por partida dentro de su detalle; los importes vienen del servidor.
+        function lineResult(partida, client) {
+            const key = partida.entrada.referencia;
+            const box = [...$('quoteItemsBody').querySelectorAll('[data-result-for]')].find(b => b.dataset.resultFor === key);
+            const line = state.lines.find(l => l.key === key);
+            if (!box || !line || !client) return;
+            const unit = line.units.sale_label.trim() || 'unidad';
+            const shown = value => { const r = roundText(value, 2); return r ? (r.exact ? '' : '≈ ') + money(r.text) + ' MXN' : '—'; };
+            const row = (label, value, strong = false) => {
+                const node = element('div', '', 'd-flex justify-content-between gap-2 mb-1');
+                node.append(element('span', label, 'text-muted'), element(strong ? 'strong' : 'span', value, 'text-end'));
+                return node;
+            };
+            box.replaceChildren(
+                row(`Costo por ${unit}`, partida.costo_unitario_mxn === null ? 'Desconocido' : shown(partida.costo_unitario_mxn)),
+                row(`Precio por ${unit}`, client.unit_price_label || '—', true),
+                element('hr', '', 'my-2'),
+                row(`${line.quantity} × ${unit}`, money(client.amount) + ' MXN', true),
+                row('Utilidad estimada', partida.utilidad_antes_descuento === null ? 'No calculable' : shown(partida.utilidad_antes_descuento)),
+                element('div', 'Sin IVA y antes del descuento global.', 'small text-muted mt-1'));
         }
         async function calculate() {
             clearTimeout(previewTimer);
@@ -261,32 +460,89 @@
                 return response.data;
             } catch (err) {
                 if (err.name === 'AbortError' || epoch !== state.epoch) return null;
+                if (err.status === undefined) {
+                    // Dato incompleto mientras se captura: se indica en el resumen, sin aviso emergente.
+                    clearSummary('Falta completar datos para calcular: ' + err.message);
+                    locks();
+                    throw err;
+                }
                 clearSummary('No hay cálculo actualizado: revisa los datos o la conexión.');
                 if (err.status === 409 && state.saved) state.conflict = true;
                 showError(err); locks();
                 throw err;
             }
         }
-        function inputField(parent, label, value, onChange, { disabled = false, options, checkbox = false } = {}) {
-            const wrapper = element('label', '', 'd-block small mb-2');
-            wrapper.append(element('span', label, 'd-block fw-semibold mb-1'));
-            const input = document.createElement(options ? 'select' : 'input');
-            input.className = options ? 'form-select form-select-sm' : checkbox ? 'form-check-input' : 'form-control form-control-sm';
-            if (options) for (const [key, text] of options) { const o = element('option', text); o.value = key; input.append(o); }
-            if (checkbox) { input.type = 'checkbox'; input.checked = !!value; }
-            else { input.value = value ?? ''; if (!options) input.maxLength = 6000; }
-            input.disabled = disabled || !editable();
-            input.addEventListener(options || checkbox ? 'change' : 'input', () => onChange(checkbox ? input.checked : input.value));
-            wrapper.append(input); parent.append(wrapper);
-            return input;
+        // Controles del detalle de partida: etiqueta visible, data-field para «Ir al campo».
+        function fieldBox(parent, label, help = '') {
+            const id = `qf-${++fieldSeq}`, wrapper = element('div', '', 'mb-3');
+            const caption = element('label', label, 'form-label small fw-semibold mb-1'); caption.htmlFor = id;
+            wrapper.append(caption); parent.append(wrapper);
+            return { id, wrapper, caption, help: () => { if (help) wrapper.append(element('div', help, 'form-text')); } };
         }
-        function priceEditor(parent, label, data, enabled, update) {
-            parent.append(element('h6', label));
-            inputField(parent, 'Importe original', data.amount, value => { data.amount = value; update(); }, { disabled: !enabled });
-            inputField(parent, 'Moneda', data.currency, value => { data.currency = value; update(); }, { disabled: !enabled, options: [['MXN', 'MXN'], ['USD', 'USD']] });
-            inputField(parent, 'Base IVA de esta entrada', data.vat_basis, value => { data.vat_basis = value; update(true); }, {
-                disabled: !enabled, options: [['', 'Selecciona base IVA'], ['NET', 'Sin IVA (neto)'], ['INCLUDED', 'Incluye IVA']] });
-            if (data.vat_basis === 'INCLUDED') inputField(parent, 'Tasa incluida propia (0.16 = 16%)', data.vat_rate, value => { data.vat_rate = value; update(); }, { disabled: !enabled || !has('change_commercial_tax') });
+        function textField(parent, label, value, onChange, { disabled = false, name = '', suffix = '', help = '', placeholder = '' } = {}) {
+            const box = fieldBox(parent, label, help);
+            const input = document.createElement('input');
+            Object.assign(input, { id: box.id, className: 'form-control form-control-sm', value: value ?? '', maxLength: 6000, placeholder });
+            if (name) input.dataset.field = name;
+            input.disabled = disabled || !editable();
+            input.addEventListener('input', () => onChange(input.value));
+            if (suffix) {
+                const group = element('div', '', 'input-group input-group-sm');
+                group.append(input, element('span', suffix, 'input-group-text'));
+                box.wrapper.append(group);
+            } else box.wrapper.append(input);
+            box.help();
+            return { input, caption: box.caption, suffix: box.wrapper.querySelector('.input-group-text') };
+        }
+        function choice(parent, legend, value, options, onChange, { disabled = false, name = '' } = {}) {
+            const set = element('fieldset', '', 'mb-3'), group = element('div', '', 'btn-group w-100'), groupName = `qc-${++fieldSeq}`;
+            set.append(element('legend', legend, 'form-label small fw-semibold mb-1'));
+            group.setAttribute('role', 'group');
+            for (const [key, label] of options) {
+                const input = document.createElement('input');
+                Object.assign(input, { type: 'radio', className: 'btn-check', name: groupName, id: `${groupName}-${key}`, value: key, checked: value === key, autocomplete: 'off' });
+                if (name) input.dataset.field = name;
+                input.disabled = disabled || !editable();
+                input.addEventListener('change', () => { if (input.checked) onChange(key); });
+                const caption = element('label', label, 'btn btn-cconor-choice btn-sm'); caption.htmlFor = input.id;
+                group.append(input, caption);
+            }
+            set.append(group); parent.append(set);
+        }
+        function checkField(parent, label, checked, onChange, { name = '' } = {}) {
+            const wrapper = element('div', '', 'form-check mb-3'), input = document.createElement('input');
+            Object.assign(input, { type: 'checkbox', className: 'form-check-input', id: `qk-${++fieldSeq}`, checked: !!checked });
+            if (name) input.dataset.field = name;
+            input.disabled = !editable();
+            input.addEventListener('change', () => onChange(input.checked));
+            const caption = element('label', label, 'form-check-label small fw-semibold'); caption.htmlFor = input.id;
+            wrapper.append(input, caption); parent.append(wrapper);
+            return { input, caption };
+        }
+        const safePercent = value => { try { return fractionToPercent(value); } catch { return String(value ?? ''); } };
+        function priceEditor(parent, label, data, enabled, update, name) {
+            const box = fieldBox(parent, label);
+            const group = element('div', '', 'input-group input-group-sm');
+            const amount = document.createElement('input');
+            Object.assign(amount, { id: box.id, className: 'form-control', value: data.amount ?? '', inputMode: 'decimal', maxLength: 80 });
+            amount.dataset.field = name;
+            amount.disabled = !enabled || !editable();
+            amount.addEventListener('input', () => { data.amount = amount.value; update(); });
+            const currency = document.createElement('select');
+            currency.className = 'form-select'; currency.style.maxWidth = '6rem'; currency.setAttribute('aria-label', `Moneda: ${label}`);
+            for (const code of ['MXN', 'USD']) { const option = element('option', code); option.value = code; currency.append(option); }
+            currency.value = data.currency; currency.disabled = !enabled || !editable();
+            currency.addEventListener('change', () => { data.currency = currency.value; update(); });
+            group.append(amount, currency); box.wrapper.append(group);
+            choice(parent, '¿Ese importe incluye IVA?', data.vat_basis, [['NET', 'No, es sin IVA'], ['INCLUDED', 'Sí, incluye IVA']],
+                value => { data.vat_basis = value; update(true); }, { disabled: !enabled, name });
+            if (data.vat_basis === 'INCLUDED') {
+                textField(parent, 'IVA que incluye', data.vatRateInput ?? safePercent(data.vat_rate), value => {
+                    data.vatRateInput = value;
+                    try { data.vat_rate = percentToFraction(value); } catch { data.vat_rate = ''; }
+                    update();
+                }, { disabled: !enabled || !has('change_commercial_tax'), name, suffix: '%' });
+            }
         }
         function renderLines() {
             $('quoteItemsBody').replaceChildren();
@@ -303,6 +559,7 @@
             }
             state.lines.forEach((line, index) => {
                 const row = document.createElement('tr'); row.dataset.lineKey = line.key;
+                if (line.issue) row.classList.add('line-has-issue');
                 row.append(element('td', String(index + 1)), element('td', `${line.name || 'Concepto manual sin nombre'} · ${line.provider || 'Manual'}`),
                     element('td', line.units.sale_label || 'Pendiente'), element('td', line.quantity),
                     element('td', '—', 'sale-unit'), element('td', '—', 'sale-amount'));
@@ -311,36 +568,88 @@
                 remove.addEventListener('click', () => { state.lines.splice(index, 1); renderLines(); changed(); });
                 actions.append(remove); row.append(actions); $('quoteItemsBody').append(row);
                 const detailRow = document.createElement('tr'), detailCell = document.createElement('td'); detailCell.colSpan = 7;
-                const details = document.createElement('details'); details.open = !!line.expanded;
+                const details = element('details', '', 'line-detail'); details.open = !!line.expanded; details.dataset.lineDetail = line.key;
                 details.addEventListener('toggle', () => { line.expanded = details.open; });
-                details.append(element('summary', `Detalle de partida ${index + 1}: unidades, precio y captura`, 'small text-primary mb-2'));
-                const grid = element('div', '', 'row g-3 p-2');
-                const original = element('div', '', 'col-md-4'), unit = element('div', '', 'col-md-4'), pricing = element('div', '', 'col-md-4');
-                const update = rerender => { changed(); if (rerender) renderLines(); };
+                details.append(element('summary', `Detalle de la partida ${index + 1}`, 'small text-primary fw-semibold mb-2'));
+                const issueAlert = line.issue ? element('div', line.issue.message, 'alert alert-danger py-2 small mb-3') : null;
+                if (issueAlert) details.append(issueAlert);
+                const grid = element('div', '', 'row g-4 px-1 pb-2');
+                const source = element('div', '', 'col-lg-4'), units = element('div', '', 'col-lg-4'), pricing = element('div', '', 'col-lg-4');
+                const update = rerender => {
+                    if (line.issue) { line.issue = null; row.classList.remove('line-has-issue'); issueAlert?.remove(); }
+                    changed(); if (rerender) renderLines();
+                };
+                const canSell = has('set_commercial_sale');
+
                 if (line.kind === 'API') {
-                    original.append(element('h6', 'Original API · solo lectura'),
-                        element('p', `${line.provider} · ${line.name}`, 'small'),
-                        element('p', `${money(line.originalPrice)} ${line.originalCurrency} · ${line.originalVat === null ? 'neto' : 'incluye IVA ' + line.originalVat}`, 'small'),
-                        element('p', `Marca: ${line.brand || '—'} · Modelo: ${line.model || '—'}`, 'small'));
+                    source.append(element('h6', 'Del proveedor', 'fw-bold'));
+                    const box = element('div', '', 'line-source-box small mb-3');
+                    const fact = (label, value) => { const r = element('div', '', 'd-flex justify-content-between gap-2 mb-1'); r.append(element('span', label, 'text-muted'), element('strong', value, 'text-end')); box.append(r); };
+                    fact('Proveedor', line.provider || '—');
+                    fact('Marca · Modelo', `${line.brand || '—'} · ${line.model || '—'}`);
+                    fact('Precio', `${money(trimZeros(line.originalPrice))} ${line.originalCurrency} · ${line.originalVat === null ? 'sin IVA' : 'incluye IVA ' + safePercent(line.originalVat) + '%'}`);
+                    box.append(element('div', 'Estos datos vienen del proveedor y no se pueden editar.', 'text-muted mt-2'));
+                    source.append(box);
                 } else {
-                    inputField(original, 'Nombre del concepto manual', line.name, value => { line.name = value; update(); }, { disabled: line.persisted || !has('set_commercial_sale') });
-                    inputField(original, 'Costo conocido (desmarcado = desconocido, no cero)', line.knownCost, value => { line.knownCost = value; update(true); }, { checkbox: true, disabled: !has('set_commercial_sale') });
-                    if (line.knownCost) priceEditor(original, 'Costo capturado', line.cost, has('set_commercial_sale'), update);
+                    source.append(element('h6', 'Concepto y costo', 'fw-bold'));
+                    textField(source, 'Nombre del concepto', line.name, value => { line.name = value; update(); }, { disabled: line.persisted || !canSell, name: 'name' });
+                    choice(source, '¿Conoces el costo?', line.knownCost ? 'YES' : 'NO', [['YES', 'Sí, lo conozco'], ['NO', 'No lo sé']],
+                        value => { line.knownCost = value === 'YES'; update(true); }, { disabled: !canSell, name: 'knownCost' });
+                    if (line.knownCost) priceEditor(source, 'Costo por unidad del proveedor', line.cost, canSell, update, 'cost');
+                    else source.append(element('div', '«No lo sé» no es lo mismo que costo $0: la utilidad no se podrá calcular.', 'form-text mb-3'));
                 }
-                inputField(original, 'Descripción pública del concepto', line.description, value => { line.description = value; update(); });
-                const unitsChanged = () => { line.units.confirmed = false; update(); };
-                inputField(unit, 'Unidad original', line.units.source_label, value => { line.units.source_label = value; unitsChanged(); }, { disabled: line.persisted && line.kind === 'API' });
-                inputField(unit, 'Unidad vendida', line.units.sale_label, value => { line.units.sale_label = value; unitsChanged(); });
-                inputField(unit, 'Factor divisor original → venta', line.units.conversion_factor, value => { line.units.conversion_factor = value; unitsChanged(); });
-                const confirmation = inputField(unit, 'Confirmo unidades y factor', line.units.confirmed, value => { line.units.confirmed = value; update(); }, { checkbox: true });
-                unit.addEventListener('input', event => { if (event.target !== confirmation) confirmation.checked = line.units.confirmed; });
-                inputField(unit, 'Cantidad entera', line.quantity, value => { line.quantity = value; update(); });
-                inputField(pricing, 'Modalidad de precio', line.mode, value => { line.mode = value; update(true); }, {
-                    disabled: !has('set_commercial_sale'), options: [['MARGIN', 'Costo + margen sobre venta'], ['MANUAL', 'Venta manual por unidad vendida']] });
-                if (line.mode === 'MARGIN') inputField(pricing, 'Margen sobre venta (%)', line.margin, value => { line.margin = value; update(); }, { disabled: !has('change_commercial_margin') });
-                else priceEditor(pricing, 'Venta manual por unidad vendida', line.sale, has('set_commercial_sale'), update);
-                pricing.append(element('p', 'Los campos bloqueados requieren permiso; conservar un valor capturado no lo vuelve a calcular en JavaScript.', 'small text-muted'));
-                grid.append(original, unit, pricing); details.append(grid); detailCell.append(details); detailRow.append(detailCell); $('quoteItemsBody').append(detailRow);
+                textField(source, 'Descripción adicional para el cliente (opcional)', line.description, value => { line.description = value; update(); }, { name: 'description' });
+
+                units.append(element('h6', '¿Cómo lo vendes?', 'fw-bold'));
+                const split = line.unitMode ? line.unitMode === 'SPLIT' : splitUnits(line.units);
+                const lockSource = line.persisted && line.kind === 'API';
+                choice(units, 'Forma de venta', split ? 'SPLIT' : 'SAME', [['SAME', 'Igual que el proveedor'], ['SPLIT', 'Por partes (metros, etc.)']], value => {
+                    line.unitMode = value;
+                    if (value === 'SAME') { line.units.sale_label = line.units.source_label; line.units.conversion_factor = '1'; }
+                    line.units.confirmed = false; update(true);
+                }, { name: 'units' });
+                const refs = {};
+                const refresh = () => {
+                    const from = line.units.source_label.trim() || 'unidad del proveedor', to = line.units.sale_label.trim() || 'tu unidad';
+                    if (refs.factor) refs.factor.caption.textContent = `¿Cuántas «${to}» trae 1 «${from}»?`;
+                    if (refs.chip) refs.chip.textContent = `1 ${from} = ${line.units.conversion_factor || '…'} ${to}`;
+                    if (refs.quantity?.suffix) refs.quantity.suffix.textContent = line.units.sale_label.trim() || 'unidades';
+                    refs.confirm.caption.textContent = split ? `Revisé la equivalencia: 1 ${from} = ${line.units.conversion_factor || '…'} ${to}` : 'Revisé la unidad y la cantidad';
+                };
+                const unitsChanged = () => { line.units.confirmed = false; refs.confirm.input.checked = false; refresh(); update(); };
+                if (!split) {
+                    textField(units, 'Unidad (pieza, servicio, metro…)', line.units.source_label, value => {
+                        line.units.source_label = value; line.units.sale_label = value; line.units.conversion_factor = '1'; unitsChanged();
+                    }, { disabled: lockSource, name: 'units' });
+                } else {
+                    textField(units, 'El proveedor lo vende por', line.units.source_label, value => { line.units.source_label = value; unitsChanged(); },
+                        { disabled: lockSource, name: 'units', placeholder: 'Ej. Bobina' });
+                    textField(units, 'Tú lo vendes por', line.units.sale_label, value => { line.units.sale_label = value; unitsChanged(); },
+                        { name: 'units', placeholder: 'Ej. Metro' });
+                    refs.factor = textField(units, '¿Cuántas trae?', line.units.conversion_factor, value => { line.units.conversion_factor = value; unitsChanged(); },
+                        { name: 'factor', help: 'Ejemplo: una bobina de 100 m → 100.' });
+                    refs.chip = element('div', '', 'equivalence-chip mb-3');
+                    units.append(refs.chip);
+                }
+                refs.quantity = textField(units, 'Cantidad', line.quantity, value => { line.quantity = value; update(); },
+                    { name: 'quantity', suffix: line.units.sale_label.trim() || 'unidades', help: 'Solo números enteros (1, 3, 10…).' });
+                refs.confirm = checkField(units, '', line.units.confirmed, value => { line.units.confirmed = value; update(); }, { name: 'confirm' });
+                refresh();
+
+                pricing.append(element('h6', 'Precio al cliente', 'fw-bold'));
+                choice(pricing, 'Cómo calcular el precio', line.mode, [['MARGIN', 'Con margen'], ['MANUAL', 'Precio fijo']],
+                    value => { line.mode = value; update(true); }, { disabled: !canSell, name: 'mode' });
+                if (line.mode === 'MARGIN') {
+                    textField(pricing, 'Margen sobre la venta', line.margin, value => { line.margin = value; update(); },
+                        { disabled: !has('change_commercial_margin'), name: 'margin', suffix: '%' });
+                } else priceEditor(pricing, `Precio por ${line.units.sale_label.trim() || 'unidad'}`, line.sale, canSell, update, 'sale');
+                const result = element('div', '', 'line-result-box small'); result.dataset.resultFor = line.key;
+                result.append(element('div', 'Se calcula al completar los datos.', 'text-muted'));
+                pricing.append(result);
+                if (!canSell || !has('change_commercial_margin')) pricing.append(element('p', 'Los campos bloqueados requieren permiso.', 'small text-muted mt-2 mb-0'));
+
+                grid.append(source, units, pricing); details.append(grid); detailCell.append(details); detailRow.append(detailCell); $('quoteItemsBody').append(detailRow);
+                if (line.issue?.lineField) for (const input of details.querySelectorAll(`[data-field="${line.issue.lineField}"]`)) input.classList.add('is-invalid');
             });
             if (state.preview) summary(state.preview, !state.dirty && !!state.saved);
             if (state.readonly && state.loadedDetail?.schema_version === 2) sealedSummary(state.loadedDetail);
@@ -397,19 +706,26 @@
                 text('searchWarning', response.proveedores_caidos_nombres?.length ? 'No respondieron: ' + response.proveedores_caidos_nombres.join(', ') : '');
                 $('searchWarning').classList.toggle('d-none', !response.proveedores_caidos_nombres?.length);
                 // Solo retira el aviso de una búsqueda fallida anterior, nunca otro error vigente.
-                if (searchError && $('quoteError').textContent === searchError) error();
+                if (searchError && currentError === searchError) error();
                 searchError = '';
                 renderProducts();
             } catch (err) {
                 if (err.name === 'AbortError' || version !== searchVersion) return;
                 state.products = []; text('searchStatus', err.message + fxSearchHint(err.message, has('change_commercial_fx')));
-                showError(err);
-                searchError = $('quoteError').textContent;
+                const needsFx = /tipo de cambio/i.test(err.message);
+                showError(err, needsFx && has('change_commercial_fx') ? { label: 'Ir al tipo de cambio', run: () => goTo({ field: 'newExchangeRate' }) } : null);
+                if (needsFx && !has('change_commercial_fx')) text('quoteErrorText', err.message + fxSearchHint(err.message, false));
+                searchError = currentError;
             }
         }
         function fxDisplay() {
-            $('exchangeRate').value = state.fx ? `1 USD = ${state.fx.value} MXN` : 'Sin tipo de cambio';
-            text('fxEvidence', state.fx ? `${state.fx.source} · ${state.fx.date} · Contexto capturado` : 'El sistema no supone un tipo de cambio. Si todo es en pesos, puede quedar vacío.');
+            const value = state.fx ? String(state.fx.value).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') : '';
+            const when = state.fx ? new Date(state.fx.date) : null;
+            const date = when && !Number.isNaN(when.getTime()) ? when.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : state.fx?.date;
+            text('exchangeRate', state.fx ? `Aplicado: 1 USD = ${value} MXN` : 'Sin tipo de cambio');
+            $('exchangeRate').classList.toggle('fx-status-ok', !!state.fx);
+            text('fxEvidence', state.fx ? `Capturado el ${date} · ${state.fx.source === 'manual' ? 'captura manual' : state.fx.source}` : 'El sistema no supone un tipo de cambio. Si todo es en pesos, puede quedar vacío.');
+            if (state.fx) clearFieldError($('newExchangeRate'));
         }
         function loadLine(snapshot) {
             const line = blankLine();
@@ -420,7 +736,7 @@
                 originalVat: snapshot.cost_tax_rate_included, mode: snapshot.pricing_mode,
                 margin: snapshot.margin_percent ?? '', expanded: false, knownCost: snapshot.source_unit_price !== null,
                 units: { source_label: snapshot.source_unit_label, sale_label: snapshot.sale_unit_label,
-                    conversion_factor: snapshot.conversion_factor, confirmed: true },
+                    conversion_factor: trimZeros(snapshot.conversion_factor), confirmed: true },
                 cost: { amount: snapshot.source_unit_price ?? '', currency: snapshot.source_currency || 'MXN',
                     vat_basis: snapshot.source_unit_price === null ? '' : snapshot.cost_tax_rate_included === null ? 'NET' : 'INCLUDED', vat_rate: snapshot.cost_tax_rate_included ?? '0.16' },
                 sale: { amount: snapshot.manual_unit_price ?? '', currency: snapshot.manual_currency || 'MXN',
@@ -431,6 +747,7 @@
             state.transition = null;
             $('transitionNotice').classList.add('d-none');
             state.loadedDetail = detail;
+            clearIssues(); notice('');
             state.caps = detail.capabilities;
             state.saved = { folio: detail.folio, revision: detail.revision, edit_version: detail.edit_version, state_fingerprint: detail.state_fingerprint };
             state.dirty = false; state.conflict = false; state.preview = null; state.epoch += 1;
@@ -439,7 +756,7 @@
                 clientContact: detail.client.contact || '', clientPhone: detail.client.phone || '', clientProject: detail.client.project || '',
                 issueDate: detail.issue_date, validDays: detail.valid_days, quoteConditions: detail.conditions.join('\n'), quoteNotes: '',
                 quoteFolio: detail.folio, quoteRevision: `${detail.revision} / ${detail.edit_version}`,
-                taxRate: detail.tax_rate, discountPercent: detail.discount_percent ?? '', openFolio: detail.folio, openRevision: detail.revision };
+                taxRate: safePercent(detail.tax_rate), discountPercent: detail.discount_percent ?? '' };
             for (const [id, value] of Object.entries(values)) $(id).value = value;
             state.fx = detail.tipo_cambio ? { id: detail.fx_context_id,
                 value: detail.tipo_cambio.valor, source: detail.tipo_cambio.origen, date: detail.tipo_cambio.fecha } : null;
@@ -452,23 +769,24 @@
                     const row = document.createElement('tr'), cell = element('td', `${entry.name} · Cantidad histórica: ${entry.quantity} · Original: ${money(entry.source_unit_price)} ${entry.source_currency}`);
                     cell.colSpan = 7; row.append(cell); $('quoteItemsBody').append(row);
                 }
-                error('Revisión histórica v1 en solo lectura. Requiere una transición comercial revisada; no se truncan cantidades ni se inventa margen.');
+                error(); notice('Revisión histórica v1 en solo lectura. Requiere una transición comercial revisada; no se truncan cantidades ni se inventa margen.');
             } else if (detail.preview) { summary(detail.preview, true); error(); }
             else {
                 sealedSummary(detail);
-                error('Revisión emitida en solo lectura. No se sobrescribe ni se regenera su documento.');
+                error(); notice('Revisión emitida en solo lectura. No se sobrescribe ni se regenera su documento.');
             }
         }
         function sealedSummary(detail) {
             const seals = detail.sealed;
             text('costBaseDisplay', money(seals.known_cost_total) + ' MXN');
             text('saleSubtotalDisplay', money(seals.sale_subtotal) + ' MXN');
-            text('discountDisplay', '-' + money(seals.discount_amount) + ' MXN');
+            text('discountDisplay', discountText(seals.discount_amount));
             text('subtotalDisplay', money(detail.subtotal) + ' MXN'); text('ivaDisplay', money(detail.tax) + ' MXN'); text('totalFinalDisplay', money(detail.total) + ' MXN');
             text('marginDisplay', seals.costs_complete ? money(seals.gross_profit) + ' MXN' : 'No disponible: costos incompletos');
             text('costCompleteness', seals.costs_complete ? 'Todos los costos sellados son conocidos.' : 'Costos sellados incompletos.');
             text('calculationStatus', 'Importes sellados · no se recalcula la emisión');
-            text('quoteWarnings', 'Solo lectura. Las confirmaciones históricas se conservan en el servidor.');
+            syncStickyTotal();
+            showWarnings(0);
             for (const row of $('quoteItemsBody').querySelectorAll('[data-line-key]')) {
                 const index = state.lines.findIndex(l => l.key === row.dataset.lineKey);
                 row.querySelector('.sale-unit').textContent = detail.cliente.items[index]?.unit_price_label || 'Consultar original (P6)';
@@ -482,6 +800,9 @@
             try {
                 await sameActor(state.pending?.actor);
                 if (!state.pending) {
+                    const issues = quoteIssues();
+                    if (issues.length) { presentIssues(issues); return; }
+                    clearIssues(); error();
                     const preview = await calculate();
                     if (!preview) return;
                     const body = payload();
@@ -508,7 +829,6 @@
                 // La copia v2 ya existe: no volver a usar el v1 de origen aunque falle el GET.
                 state.transition = null; $('transitionNotice').classList.add('d-none');
                 $('quoteFolio').value = saved.folio; $('quoteRevision').value = `${saved.revision} / ${saved.edit_version}`;
-                $('openFolio').value = saved.folio; $('openRevision').value = saved.revision;
                 state.conflict = true; // Si falla GET, exigir recarga y nunca otra alta.
                 const detail = (await api.revision(saved.folio, saved.revision)).data;
                 loadDetail(detail);
@@ -548,8 +868,25 @@
             }
             state.actor = response.actor_id;
             state.caps = response.data;
+            if (state.sessionExpired) {
+                state.sessionExpired = false;
+                if (sessionError && currentError === sessionError) error();
+                sessionError = '';
+            }
+        }
+        // Sin botón: al volver a la pestaña se revisan sesión y permisos (como mucho cada 15 s).
+        async function refreshSession() {
+            if (document.visibilityState !== 'visible' || state.busy || state.pending || Date.now() - lastSessionCheck < 15000) return;
+            lastSessionCheck = Date.now();
+            try { await sameActor(); }
+            catch (err) { if (err.status === 401 && !state.sessionExpired) showError(err); }
+            locks(); renderLines(); renderProducts();
         }
         $('quoteHeader').addEventListener('input', changed);
+        for (const id of ['quoteHeader', 'taxRate', 'discountPercent', 'newExchangeRate']) $(id).addEventListener('input', event => clearFieldError(event.target));
+        $('quoteItemsBody').addEventListener('input', event => event.target.classList?.remove('is-invalid'));
+        $('quoteErrorClose').addEventListener('click', () => error());
+        for (const id of ['quoteIssuesOk', 'quoteIssuesClose']) $(id).addEventListener('click', closeIssues);
         for (const id of ['taxRate', 'discountPercent']) $(id).addEventListener('input', changed);
         $('addManualBtn').addEventListener('click', () => { state.lines.push(blankLine()); renderLines(); changed(); });
         $('clearTableBtn').addEventListener('click', () => { if (window.confirm('Vaciar partidas de este borrador? No se borra historial.')) { state.lines = []; renderLines(); changed(); } });
@@ -558,7 +895,20 @@
             if (!state.saved || state.dirty || state.pending || state.busy) return;
             window.location.assign(`/resumen/?${new URLSearchParams({ folio: state.saved.folio, revision: state.saved.revision })}`);
         });
-        $('refreshPermissionsBtn').addEventListener('click', capabilities);
+        document.addEventListener('visibilitychange', refreshSession);
+        window.addEventListener('focus', refreshSession);
+        $('stickyNewBtn').addEventListener('click', () => $('newQuoteBtn').click());
+        $('stickySaveBtn').addEventListener('click', () => $('saveQuoteBtn').click());
+        // La barra aparece cuando el encabezado sale de la pantalla por arriba.
+        if ('IntersectionObserver' in window) {
+            new IntersectionObserver(([entry]) => {
+                const visible = !entry.isIntersecting && entry.boundingClientRect.top < 0;
+                $('quoteStickyBar').classList.toggle('is-visible', visible);
+                $('quoteStickyBar').setAttribute('aria-hidden', String(!visible));
+                for (const id of ['stickyNewBtn', 'stickySaveBtn']) $(id).tabIndex = visible ? 0 : -1;
+                document.body.classList.toggle('quote-scrolled', visible);
+            }).observe($('quoteTopHeader'));
+        }
         $('searchProductBtn').addEventListener('click', search);
         $('providerFilter').addEventListener('change', renderProducts);
         $('productSearchInput').addEventListener('input', () => {
@@ -585,16 +935,6 @@
             finally { state.busy = false; locks(); renderLines(); }
         });
         $('clearFxBtn').addEventListener('click', () => { if (state.fxPending) return; state.fx = null; fxDisplay(); changed(); });
-        $('openQuoteBtn').addEventListener('click', async () => {
-            if (state.dirty && !window.confirm('Cargar esta revisión descartará los cambios NO guardados de la pantalla. Continuar?')) return;
-            state.busy = true; locks(); previewAbort?.abort(); clearTimeout(previewTimer);
-            try {
-                await sameActor();
-                const folio = $('openFolio').value.trim(); if (!folio) fail('Indica el folio.');
-                loadDetail((await api.revision(folio, integer($('openRevision').value, 2147483647))).data);
-            } catch (err) { showError(err); }
-            finally { state.busy = false; locks(); renderLines(); }
-        });
         $('newQuoteBtn').addEventListener('click', () => {
             if (state.dirty && !window.confirm('Descartar cambios no guardados y preparar otra cotización?')) return;
             state.saved = null; state.transition = null; state.loadedDetail = null; state.readonly = false; state.conflict = false; state.lines = []; state.fx = null;
@@ -602,9 +942,10 @@
             for (const id of ['clientName', 'clientRfc', 'clientEmail', 'clientContact', 'clientPhone', 'clientProject', 'quoteNotes', 'newExchangeRate']) $(id).value = '';
             $('quoteConditions').value = defaultConditions;
             $('quoteFolio').value = 'Se asigna al guardar'; $('quoteRevision').value = 'Sin guardar';
-            $('taxRate').value = '0.16'; $('discountPercent').value = '0'; $('validDays').value = '15';
+            $('taxRate').value = '16'; $('discountPercent').value = '0'; $('validDays').value = '15';
             $('issueDate').value = initialIssueDate;
             previewAbort?.abort(); clearTimeout(previewTimer); state.epoch += 1; state.dirty = false;
+            clearIssues(); notice('');
             clearSummary('Nueva cotización sin guardar'); fxDisplay(); error(); locks(); renderLines();
         });
         window.addEventListener('beforeunload', event => { if (state.dirty || state.pending || state.fxPending) { event.preventDefault(); event.returnValue = ''; } });
@@ -627,7 +968,7 @@
                     state.transition = { folio: detail.folio, revision: detail.revision, edit_version: detail.edit_version };
                     state.saved = null; state.loadedDetail = null; state.readonly = false; state.lines = []; state.fx = null;
                     $('quoteRevision').value = 'Nueva revisión: se asigna al guardar';
-                    $('issueDate').value = initialIssueDate; $('taxRate').value = '0.16'; $('discountPercent').value = '0';
+                    $('issueDate').value = initialIssueDate; $('taxRate').value = '16'; $('discountPercent').value = '0';
                     $('transitionNotice').classList.remove('d-none');
                     error(); fxDisplay(); clearSummary('Captura y revisa explícitamente las nuevas partidas. No se copiaron entradas financieras del histórico.');
                 }

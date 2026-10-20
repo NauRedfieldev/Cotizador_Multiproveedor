@@ -593,6 +593,49 @@ nueva. Son solo un valor inicial: el asesor los edita o borra antes de guardar.
 Pruebas: `CondicionesPredeterminadasTests` (`test_vistas_cotizacion.py`) y casos M2 de
 `tools/test_cotizador_comercial.cjs`. Estado y textos oficiales: [docs/30](30-puesta-en-marcha.md) M2 y B1.
 
+### 14.5 Ajustes visuales del cotizador (2026-10-19)
+
+Solo presentación (plantilla, `cotizador.js`, `custom.css`): el cálculo, el API y los
+datos guardados no cambian.
+
+- **Pasos numerados:** 1 Datos del cliente → 2 Tipo de cambio del día → 3 Productos y
+  conceptos → 4 Revisar y guardar. El tipo de cambio va antes de la búsqueda porque las
+  ofertas en dólares lo necesitan; IVA y descuento quedan en «Ajustes del total».
+- **Avisos:** al guardar se revisan todos los pendientes a la vez. Uno solo se muestra
+  como aviso emergente persistente con «Ir al campo/Ir a la partida»; varios abren una
+  ventana con la lista y un botón por pendiente. El campo o la partida se marcan en rojo
+  hasta corregirlos. Los errores del servidor usan el mismo aviso; los de búsqueda por
+  falta de tipo de cambio ofrecen «Ir al tipo de cambio». El cálculo automático mientras
+  se captura no lanza avisos: el resumen indica qué dato falta. Solo lectura e
+  histórico v1 se informan con un mensaje azul, no como error.
+- **Detalle de partida:** tres columnas (Del proveedor / Concepto y costo · ¿Cómo lo
+  vendes? · Precio al cliente) con opciones en botones. «Igual que el proveedor» usa
+  una sola unidad (factor 1); «Por partes» pide la unidad del proveedor, la tuya y
+  cuántas trae («1 Bobina = 100 Metro»). La casilla «Revisé…» sigue siendo obligatoria.
+  El resumen por partida (costo y precio por unidad, importe, utilidad) viene del preview
+  del servidor; los redondeos de pantalla se marcan con ≈.
+- **IVA en porcentaje:** la pantalla muestra «16»; el navegador envía la fracción exacta
+  `0.1600` (conversión de texto con BigInt, sin float). Igual para el IVA incluido de
+  costos o precios manuales.
+
+- **Encabezado:** título, folio · revisión y una etiqueta de estado con color (gris nueva,
+  ámbar cambios sin guardar, verde guardado, azul solo lectura, rojo sesión vencida o
+  conflicto) y «Nueva cotización». Al bajar, el menú del sitio con el logo deja de ser fijo
+  (solo en esta página) y aparece una barra fija con folio, estado, total y los botones de
+  nueva cotización y guardar (delegan en los principales). Ya no hay botones «Revisar
+  conexión» ni «Iniciar sesión»: la sesión y los permisos se revisan solos al volver a la
+  pestaña (como mucho cada 15 s) y el aviso de sesión vencida ofrece iniciar sesión.
+- **Paso 4:** el recuadro «Avisos de esta cotización (N)» solo aparece cuando el cálculo
+  trae avisos. Botones de 44 px: «Limpiar partidas» en rojo a la izquierda (borra todas
+  las partidas); «Ver resumen» y «Guardar borrador» a la derecha. Se quitó «Abrir revisión
+  conocida»: otra cotización se abre desde «Mis cotizaciones» (enlace al pie del paso 4).
+- **Colores de botones (todo el sitio, opción 4C):** principales y de contorno en azul
+  marino `#111638`; opción elegida, números de paso y casillas en verde azulado `#00796B`
+  (`custom.css`, `home.css`). Rojo, gris y amarillo se conservan para quitar, neutro y estado.
+
+Pruebas: casos de conversión, redondeo, unidades y campo de cada error en
+`tools/test_cotizador_comercial.cjs`; recorrido en navegador aislado.
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 ### 15.1 Alcance y acceso

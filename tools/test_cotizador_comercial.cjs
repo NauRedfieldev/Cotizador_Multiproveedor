@@ -152,7 +152,7 @@ test('M2: nueva cotización y carga inicial usan las predeterminadas, no un cuad
 test('búsqueda: la pista de tipo de cambio solo acompaña a ese error y depende del permiso', () => {
     const { tools } = runtime();
     const fx = 'Captura el tipo de cambio (pesos por dólar) para comparar los precios en USD.';
-    assert.match(tools.fxSearchHint(fx, true), /Ajustes globales/);
+    assert.match(tools.fxSearchHint(fx, true), /paso 2/);
     assert.match(tools.fxSearchHint(fx, false), /pide a un administrador/);
     for (const other of ['Inicia sesión para continuar.', 'No fue posible consultar a los proveedores.', '', undefined]) {
         assert.equal(tools.fxSearchHint(other, true), '');
@@ -160,6 +160,61 @@ test('búsqueda: la pista de tipo de cambio solo acompaña a ese error y depende
     }
     const source = fs.readFileSync(path.join(root, 'static/js/cotizador.js'), 'utf8');
     assert.match(source, /text\('searchStatus', err\.message \+ fxSearchHint\(err\.message, has\('change_commercial_fx'\)\)\)/);
+});
+test('IVA en porcentaje en pantalla y fracción exacta hacia el servidor, sin float', () => {
+    const { tools } = runtime();
+    for (const [pct, fraction] of [['16', '0.1600'], ['8.5', '0.0850'], ['0', '0.0000'], ['100', '1.0000'], ['16.00', '0.1600'], ['0.01', '0.0001']]) {
+        assert.equal(tools.percentToFraction(pct), fraction);
+    }
+    for (const [fraction, pct] of [['0.1600', '16'], ['0.085', '8.5'], ['0.16', '16'], ['1.0000', '100'], ['0', '0'], ['0.0001', '0.01']]) {
+        assert.equal(tools.fractionToPercent(fraction), pct);
+    }
+    for (const bad of ['', '16%', '-1', '100.01', '16.555', '1e1', '16,5']) assert.throws(() => tools.percentToFraction(bad));
+    assert.throws(() => tools.fractionToPercent('1.0001'));
+});
+test('redondeo solo de presentación, HALF_UP sobre texto e indica si es aproximado', () => {
+    const { tools } = runtime();
+    assert.deepEqual(plain(tools.roundText('8.343', 2)), { text: '8.34', exact: false });
+    assert.deepEqual(plain(tools.roundText('12.835', 2)), { text: '12.84', exact: false });
+    assert.deepEqual(plain(tools.roundText('99.995', 2)), { text: '100.00', exact: false });
+    assert.deepEqual(plain(tools.roundText('185.4', 2)), { text: '185.40', exact: true });
+    assert.deepEqual(plain(tools.roundText('200.000000', 2)), { text: '200.00', exact: true });
+    assert.deepEqual(plain(tools.roundText('-20.005', 2)), { text: '-20.01', exact: false });
+    assert.equal(tools.roundText('no', 2), null);
+});
+test('descuento: «-» solo cuando resta algo; en cero sin signo, como el PDF', () => {
+    const { tools } = runtime();
+    assert.equal(tools.discountText('0.00'), '$0.00 MXN');
+    assert.equal(tools.discountText('0'), '$0.00 MXN');
+    assert.equal(tools.discountText('10.00'), '-$10.00 MXN');
+    assert.equal(tools.discountText('0.01'), '-$0.01 MXN');
+    assert.equal(tools.discountText('1500.5'), '-$1,500.50 MXN');
+});
+test('venta por partes: otra unidad o factor distinto de 1', () => {
+    const { tools } = runtime();
+    assert.equal(tools.splitUnits({ source_label: 'Pieza', sale_label: 'Pieza', conversion_factor: '1.000000' }), false);
+    assert.equal(tools.splitUnits({ source_label: '', sale_label: '', conversion_factor: '1' }), false);
+    assert.equal(tools.splitUnits({ source_label: 'Bobina', sale_label: 'Metro', conversion_factor: '100' }), true);
+    assert.equal(tools.splitUnits({ source_label: 'Caja', sale_label: 'Caja', conversion_factor: '12' }), true);
+    assert.equal(tools.splitUnits({ source_label: 'Rollo', sale_label: 'Metro', conversion_factor: '1' }), true);
+    assert.equal(tools.trimZeros('100.000000'), '100');
+    assert.equal(tools.trimZeros('0.500000'), '0.5');
+    assert.equal(tools.trimZeros('305'), '305');
+    assert.equal(tools.trimZeros('abc'), 'abc');
+});
+test('cada error de partida indica su campo para «Ir al campo»', () => {
+    const { tools } = runtime();
+    const field = changes => { try { tools.item(line(changes)); } catch (err) { return err.field; } return null; };
+    assert.equal(field({ units: { source_label: '', sale_label: 'Pieza', conversion_factor: '1', confirmed: true } }), 'units');
+    assert.equal(field({ units: { source_label: 'Bobina', sale_label: 'Metro', conversion_factor: '0', confirmed: true } }), 'factor');
+    assert.equal(field({ quantity: '1.5' }), 'quantity');
+    assert.equal(field({ units: { source_label: 'Pieza', sale_label: 'Pieza', conversion_factor: '1', confirmed: false } }), 'confirm');
+    assert.equal(field({ name: '  ' }), 'name');
+    assert.equal(field({ mode: 'MARGIN' }), 'mode');
+    assert.equal(field({ sale: { amount: '', currency: 'MXN', vat_basis: 'NET' } }), 'sale');
+    assert.equal(field({ knownCost: true, cost: { amount: '10', currency: 'MXN', vat_basis: '' } }), 'cost');
+    assert.equal(field({ mode: 'MARGIN', knownCost: true, cost: { amount: '10', currency: 'MXN', vat_basis: 'NET' }, margin: '100' }), 'margin');
+    assert.equal(field({}), null);
 });
 test('transición v1: tras escribir la copia v2 se olvida el origen antes de releer', () => {
     const source = fs.readFileSync(path.join(root, 'static/js/cotizador.js'), 'utf8');
