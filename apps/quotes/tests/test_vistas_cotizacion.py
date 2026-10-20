@@ -528,6 +528,22 @@ class ProteccionTests(TestCase):
         self.client.force_login(self.asesor)
         self.assertContains(self.client.get(reverse("inicio")), f"Hola, {self.asesor.get_username()}")
 
+    def test_p10_sin_barra_superior_y_pie_de_una_linea(self):
+        """Plataforma interna: sin teléfono, correo ni redes arriba; el pie no tiene navegación ni contacto."""
+        self.client.force_login(self.asesor)
+        for nombre in ("inicio", "cotizador", "resumen", "comparador"):
+            with self.subTest(pagina=nombre):
+                respuesta = self.client.get(reverse(nombre))
+                self.assertEqual(respuesta.status_code, 200)
+                self.assertNotContains(respuesta, "cconor-topbar")
+                self.assertNotContains(respuesta, 'href="tel:')
+                self.assertNotContains(respuesta, "bi-facebook")
+                self.assertContains(respuesta, "Distribuidores:")
+                self.assertContains(respuesta, "Portal de Cotización Multi-Proveedor")
+                self.assertNotContains(respuesta, "<h6>Navegación</h6>")
+                self.assertNotContains(respuesta, "<h6>Contacto</h6>")
+                self.assertNotContains(respuesta, "contacto@cconor.com")
+
 
 class CondicionesPredeterminadasTests(TestCase):
     """M2: condiciones activas que el cotizador precarga en cada cotización nueva."""

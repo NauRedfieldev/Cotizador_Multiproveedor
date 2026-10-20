@@ -662,6 +662,20 @@ Pruebas: casos de conversión, redondeo, unidades y campo de cada error en
 Pruebas: `test_p8`/`test_p9` en `test_vistas_cotizacion.py` (panel solo con sesión) y cuatro casos
 de `inicio.js` en `tools/test_cotizador_comercial.cjs` (formatos, enlaces, llenado y error).
 
+### 14.7 Encabezado y pie del sitio (plataforma interna)
+
+- **Sin barra superior** en todas las páginas (`templates/base.html`): se quitaron teléfono,
+  correo, ubicación y redes sociales, porque la plataforma es de uso interno de CCONOR. El menú
+  con el logo queda arriba, sin marco. También se quitaron sus estilos (`.cconor-topbar`).
+- **Pie de una línea (diseño 10B):** «CCONOR · © 2026 Soluciones Tecnológicas», distribuidores
+  (SYSCOM, Exel del Norte) y «Portal de Cotización Multi-Proveedor». Sin «Navegación» ni
+  «Contacto». En celular se apila en tres líneas centradas.
+- El aviso emergente del cotizador sube 36 px (`top: 124px`), la altura de la barra quitada, para
+  conservar la misma separación bajo el menú. Caché: `custom.css?v=9`.
+- Los datos de contacto de la empresa siguen en el PDF y en el correo (`pdf.py`, `views.py`).
+
+Prueba: `test_p10_sin_barra_superior_y_pie_de_una_linea` (Inicio, cotizador, resumen y comparador).
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 ### 15.1 Alcance y acceso
