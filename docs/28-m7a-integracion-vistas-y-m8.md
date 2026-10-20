@@ -639,8 +639,8 @@ Pruebas: casos de conversión, redondeo, unidades y campo de cada error en
 
 ### 14.6 Inicio como panel de cotizaciones (diseño 7D)
 
-- **Con sesión**, `/` (`templates/inicio.html`) muestra un panel; **sin sesión** conserva la
-  portada de siempre (hero, beneficios y categorías), que sigue siendo pública.
+- `/` (`templates/inicio.html`) muestra el panel y exige sesión. La portada pública (hero, beneficios y
+  categorías) se quitó el 2026-10-20 junto con sus estilos de `home.css` (ver §14.7).
 - **Contenido:** saludo («Hola, nombre»), «Buscar productos» (comparador) y «+ Nueva cotización»;
   tres tarjetas (borradores por terminar, emitidas, emitidas este mes) y dos paneles,
   **Borradores** y **Emitidas**, con las 3 más recientes de cada uno.
@@ -675,6 +675,15 @@ de `inicio.js` en `tools/test_cotizador_comercial.cjs` (formatos, enlaces, llena
 - Los datos de contacto de la empresa siguen en el PDF y en el correo (`pdf.py`, `views.py`).
 
 Prueba: `test_p10_sin_barra_superior_y_pie_de_una_linea` (Inicio, cotizador, resumen y comparador).
+
+**Sesión (diseños 13B y 13C, 2026-10-20).** Sin sesión no se muestra nada del sistema: `base.html`
+dibuja el menú superior y el pie solo con `user.is_authenticated`, `/` también usa `login_required` y
+cualquier página lleva a `/login/?next=…`, una tarjeta centrada con el logo (sin menú ni pie). En el
+menú, «SALIR (usuario)» se cambió por un desplegable de Bootstrap con las iniciales en un círculo verde
+azulado y el primer nombre (o el usuario si no hay nombre); dentro: nombre completo, «Sesión iniciada
+como …» y «Cerrar sesión» (POST con CSRF). Se cierra al pulsar fuera o con Esc. Los mensajes de Django
+solo crean su contenedor cuando hay mensajes. Caché: `custom.css?v=10`, `home.css?v=5`. Pruebas:
+`test_p2`, `test_p7`, `test_p8` y `test_p9` en `test_vistas_cotizacion.py`.
 
 ### 14.8 Comparador: botón «Buscar» y tipo de cambio (diseño 11B)
 

@@ -493,8 +493,9 @@ class ProteccionTests(TestCase):
         self.assertEqual(llamadas, [])
         self.assertIsNone(cache.get("cotizar:127.0.0.1"))
 
-    def test_p2_inicio_y_login_son_publicos(self):
-        self.assertEqual(self.client.get(reverse("inicio")).status_code, 200)
+    def test_p2_solo_el_login_es_publico_inicio_exige_sesion(self):
+        self.assertRedirects(self.client.get(reverse("inicio")), f"{reverse('login')}?next={reverse('inicio')}",
+                             fetch_redirect_response=False)
         respuesta = self.client.get(reverse("login"))
         self.assertEqual(respuesta.status_code, 200)
         self.assertTemplateUsed(respuesta, "registration/login.html")
@@ -526,27 +527,31 @@ class ProteccionTests(TestCase):
         self.client.force_login(crear_asesor("baja", is_active=False))
         self.assertEqual(self.client.get(reverse("comparador")).status_code, 302)
 
-    def test_p7_el_menu_ofrece_entrar_o_salir_segun_la_sesion(self):
-        anonimo = self.client.get(reverse("inicio"))
-        self.assertContains(anonimo, f'href="{reverse("login")}"')
-        self.assertNotContains(anonimo, f'action="{reverse("logout")}"')
+    def test_p7_sin_sesion_no_hay_menu_ni_pie_y_con_sesion_menu_de_usuario(self):
+        """13C: el acceso no muestra nada del sistema. 13B: iniciales y nombre que despliegan «Cerrar sesión»."""
+        anonimo = self.client.get(reverse("login"))
+        for texto in ("cconor-navbar", "cconor-footer", f'action="{reverse("logout")}"', f'href="{reverse("cotizador")}"'):
+            self.assertNotContains(anonimo, texto)
+        self.assertContains(anonimo, "Iniciar sesión")
 
         self.asesor.first_name, self.asesor.last_name = "Ana", "Asesora"
         self.asesor.save()
         self.client.force_login(self.asesor)
         con_sesion = self.client.get(reverse("inicio"))
+        self.assertContains(con_sesion, 'class="cconor-iniciales" aria-hidden="true">AA</span>')
+        self.assertContains(con_sesion, "<span>Ana</span>")
+        self.assertContains(con_sesion, 'data-bs-toggle="dropdown"')
+        self.assertContains(con_sesion, f"Sesión iniciada como {self.asesor.get_username()}")
         self.assertContains(con_sesion, f'<form method="post" action="{reverse("logout")}"')
         self.assertContains(con_sesion, "csrfmiddlewaretoken")
-        self.assertContains(con_sesion, "SALIR (Ana Asesora)")
+        self.assertContains(con_sesion, "Cerrar sesión")
+        self.assertNotContains(con_sesion, "SALIR")
         # El botón del menú cierra la sesión de verdad.
         self.assertRedirects(self.client.post(reverse("logout")), reverse("login"))
         self.assertEqual(self.client.get(reverse("comparador")).status_code, 302)
 
-    def test_p8_inicio_muestra_el_panel_solo_con_sesion(self):
-        anonimo = self.client.get(reverse("inicio"))
-        self.assertContains(anonimo, "COTIZAR PRODUCTOS")
-        self.assertNotContains(anonimo, 'id="homePanel"')
-        self.assertNotContains(anonimo, "js/inicio.js")
+    def test_p8_inicio_es_el_panel_y_ya_no_hay_portada_publica(self):
+        self.assertEqual(self.client.get(reverse("inicio")).status_code, 302)
 
         self.asesor.first_name = "Ana"
         self.asesor.save()
@@ -558,9 +563,13 @@ class ProteccionTests(TestCase):
         self.assertContains(con_sesion, f'data-cotizador-url="{reverse("cotizador")}"')
         self.assertNotContains(con_sesion, "COTIZAR PRODUCTOS")
 
-    def test_p9_el_panel_de_inicio_sin_nombre_usa_el_usuario(self):
+    def test_p9_sin_nombre_se_usa_el_usuario(self):
         self.client.force_login(self.asesor)
-        self.assertContains(self.client.get(reverse("inicio")), f"Hola, {self.asesor.get_username()}")
+        respuesta = self.client.get(reverse("inicio"))
+        self.assertContains(respuesta, f"Hola, {self.asesor.get_username()}")
+        usuario = self.asesor.get_username()
+        self.assertContains(respuesta, f'class="cconor-iniciales" aria-hidden="true">{usuario[:2].upper()}</span>')
+        self.assertContains(respuesta, f"<span>{usuario}</span>")
 
     def test_p10_sin_barra_superior_y_pie_de_una_linea(self):
         """Plataforma interna: sin teléfono, correo ni redes arriba; el pie no tiene navegación ni contacto."""

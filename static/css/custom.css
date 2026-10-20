@@ -971,3 +971,53 @@ body.quote-scrolled .quote-error-toast { top: 84px; }
 .quote-warnings-card {
     border-color: #FEC84B !important;
 }
+
+/* 13B: menú de usuario (iniciales + nombre) que despliega «Cerrar sesión». */
+.cconor-usuario {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.25rem 0.75rem 0.25rem 0.25rem !important;
+    border-radius: 999px;
+    background: transparent;
+    font-weight: 600;
+    color: var(--cconor-azul-marino) !important;
+}
+
+.cconor-usuario:hover,
+.cconor-usuario[aria-expanded="true"] {
+    background: #F4F3FA;
+}
+
+.cconor-iniciales {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    background: var(--cconor-eleccion);
+    color: #FFFFFF;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.cconor-menu-usuario {
+    min-width: 260px;
+    padding: 0.75rem 0 0;
+    border: 1px solid #EAE7F3;
+    border-radius: 14px;
+    box-shadow: 0 16px 40px rgba(17, 22, 56, 0.18);
+}
+
+.cconor-cerrar-sesion {
+    border-radius: 10px;
+    color: #B42318;
+    font-weight: 600;
+}
+
+.cconor-cerrar-sesion:hover,
+.cconor-cerrar-sesion:focus {
+    background: #FEF3F2;
+    color: #B42318;
+}

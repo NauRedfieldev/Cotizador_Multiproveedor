@@ -27,7 +27,8 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     # Vistas de presentación (templates/): solo renderizan HTML estático.
     # El backend conectará modelos y datos reales más adelante.
-    path('', TemplateView.as_view(template_name='inicio.html'), name='inicio'),
+    # Plataforma interna: sin sesión no se muestra nada; Inicio también lleva al login (13C).
+    path('', login_required(TemplateView.as_view(template_name='inicio.html')), name='inicio'),
     # M7a: login real (LOGIN_URL). Logout solo por POST, como exige Django.
     path('login/', auth_views.LoginView.as_view(), name='login'),
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),

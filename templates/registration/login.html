@@ -1,35 +1,54 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block title %}CCONOR - Iniciar sesión{% endblock %}
 
+{% block extra_css %}
+<style>
+    /* 13C: acceso sin nada del sistema (sin menú ni pie): tarjeta centrada con el logo. */
+    .acceso { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; background: #F8F7FE; }
+    .acceso-tarjeta { width: 100%; max-width: 420px; background: #FFFFFF; border: 1px solid #EAE7F3; border-radius: 20px;
+        box-shadow: 0 16px 40px rgba(17, 22, 56, 0.08); padding: 36px; }
+    .acceso-tarjeta .form-control { height: 46px; }
+    .acceso-entrar { height: 48px; font-weight: 600; }
+    .acceso-aviso { background: #EEF6F5; color: var(--cconor-eleccion); border: 0; border-radius: 10px; font-weight: 600; }
+</style>
+{% endblock %}
+
 {% block content %}
-<!-- M7a: formulario mínimo de LoginView (docs/28). El diseño final lo da frontend. -->
-<div class="container py-5" style="max-width: 420px;">
-    <h2 class="fw-bold mb-3" style="color: var(--cconor-azul-marino);">Iniciar sesión</h2>
-
-    {% if form.errors %}
-    <div class="alert alert-danger" role="alert">Usuario o contraseña incorrectos.</div>
-    {% elif next and user.is_authenticated %}
-    <div class="alert alert-warning" role="alert">Tu usuario no tiene acceso a esta página.</div>
-    {% elif next %}
-    <div class="alert alert-info" role="alert">Inicia sesión para continuar.</div>
-    {% endif %}
-
-    <form method="post" action="{% url 'login' %}" class="cconor-card p-3">
-        {% csrf_token %}
-        <div class="mb-3">
-            <label for="{{ form.username.id_for_label }}" class="form-label">Usuario</label>
-            <input type="text" class="form-control" name="{{ form.username.html_name }}"
-                   id="{{ form.username.id_for_label }}" value="{{ form.username.value|default:'' }}"
-                   autocomplete="username" autofocus required>
+<!-- M7a: LoginView de Django (docs/28). Sin sesión, todo el sitio redirige aquí y luego vuelve a la página pedida. -->
+<div class="acceso">
+    <div class="acceso-tarjeta">
+        <div class="text-center mb-4">
+            <img src="{% static 'img/logo.png' %}" alt="CCONOR Soluciones Tecnológicas" width="180" height="64" style="height: 64px; width: auto;" class="mb-3">
+            <h1 class="h4 fw-bold mb-1" style="color: var(--cconor-azul-marino);">Iniciar sesión</h1>
+            <p class="small text-secondary mb-0">Portal de Cotización Multi-Proveedor</p>
         </div>
-        <div class="mb-3">
-            <label for="{{ form.password.id_for_label }}" class="form-label">Contraseña</label>
-            <input type="password" class="form-control" name="{{ form.password.html_name }}"
-                   id="{{ form.password.id_for_label }}" autocomplete="current-password" required>
-        </div>
-        <input type="hidden" name="next" value="{{ next }}">
-        <button type="submit" class="btn btn-cconor-primary w-100">Entrar</button>
-    </form>
+
+        {% if form.errors %}
+        <div class="alert alert-danger small" role="alert">Usuario o contraseña incorrectos.</div>
+        {% elif next and user.is_authenticated %}
+        <div class="alert alert-warning small" role="alert">Tu usuario no tiene acceso a esta página.</div>
+        {% elif next %}
+        <div class="alert acceso-aviso small" role="status">Inicia sesión para continuar.</div>
+        {% endif %}
+
+        <form method="post" action="{% url 'login' %}">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label for="{{ form.username.id_for_label }}" class="form-label fw-semibold small">Usuario</label>
+                <input type="text" class="form-control" name="{{ form.username.html_name }}"
+                       id="{{ form.username.id_for_label }}" value="{{ form.username.value|default:'' }}"
+                       autocomplete="username" autofocus required>
+            </div>
+            <div class="mb-4">
+                <label for="{{ form.password.id_for_label }}" class="form-label fw-semibold small">Contraseña</label>
+                <input type="password" class="form-control" name="{{ form.password.html_name }}"
+                       id="{{ form.password.id_for_label }}" autocomplete="current-password" required>
+            </div>
+            <input type="hidden" name="next" value="{{ next }}">
+            <button type="submit" class="btn btn-cconor-primary acceso-entrar w-100">Entrar</button>
+        </form>
+    </div>
 </div>
 {% endblock %}
