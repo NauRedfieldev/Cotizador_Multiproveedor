@@ -1,71 +1,152 @@
 {% extends 'base.html' %}
 {% load static %}
-{% block title %}CCONOR - Resumen y mis cotizaciones{% endblock %}
+{% block title %}CCONOR - Mis cotizaciones{% endblock %}
+{% block extra_css %}
+<style>
+    /* 12A: lista a la izquierda y la cotización elegida a la derecha. Colores del sitio (4C).
+       La vista previa es siempre el PDF real (borrador u original), idéntico al que se descarga. */
+    .mis-titulo { font-size: 1.9rem; font-weight: 700; color: var(--cconor-azul-marino); }
+    .mis-boton { height: 44px; padding-top: 0; padding-bottom: 0; display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; font-weight: 600; }
+    .mis-lista, .mis-detalle { background: #FFFFFF; border: 1px solid #EAE7F3; border-radius: 16px; }
+    .mis-lista { overflow: hidden; }
+    .mis-lista-cabecera { padding: 14px; border-bottom: 1px solid #EAE7F3; display: flex; flex-direction: column; gap: 10px; }
+    .mis-filtros { display: flex; gap: 8px; flex-wrap: wrap; }
+    .mis-filtro { height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid #D9D6E8; background: #FFFFFF;
+        color: var(--cconor-azul-marino); font-size: 13px; font-weight: 600; }
+    .mis-filtro.is-active { background: var(--cconor-boton); border-color: var(--cconor-boton); color: #FFFFFF; }
+    .mis-items { max-height: 640px; overflow-y: auto; }
+    .mis-item { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; padding: 12px 14px; border: 0;
+        border-bottom: 1px solid #EAE7F3; border-left: 4px solid transparent; background: #FFFFFF; color: var(--cconor-azul-marino); }
+    .mis-item:hover:not(:disabled) { background: #FAFAFD; }
+    .mis-item.is-selected { background: #EEF6F5; border-left-color: var(--cconor-eleccion); }
+    .mis-item-fila { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 14px; }
+    .mis-pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px;
+        font-size: 12px; font-weight: 600; white-space: nowrap; }
+    .mis-pill::before { content: ""; width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
+    .mis-pill-draft { background: #FFF4E5; color: #93370D; }
+    .mis-pill-issued { background: #ECFDF3; color: #067647; }
+    .mis-pill-v1 { background: #F2F4F7; color: #475467; }
+    .mis-paginas { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; }
+    .mis-detalle { padding: 20px 22px; min-height: 420px; }
+    .mis-vacio { color: #5A5F7A; text-align: center; padding: 140px 20px; }
+    .mis-cabecera { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+    .mis-folio { font-size: 1.4rem; font-weight: 700; color: var(--cconor-azul-marino); }
+    .mis-total { font-size: 1.6rem; font-weight: 700; color: var(--cconor-azul-marino); }
+    .mis-revisiones { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid #EAE7F3; margin-bottom: 14px; }
+    .mis-revision { border: 0; background: none; padding: 8px 12px; font-size: 14px; color: #5A5F7A; border-bottom: 3px solid transparent; }
+    .mis-revision.is-active { color: var(--cconor-eleccion); border-bottom-color: var(--cconor-eleccion); font-weight: 700; }
+    .mis-acciones { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    .mis-emitir, .mis-emitir:focus { background: var(--cconor-eleccion); border: 0; color: #FFFFFF; }
+    .mis-emitir:hover, .mis-emitir:active { background: var(--cconor-eleccion-hover) !important; color: #FFFFFF !important; }
+    .mis-avisos { background: #FFF8EC; border: 1px solid #FEC84B; border-radius: 12px; padding: 12px 14px; color: #93370D; margin-bottom: 12px; }
+    .mis-vista { background: #EDEBF3; border-radius: 12px; padding: 14px; }
+    #documentFrame { width: 100%; height: 640px; border: 0; border-radius: 8px; background: #FFFFFF; }
+    .mis-dialogo { width: min(600px, calc(100vw - 32px)); border: 0; border-radius: 18px; padding: 24px;
+        box-shadow: 0 24px 60px rgba(17, 22, 56, 0.3); color: var(--cconor-azul-marino); }
+    .mis-dialogo::backdrop { background: rgba(17, 22, 56, 0.35); }
+    .mis-adjunto { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #5A5F7A; }
+    .mis-adjunto-icono { width: 36px; height: 44px; border: 1px solid #D9D6E8; border-radius: 6px; display: inline-flex;
+        align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #B42318; }
+</style>
+{% endblock %}
 {% block content %}
-<div class="container py-4" id="commercialSummaryApp">
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3 d-print-none">
-        <div><h2 class="fw-bold mb-1">Propuesta comercial</h2><p id="documentIdentity" class="text-muted mb-0">Selecciona un folio y una revisión.</p></div>
-        <span id="documentStatus" class="badge bg-secondary" role="status" aria-live="polite">Conectando…</span>
+<div class="container py-4" id="commercialSummaryApp" data-login-url="{% url 'login' %}?next={% url 'resumen' %}">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3 d-print-none">
+        <h1 class="mis-titulo mb-0">Mis cotizaciones</h1>
+        <a href="{% url 'cotizador' %}" class="btn btn-cconor-primary mis-boton">+ Nueva cotización</a>
     </div>
-    <div id="documentError" class="alert alert-danger d-none d-print-none" role="alert"></div>
-    <a href="{% url 'login' %}?next={% url 'resumen' %}" target="_blank" rel="noopener" class="btn btn-outline-secondary btn-sm mb-3 d-print-none">Iniciar sesión en otra pestaña</a>
-    <div id="documentNotice" class="alert alert-info d-print-none" role="status">Guardar no emite ni envía. PDF y correo utilizan la revisión seleccionada; no hay envíos automáticos. Los PDFs previos a emisión se identifican como BORRADOR.</div>
-    <div class="cconor-card p-3 mb-3 d-print-none">
-        <div class="row g-2 align-items-end">
-            <div class="col-md-5"><label for="documentFolio" class="form-label">Folio</label><input id="documentFolio" class="form-control form-control-sm" maxlength="20"></div>
-            <div class="col-md-3"><label for="documentRevision" class="form-label">Revisión exacta</label><input id="documentRevision" class="form-control form-control-sm" inputmode="numeric" value="1"></div>
-            <div class="col-md-4 d-flex gap-2"><button id="openDocumentBtn" type="button" class="btn btn-outline-primary btn-sm" disabled>Abrir / recargar</button><button id="documentConnectionBtn" type="button" class="btn btn-outline-secondary btn-sm">Revisar sesión</button></div>
+
+    <div class="row g-3 align-items-start">
+        <div class="col-lg-4 d-print-none" id="historialSection">
+            <section class="mis-lista" aria-label="Lista de cotizaciones">
+                <div class="mis-lista-cabecera">
+                    <label for="historySearchInput" class="visually-hidden">Buscar por folio o cliente</label>
+                    <input id="historySearchInput" type="search" class="form-control" maxlength="200" placeholder="Buscar por folio o cliente">
+                    <div class="mis-filtros" id="historyStatusFilter" role="group" aria-label="Filtrar por estado">
+                        <button type="button" class="mis-filtro is-active" data-status="" aria-pressed="true">Todas</button>
+                        <button type="button" class="mis-filtro" data-status="DRAFT" aria-pressed="false">Borradores</button>
+                        <button type="button" class="mis-filtro" data-status="ISSUED" aria-pressed="false">Emitidas</button>
+                    </div>
+                    <div id="historyStatus" class="small text-secondary" role="status" aria-live="polite"></div>
+                </div>
+                <div id="historyList" class="mis-items"></div>
+                <div class="mis-paginas d-none" id="historyPager">
+                    <button id="historyPreviousBtn" type="button" class="btn btn-outline-primary btn-sm" disabled>Anterior</button>
+                    <span id="historyPage" class="small text-secondary"></span>
+                    <button id="historyNextBtn" type="button" class="btn btn-outline-primary btn-sm" disabled>Siguiente</button>
+                </div>
+            </section>
         </div>
-        <div class="mt-2"><label for="revisionSelector" class="form-label">Revisiones de este folio</label><select id="revisionSelector" class="form-select form-select-sm" disabled><option>Sin folio abierto</option></select></div>
-    </div>
-    <div class="d-flex flex-wrap gap-2 mb-3 d-print-none" id="documentActions">
-        <button id="editDocumentBtn" type="button" class="btn btn-outline-secondary btn-sm" disabled>Editar borrador / confirmar avisos</button>
-        <button id="emitDocumentBtn" type="button" class="btn btn-cconor-primary btn-sm" disabled>Emitir revisión</button>
-        <button id="cloneDocumentBtn" type="button" class="btn btn-outline-primary btn-sm" disabled>Nueva revisión</button>
-        <button id="downloadPdfBtn" type="button" class="btn btn-outline-primary btn-sm" disabled>Descargar PDF</button>
-        <button id="printQuoteBtn" type="button" class="btn btn-outline-primary btn-sm" disabled>Abrir PDF / imprimir</button>
-    </div>
-    <div id="documentWarnings" class="mb-3 d-print-none" aria-live="polite"></div>
-    <div id="legacyDocumentNotice" class="alert alert-warning d-none d-print-none">Histórico v1 de uso interno: su original puede incluir información de costos/proveedores. No es una propuesta comercial v2 para enviar al cliente. Preparar otra revisión requiere capturar y revisar sus entradas explícitamente; nunca se sobrescribe el original.</div>
-    <div id="documentEmpty" class="cconor-card p-4 text-center text-muted mb-3">Abre una revisión conocida o elige una de tus cotizaciones del listado.</div>
-    <div id="printableQuote" class="cconor-card p-4 p-md-5 mb-3 bg-white d-none">
-        <div class="row border-bottom pb-3 mb-3">
-            <div class="col-md-7"><img src="{% static 'img/logo.png' %}" alt="CCONOR" style="height:52px;width:auto;max-width:100%;object-fit:contain" class="mb-2"><h5 id="documentCompanyName" class="fw-bold"></h5><div id="documentCompanyDetails" class="small text-muted"></div></div>
-            <div class="col-md-5"><h5 id="documentLabel" class="fw-bold"></h5><div id="documentDates" class="small"></div></div>
+
+        <div class="col-lg-8">
+            <section class="mis-detalle" aria-label="Cotización elegida">
+                <div id="documentEmpty" class="mis-vacio">Elige una cotización de la lista para ver su detalle.</div>
+                <div id="documentView" class="d-none">
+                    <div class="mis-cabecera">
+                        <div>
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <h2 id="documentTitle" class="mis-folio mb-0"></h2>
+                                <span id="documentStatus" class="mis-pill" role="status"></span>
+                            </div>
+                            <div id="documentIdentity" class="mt-1"></div>
+                            <div id="documentMeta" class="small text-secondary"></div>
+                        </div>
+                        <div class="text-md-end">
+                            <div id="documentTotalLabel" class="small text-secondary"></div>
+                            <div id="documentTotalValue" class="mis-total"></div>
+                        </div>
+                    </div>
+                    <div id="revisionSelector" class="mis-revisiones d-print-none" role="tablist" aria-label="Revisiones de esta cotización"></div>
+                    <div id="documentWarnings" class="d-print-none" aria-live="polite"></div>
+                    <div class="mis-acciones d-print-none" id="documentActions">
+                        <button id="editDocumentBtn" type="button" class="btn btn-cconor-primary mis-boton d-none">Editar en el cotizador</button>
+                        <button id="emitDocumentBtn" type="button" class="btn mis-boton mis-emitir d-none">Emitir</button>
+                        <button id="openEmailBtn" type="button" class="btn btn-cconor-primary mis-boton d-none"><i class="bi bi-envelope" aria-hidden="true"></i> Enviar por correo</button>
+                        <button id="downloadPdfBtn" type="button" class="btn btn-outline-primary mis-boton"><i class="bi bi-download" aria-hidden="true"></i> <span id="downloadPdfLabel">Descargar PDF</span></button>
+                        <button id="printQuoteBtn" type="button" class="btn btn-outline-primary mis-boton"><i class="bi bi-printer" aria-hidden="true"></i> Imprimir</button>
+                        <button id="cloneDocumentBtn" type="button" class="btn btn-outline-primary mis-boton d-none">Nueva revisión</button>
+                        <span id="documentActivity" class="small text-secondary" role="status" aria-live="polite"></span>
+                    </div>
+                    <p id="documentNotice" class="small text-secondary mb-2"></p>
+                    <button id="resolveDocumentBtn" type="button" class="btn btn-outline-warning btn-sm d-none mb-2"></button>
+                    <div id="legacyDocumentNotice" class="alert alert-warning small d-none">Histórico de uso interno: su original puede incluir costos o proveedores, así que no se envía al cliente. Para el cliente prepara una revisión comercial nueva; se capturan y revisan sus partidas y nunca se sobrescribe el original.</div>
+                    <div class="mis-vista">
+                        <iframe id="documentFrame" title="PDF de la revisión elegida (el de un borrador lleva la marca BORRADOR)" class="d-none"></iframe>
+                    </div>
+                </div>
+            </section>
         </div>
-        <div class="p-3 bg-light rounded mb-3"><h6 id="documentClientName" class="fw-bold"></h6><div id="documentClientDetails" class="small"></div></div>
-        <div class="table-responsive"><table class="table table-bordered small"><thead><tr><th>#</th><th>Código</th><th>Descripción / marca / modelo</th><th>Unidad</th><th>Cantidad</th><th>Venta por unidad MXN</th><th>Importe definitivo MXN</th></tr></thead><tbody id="documentItems"></tbody></table></div>
-        <p id="documentPrecisionNote" class="small text-muted"></p>
-        <div class="row g-3"><div class="col-md-7"><h6 class="fw-bold">Condiciones comerciales</h6><ul id="documentConditions"></ul></div><div class="col-md-5"><div class="summary-panel">
-            <div class="summary-row"><span>Venta antes del descuento</span><strong id="documentSaleSubtotal"></strong></div>
-            <div class="summary-row"><span id="documentDiscountLabel">Descuento antes de IVA</span><strong id="documentDiscount"></strong></div>
-            <div class="summary-row"><span>Subtotal neto</span><strong id="documentSubtotal"></strong></div>
-            <div class="summary-row"><span id="documentTaxLabel">IVA</span><strong id="documentTax"></strong></div>
-            <div class="summary-row summary-total"><span>Total MXN</span><strong id="documentTotal"></strong></div>
-        </div></div></div>
     </div>
-    <div class="mb-4 d-print-none"><iframe id="documentFrame" title="PDF de la revisión seleccionada" class="w-100 border rounded d-none" height="700"></iframe></div>
-    <div class="cconor-card p-3 mb-4 d-print-none">
-        <h5 class="fw-bold">Enviar original emitido por correo</h5>
-        <p class="small text-muted">Se adjunta el PDF original de esta revisión. Editar el destinatario aquí no cambia la captura del cliente. Nunca se reintenta un envío automáticamente.</p>
-        <fieldset id="emailFields" disabled><div class="row g-2">
-            <div class="col-md-5"><label for="emailRecipientInput" class="form-label">Destinatario</label><input id="emailRecipientInput" type="email" maxlength="254" class="form-control form-control-sm"></div>
-            <div class="col-md-7"><label for="emailSubjectInput" class="form-label">Asunto</label><input id="emailSubjectInput" maxlength="255" class="form-control form-control-sm"></div>
-            <div class="col-12"><label for="emailMessageInput" class="form-label">Mensaje</label><textarea id="emailMessageInput" maxlength="6000" rows="3" class="form-control form-control-sm"></textarea></div>
-        </div></fieldset>
-        <button id="confirmSendEmailBtn" type="button" class="btn btn-cconor-primary btn-sm mt-2" disabled>Confirmar y enviar original</button>
-        <button id="resolveDocumentBtn" type="button" class="btn btn-outline-warning btn-sm mt-2 d-none">Resolver operación pendiente</button>
-        <div id="emailStatus" class="small mt-2" aria-live="polite"></div>
+
+    <div id="documentError" class="quote-error-toast d-none d-print-none" role="alert">
+        <span class="quote-error-icon" aria-hidden="true"><i class="bi bi-exclamation-triangle-fill"></i></span>
+        <div class="flex-grow-1">
+            <div class="fw-bold">No se pudo completar</div>
+            <div id="documentErrorText" class="small text-secondary"></div>
+            <a id="documentErrorLogin" href="{% url 'login' %}?next={% url 'resumen' %}" class="btn btn-sm btn-outline-primary mt-2 d-none">Iniciar sesión</a>
+        </div>
+        <button type="button" id="documentErrorClose" class="btn-close" aria-label="Cerrar aviso"></button>
     </div>
-    <div class="cconor-card p-3 mb-4 d-print-none" id="historialSection">
-        <h5 class="fw-bold">Mis cotizaciones</h5><p class="small text-muted">Última revisión de cada folio propio. Un borrador no tiene total sellado; los históricos v1 son solo consulta interna. Tener permisos comerciales no amplía el acceso a otros asesores.</p>
-        <div class="row g-2 mb-3"><div class="col-md-6"><label for="historySearchInput" class="form-label">Folio o cliente</label><input id="historySearchInput" class="form-control form-control-sm" maxlength="200"></div>
-            <div class="col-md-3"><label for="historyStatusFilter" class="form-label">Estado de última revisión</label><select id="historyStatusFilter" class="form-select form-select-sm"><option value="">Todos</option><option value="DRAFT">Borrador</option><option value="ISSUED">Emitida</option></select></div>
-            <div class="col-md-3 d-flex align-items-end"><button id="refreshHistoryBtn" type="button" class="btn btn-outline-secondary btn-sm">Buscar / actualizar</button></div></div>
-        <div id="historyStatus" class="small mb-2" role="status" aria-live="polite"></div>
-        <div class="table-responsive"><table class="table table-hover small"><thead><tr><th>Folio</th><th>Cliente</th><th>Fecha</th><th>Última revisión</th><th>Estado / formato</th><th>Total sellado</th><th>Acción</th></tr></thead><tbody id="historyTableBody"></tbody></table></div>
-        <div class="d-flex align-items-center gap-2"><button id="historyPreviousBtn" type="button" class="btn btn-outline-secondary btn-sm" disabled>Anterior</button><span id="historyPage"></span><button id="historyNextBtn" type="button" class="btn btn-outline-secondary btn-sm" disabled>Siguiente</button></div>
-    </div>
+
+    <!-- 12D: el correo solo existe para cotizaciones emitidas y se abre en esta ventana. -->
+    <dialog id="emailDialog" class="mis-dialogo" aria-labelledby="emailDialogTitle">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h2 id="emailDialogTitle" class="h5 fw-bold mb-0">Enviar cotización por correo</h2>
+            <button type="button" id="emailCloseBtn" class="btn-close" aria-label="Cerrar"></button>
+        </div>
+        <p id="emailDialogInfo" class="small text-secondary"></p>
+        <fieldset id="emailFields" class="d-flex flex-column gap-3">
+            <div><label for="emailRecipientInput" class="form-label fw-semibold small mb-1">Para</label><input id="emailRecipientInput" type="email" maxlength="254" class="form-control"></div>
+            <div><label for="emailSubjectInput" class="form-label fw-semibold small mb-1">Asunto</label><input id="emailSubjectInput" maxlength="255" class="form-control"></div>
+            <div><label for="emailMessageInput" class="form-label fw-semibold small mb-1">Mensaje (opcional)</label><textarea id="emailMessageInput" maxlength="6000" rows="3" class="form-control" placeholder="Ej. Adjuntamos la cotización solicitada…"></textarea></div>
+        </fieldset>
+        <div class="mis-adjunto mt-3"><span class="mis-adjunto-icono">PDF</span><span id="emailAttachment"></span></div>
+        <div id="emailStatus" class="small mt-2" role="status" aria-live="polite"></div>
+        <div class="d-flex justify-content-end gap-2 mt-3">
+            <button type="button" id="emailCancelBtn" class="btn btn-outline-primary mis-boton">Cancelar</button>
+            <button type="button" id="confirmSendEmailBtn" class="btn btn-cconor-primary mis-boton">Enviar</button>
+        </div>
+    </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizacion_actions.js' %}?v=5"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizacion_actions.js' %}?v=7"></script>{% endblock %}

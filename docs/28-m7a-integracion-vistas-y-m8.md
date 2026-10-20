@@ -694,6 +694,20 @@ Prueba: `test_p10_sin_barra_superior_y_pie_de_una_linea` (Inicio, cotizador, res
 
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
+> **Rediseño 12A (2026-10-20, rama `feature/ui-interfaz-general`).** La pantalla pasó a lista y
+> detalle lado a lado: a la izquierda buscador, filtros (Todas, Borradores, Emitidas) y la lista
+> (folio · revisión, estado, cliente, total de las emitidas, fecha); a la derecha la cotización
+> elegida con total, pestañas de revisiones, **solo los botones de su estado** (borrador: Editar en
+> el cotizador, Emitir, PDF borrador, Imprimir; emitida: Enviar por correo, Descargar PDF, Imprimir,
+> Nueva revisión; histórico v1: PDF con advertencia y «Preparar revisión comercial») y la vista
+> previa, que es siempre **el PDF real** (borrador con su marca u original archivado), idéntico al que
+> se descarga; se quitó la vista HTML que lo imitaba. El correo se abre en una ventana (diseño 12D). Se
+> quitaron la captura manual de folio y revisión, «Revisar sesión» e «Iniciar sesión en otra
+> pestaña»: la sesión se revisa al volver a la pestaña (como mucho cada 15 s) y, si venció, el aviso
+> emergente ofrece «Iniciar sesión». Se conservan intactas las reglas de esta sección (identidad
+> exacta, emisión sin avisos pendientes, envío sin reintento automático, operación incierta, enlace
+> `?folio=&revision=`). Archivos: `templates/resumen.html`, `static/js/cotizacion_actions.js?v=7`.
+
 ### 15.1 Alcance y acceso
 
 Se reemplaza el resumen estático: ningún folio, cliente, importe, cuenta bancaria o
