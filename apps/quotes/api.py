@@ -39,7 +39,7 @@ from .snapshots import (
     ArchivedPDFError, PartidaCapturada, RevisionConflict, acrear_revision, aemitir_revision,
     authorize, crear_borrador,
 )
-from .views import buscar
+from .views import CLAVE_TIPO_CAMBIO, ETIQUETAS_TIPO_CAMBIO_SYSCOM, buscar, tipo_cambio_sugerido
 
 logger = logging.getLogger(__name__)
 
@@ -1088,6 +1088,40 @@ async def capacidades_comerciales(request):
     actor = await request.auser()
     return JsonResponse({"success": True, "actor_id": actor.pk,
                          "data": await sync_to_async(_capabilities, thread_sensitive=True)(actor)})
+
+
+@_api("GET PUT")
+async def tipo_cambio_sesion(request):
+    """15A/16A: el tipo de cambio de la sesión (uno solo para comparador, cotizador y menú) y el de SYSCOM.
+
+    PUT {"value": "18.70"} lo guarda como manual; {"use_syscom": true} toma el de SYSCOM del servidor.
+    Solo vive en la sesión del asesor: no cambia ninguna cotización ni llega al cliente.
+    """
+    recordado = await request.session.aget(CLAVE_TIPO_CAMBIO)
+    if request.method == "PUT":
+        data = _leer_json(request, {"value", "use_syscom"})
+        if data == {"use_syscom": True}:
+            valor, _ = await tipo_cambio_sugerido()
+            if valor is None:
+                return JsonResponse({"success": False, "error": "No se pudo consultar el de SYSCOM; escríbelo a mano.",
+                                     "code": "UNAVAILABLE", "details": {}}, status=503)
+            tipo = TipoCambio(valor, "syscom", timezone.now())
+        elif set(data) == {"value"}:
+            _decimal_text(data["value"], 18, 8, minimum=Decimal(".00000001"))  # mismos límites que el cotizador
+            tipo = TipoCambio(Decimal(data["value"]), "manual", timezone.now())
+        else:
+            raise _EntradaInvalida("Envía value o use_syscom.")
+        # El mismo valor (18.54 = 18.54000000) conserva su hora y origen, como en el comparador.
+        if not (recordado and Decimal(recordado["valor"]) == tipo.valor and tipo.origen == "manual"):
+            recordado = {"valor": f"{tipo.valor:f}", "fecha": tipo.fecha.isoformat(), "origen": tipo.origen}
+            await request.session.aset(CLAVE_TIPO_CAMBIO, recordado)
+    syscom, fallo = await tipo_cambio_sugerido()
+    return JsonResponse({"success": True, "data": {
+        "session": {"value": recordado["valor"], "date": recordado["fecha"], "source": recordado.get("origen", "manual")}
+        if recordado else None,
+        "syscom": {"value": f"{syscom:f}", "label": ETIQUETAS_TIPO_CAMBIO_SYSCOM.get(settings.SYSCOM_TIPO_CAMBIO_CAMPO, "")}
+        if syscom is not None else None,
+        "syscom_failed": fallo}})
 
 
 @_api("GET PATCH")

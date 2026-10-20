@@ -131,6 +131,7 @@
         const $ = id => document.getElementById(id);
         if (!$('commercialQuoteApp')) return;
         const api = window.apiClient.commercial;
+        let fxSession = null; // 16A: tipo de cambio de la sesión y de SYSCOM (main.js)
         const initialIssueDate = $('issueDate').value;
         const defaultConditions = defaultConditionsText($('defaultConditions')?.textContent);
         const state = { caps: null, lines: [], products: [], saved: null, fx: null, dirty: false, busy: false,
@@ -302,6 +303,7 @@
             }
             text('quoteIdentity', identity); text('stickyIdentity', identity);
             $('stickyNewBtn').disabled = $('newQuoteBtn').disabled;
+            fxShortcuts();
             $('stickySaveBtn').disabled = $('saveQuoteBtn').disabled;
             text('stickySaveBtn', $('saveQuoteBtn').textContent);
             syncStickyTotal();
@@ -733,7 +735,52 @@
             $('exchangeRate').classList.toggle('fx-status-ok', !!state.fx);
             text('fxEvidence', state.fx ? `Capturado el ${date} · ${state.fx.source === 'manual' ? 'captura manual' : state.fx.source}` : 'El sistema no supone un tipo de cambio. Si todo es en pesos, puede quedar vacío.');
             if (state.fx) clearFieldError($('newExchangeRate'));
+            fxShortcuts();
         }
+        // 16A: atajos del tipo de cambio de la sesión (main.js) y de SYSCOM. Nunca se aplican solos.
+        function fxShortcuts() {
+            const box = $('fxShortcuts');
+            const tools = window.cconorTipoCambio;
+            box.replaceChildren();
+            if (!fxSession || !tools || $('newExchangeRate').disabled || state.busy) return;
+            const { sinCeros, mostrar, cuando, esHoy, origen } = tools;
+            const session = fxSession.session, syscom = fxSession.syscom;
+            const applied = state.fx ? sinCeros(state.fx.value) : null;
+            const otherDay = !!state.fx && !esHoy(state.fx.date);
+            const add = (label, note, button, run) => {
+                const chip = document.createElement('span');
+                chip.className = 'fx-sugerido';
+                const strong = document.createElement('strong');
+                strong.textContent = label[1];
+                const small = document.createElement('span');
+                small.className = 'small text-muted';
+                small.textContent = `(${note})`;
+                const action = document.createElement('button');
+                action.type = 'button'; action.className = 'btn btn-sm btn-outline-primary'; action.textContent = button;
+                action.addEventListener('click', run);
+                chip.append(`${label[0]} `, strong, ' ', small, ' ', action);
+                box.append(chip);
+            };
+            const use = value => { $('newExchangeRate').value = value; $('applyFxBtn').click(); };
+            const useSyscom = async () => {
+                try { use((await tools.guardar({ use_syscom: true })).session.value); } catch (err) { showError(err); }
+            };
+            if (session && sinCeros(session.value) !== applied) {
+                add(['Tu sesión:', `$${mostrar(session.value)}`], `${origen(session)}, ${cuando(session.date)}`, 'Usar', () => use(session.value));
+            }
+            const syscomNew = syscom && sinCeros(syscom.value) !== applied && !(session && sinCeros(session.value) === sinCeros(syscom.value));
+            const syscomOffer = !state.fx || otherDay || (session?.source === 'syscom' && sinCeros(session.value) === applied);
+            if (syscomNew && syscomOffer) {
+                add([state.fx ? 'SYSCOM ahora:' : 'SYSCOM hoy:', `$${mostrar(syscom.value)}`], syscom.label || 'SYSCOM', state.fx ? 'Actualizar' : 'Usar', useSyscom);
+            }
+            if (otherDay) {
+                const warn = document.createElement('span');
+                warn.className = 'small fw-semibold'; warn.style.color = '#B54708';
+                warn.textContent = 'Capturado otro día: confirma que siga vigente.';
+                box.append(warn);
+            }
+        }
+        document.addEventListener('cconor:tipo-cambio', event => { fxSession = event.detail; fxShortcuts(); });
         function loadLine(snapshot) {
             const line = blankLine();
             Object.assign(line, { key: snapshot.line_key, persisted: true, kind: snapshot.source_kind,
@@ -934,6 +981,7 @@
                 const result = (await api.createFX(state.fxPending.body)).data;
                 state.fx = { id: result.fx_context_id, value: result.value, source: result.source, date: result.date };
                 state.fxPending = null; fxDisplay(); changed();
+                window.cconorTipoCambio?.guardar({ value: result.value }).catch(() => { /* la cotización ya lo tiene */ });
             } catch (err) {
                 if (state.fxPending && retainIntent(err, state.fxPending.uncertain)) state.fxPending.uncertain = true;
                 else state.fxPending = null;
@@ -983,6 +1031,7 @@
             finally { state.busy = false; locks(); renderLines(); }
         }
         $('quoteConditions').value = defaultConditions;  // Una revisión abierta después trae las suyas.
+        fxSession = window.cconorTipoCambio?.ultimo() ?? null;
         fxDisplay(); locks(); initialize();
     });
 }());

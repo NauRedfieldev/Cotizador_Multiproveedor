@@ -15,6 +15,8 @@ urlpatterns = [
     path("api/v1/quotes/preview/", api.preview_nueva, name="api_preview_nueva"),
     path("api/v1/quotes/fx-contexts/", api.crear_contexto_fx, name="api_contexto_fx"),
     path("api/v1/commercial/capabilities/", api.capacidades_comerciales, name="api_capacidades_comerciales"),
+    # 15A/16A: tipo de cambio de la sesión (menú superior y cotizador).
+    path("api/v1/fx/session/", api.tipo_cambio_sesion, name="api_tipo_cambio_sesion"),
     path("api/v1/commercial/permissions/<int:user_id>/", api.permisos_comerciales, name="api_permisos_comerciales"),
     # M7a: cotizaciones sobre los servicios de M8 (docs/28 y docs/25 M8 §2).
     path("api/v1/quotes/", api.crear_cotizacion, name="api_crear_cotizacion"),

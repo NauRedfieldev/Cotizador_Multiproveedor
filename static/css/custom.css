@@ -1021,3 +1021,59 @@ body.quote-scrolled .quote-error-toast { top: 84px; }
     background: #FEF3F2;
     color: #B42318;
 }
+
+/* ==========================================================================
+   TIPO DE CAMBIO DE LA SESIÓN (15A chip del menú, 14A/16A sugerencias)
+   ========================================================================== */
+/* Sugerencia de un tipo de cambio; solo se aplica al pulsar «Usar» o «Actualizar». */
+.fx-sugerido {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px 4px 12px;
+    border-radius: 12px;
+    background: #F4F3FA;
+    font-size: 14px;
+}
+
+.cconor-fx-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: #E6F2F0;
+    color: var(--cconor-eleccion);
+    font-size: 0.8rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.cconor-fx-chip .cconor-fx-origen {
+    font-weight: 500;
+    color: #5A5F7A;
+}
+
+/* Sin tipo de cambio en la sesión: gris punteado. */
+.cconor-fx-chip.cconor-fx-vacio {
+    background: #FFFFFF;
+    border: 1px dashed #D9D6E8 !important;
+    color: #5A5F7A;
+}
+
+.cconor-fx-menu {
+    width: 330px;
+    max-width: calc(100vw - 32px);
+    padding: 0.9rem;
+    border: 1px solid #EAE7F3;
+    border-radius: 14px;
+    box-shadow: 0 16px 40px rgba(17, 22, 56, 0.18);
+}
+
+.cconor-fx-valor {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--cconor-azul-marino);
+}

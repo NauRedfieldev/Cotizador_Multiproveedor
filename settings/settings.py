@@ -149,6 +149,10 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 # M6: límite por proveedor; comparar_configurado valida que sea positivo.
 OFERTAS_POR_PROVEEDOR = env.int('OFERTAS_POR_PROVEEDOR', default=10)
 
+# 14A: valor de GET /tipocambio de SYSCOM que el comparador sugiere (nunca lo aplica solo).
+# normal = contado; un_dia … un_mes = por plazo de pago (M4 en docs/30: CCONOR debe confirmar).
+SYSCOM_TIPO_CAMBIO_CAMPO = env('SYSCOM_TIPO_CAMBIO_CAMPO', default='normal')
+
 # M8: volumen privado, NO publicar mediante MEDIA_URL ni static().
 QUOTE_PDF_ROOT = Path(env('QUOTE_PDF_ROOT', default=str(BASE_DIR / 'private_quote_files')))
 

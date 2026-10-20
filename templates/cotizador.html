@@ -67,6 +67,8 @@
             <span id="exchangeRate" class="fx-status" role="status" aria-live="polite">Sin tipo de cambio</span>
         </div>
         <div id="fxEvidence" class="small text-muted mt-2"></div>
+        <!-- 16A: atajos con el tipo de cambio de la sesión y el de SYSCOM; solo se aplican al pulsarlos. -->
+        <div id="fxShortcuts" class="d-flex flex-wrap align-items-center gap-2 mt-2"></div>
         <div id="fxPermissionHint" class="small text-muted"></div>
     </section>
 
@@ -160,4 +162,4 @@
     </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=19"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=20"></script>{% endblock %}

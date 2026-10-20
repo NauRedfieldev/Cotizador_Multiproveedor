@@ -7,6 +7,7 @@ ofertas inválidas.
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
@@ -139,6 +140,25 @@ class SyscomAdapter(ProviderAdapter):
 def _recortar(termino: str) -> str:
     """busqueda admite como mucho 10 palabras y 120 caracteres."""
     return " ".join(termino.split()[:MAX_PALABRAS])[:MAX_CARACTERES].rstrip()
+
+
+# Tipo de cambio público de SYSCOM (GET /tipocambio, sin token; consultado el 2026-10-20):
+# {"normal": "18.54", "preferencial": ..., "un_dia": ..., "una_semana": ..., "dos_semanas": ...,
+#  "tres_semanas": ..., "un_mes": ...} en pesos por dólar, como texto decimal y sin fecha.
+CAMPOS_TIPO_CAMBIO = ("normal", "preferencial", "un_dia", "una_semana", "dos_semanas", "tres_semanas", "un_mes")
+
+
+async def consultar_tipo_cambio(base_url: str, campo: str, client: httpx.AsyncClient) -> Decimal:
+    """Pesos por dólar del campo pedido; ProviderError si la respuesta no sirve (nunca un valor inventado)."""
+    if campo not in CAMPOS_TIPO_CAMBIO:
+        raise ValueError(f"Campo de tipo de cambio desconocido: {campo!r}")
+    respuesta = await client.get(f"{base_url.rstrip('/')}/tipocambio", headers={"Accept": "application/json"})
+    raise_for_status(SyscomAdapter.code, respuesta)
+    datos = parse_json(SyscomAdapter.code, respuesta)
+    valor = parse_price(SyscomAdapter.code, datos.get(campo) if isinstance(datos, dict) else None)
+    if valor <= 0:
+        raise ProviderResponseError(SyscomAdapter.code, "Tipo de cambio en cero.")
+    return valor
 
 
 def _foto(valor: object) -> str | None:
