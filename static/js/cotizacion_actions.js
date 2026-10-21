@@ -51,11 +51,10 @@
         VENTA_BAJO_COSTO: 'Venta bajo costo', VENTA_CERO: 'Venta de partida en cero', TOTAL_CERO: 'Total de cotización en cero',
         STOCK_CERO: 'El proveedor informa existencias en cero', STOCK_INSUFICIENTE: 'Existencias del proveedor menores que la cantidad',
         STOCK_DESCONOCIDO: 'Existencias desconocidas: comprobar disponibilidad con el proveedor' };
-    const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-    function dateLabel(iso) {
-        const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
-        return match ? `${Number(match[3])} ${MONTHS[Number(match[2]) - 1]} ${match[1]}` : String(iso || '');
-    }
+    // 24C: relativa en pantalla; la exacta al pasar el cursor (helpers de api.js).
+    const F = window.cconorFechas;
+    function dateLabel(iso) { return F ? F.hace(iso) : String(iso || ''); }
+    function exactDate(iso) { return F ? F.exacta(iso) : String(iso || ''); }
     document.addEventListener('DOMContentLoaded', function () {
         const $ = id => document.getElementById(id);
         if (!$('commercialSummaryApp')) return;
@@ -129,6 +128,16 @@
         function warnings(d) {
             const box = $('documentWarnings');
             if (!d.emission_enabled) box.append(node('div', 'La emisión está deshabilitada en este entorno.', 'alert alert-info small py-2'));
+            // 23C: precios de proveedor de otro día; recuerda revisarlos en el cotizador. No bloquea «Emitir».
+            const captured = d.prices_captured_at ? new Date(d.prices_captured_at) : null;
+            if (captured && !Number.isNaN(captured.getTime()) && captured.toDateString() !== new Date().toDateString()) {
+                const panel = node('div', '', 'mis-precios-viejos');
+                const age = node('strong', `Los precios son de ${dateLabel(d.prices_captured_at)}.`); age.title = exactDate(d.prices_captured_at);
+                panel.append(age, node('span', 'Revísalos antes de emitir.'));
+                const link = node('a', 'Revisar en el cotizador →', 'btn btn-sm btn-outline-primary ms-auto');
+                link.href = `${editorURL(d)}&revisar=precios`;
+                panel.append(link); box.append(panel);
+            }
             const pending = d.warnings.filter(w => w.requires_confirmation !== false && !w.confirmed);
             if (pending.length) {
                 const panel = node('div', '', 'mis-avisos');
@@ -168,7 +177,8 @@
                 $('documentStatus').className = `mis-pill mis-pill-${kind}`; text('documentStatus', label);
                 text('documentIdentity', [d.client_name, client?.client?.email].filter(Boolean).join(' · '));
                 if (client) {
-                    text('documentMeta', `${d.status === 'ISSUED' ? 'Emitida' : 'Fecha'} ${dateLabel(client.issue_date)} · vigente hasta ${dateLabel(client.valid_until)} · ${client.items.length} partida${client.items.length === 1 ? '' : 's'}`);
+                    text('documentMeta', `${d.status === 'ISSUED' ? 'Emitida' : 'Fecha:'} ${dateLabel(client.issue_date)} · ${F ? F.vence(client.valid_until) : `vigente hasta ${client.valid_until}`} · ${client.items.length} partida${client.items.length === 1 ? '' : 's'}`);
+                    $('documentMeta').title = `Fecha: ${exactDate(client.issue_date)} · Vigente hasta: ${exactDate(client.valid_until)}`;
                     text('documentTotalLabel', d.status === 'ISSUED' ? 'Total con IVA' : 'Total estimado (sin emitir)');
                     text('documentTotalValue', money(d.status === 'ISSUED' ? d.total : client.total));
                 } else {
@@ -216,7 +226,8 @@
                     const top = node('span', '', 'mis-item-fila'), middle = node('span', '', 'mis-item-fila');
                     top.append(node('strong', `${d.folio} · Rev. ${d.revision}`), pill(d));
                     middle.append(node('span', d.client_name), node('strong', d.status === 'ISSUED' ? money(d.total) : ''));
-                    item.append(top, middle, node('span', dateLabel(d.issue_date), 'small text-secondary'));
+                    const when = node('span', dateLabel(d.issue_date), 'small text-secondary'); when.title = exactDate(d.issue_date);
+                    item.append(top, middle, when);
                     item.addEventListener('click', () => open(d.folio, d.revision));
                     $('historyList').append(item);
                 }

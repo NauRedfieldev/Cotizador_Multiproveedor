@@ -39,7 +39,7 @@ from .snapshots import (
     ArchivedPDFError, PartidaCapturada, RevisionConflict, acrear_revision, aemitir_revision,
     authorize, crear_borrador,
 )
-from .views import CLAVE_TIPO_CAMBIO, ETIQUETAS_TIPO_CAMBIO_SYSCOM, buscar, tipo_cambio_sugerido
+from .views import CLAVE_OFERTAS_VISTAS, CLAVE_TIPO_CAMBIO, ETIQUETAS_TIPO_CAMBIO_SYSCOM, buscar, tipo_cambio_sugerido
 
 logger = logging.getLogger(__name__)
 
@@ -601,6 +601,111 @@ def _listado_propio(actor, params):
         "pagination": {"page": selected.number, "pages": paginator.num_pages, "count": paginator.count}}
 
 
+# 19A: bandeja del comparador. Vive en la sesión; solo guarda referencias de lo que el comparador
+# mostró. El cotizador vuelve a consultar al proveedor antes de agregar una partida.
+CLAVE_BANDEJA = "comparador_bandeja"
+MAX_BANDEJA = 30
+MAX_PIEZAS_BANDEJA = 9999
+
+
+def _clave_texto(valor):
+    if not isinstance(valor, str) or not valor or len(valor) > 300:
+        raise _EntradaInvalida("Producto de la bandeja inválido.")
+    return valor
+
+
+@_api("GET POST PATCH DELETE")
+async def bandeja(request):
+    """GET la lista; POST {"key"} agrega una pieza; PATCH {"key", "quantity"} fija la cantidad
+    (0 la quita); DELETE {"keys": [...]} quita esos productos o, sin cuerpo, la vacía."""
+    items = [dict(i) for i in await request.session.aget(CLAVE_BANDEJA, [])]
+    if request.method == "POST":
+        clave = _clave_texto(_leer_json(request, {"key"}).get("key"))
+        actual = next((i for i in items if i["key"] == clave), None)
+        if actual is not None:
+            if actual["quantity"] >= MAX_PIEZAS_BANDEJA:
+                raise _EntradaInvalida(f"Máximo {MAX_PIEZAS_BANDEJA} piezas por producto.")
+            actual["quantity"] += 1
+        else:
+            vista = (await request.session.aget(CLAVE_OFERTAS_VISTAS, {})).get(clave)
+            if vista is None:
+                raise _OfertaNoDisponible("Ese producto ya no está en tus resultados; vuelve a buscarlo en el comparador.")
+            if len(items) >= MAX_BANDEJA:
+                raise _EntradaInvalida(f"La bandeja admite hasta {MAX_BANDEJA} productos; pasa algunos al cotizador.")
+            items.append({"key": clave, **vista, "quantity": 1})
+    elif request.method == "PATCH":
+        data = _leer_json(request, {"key", "quantity"})
+        clave, cantidad = _clave_texto(data.get("key")), data.get("quantity")
+        if type(cantidad) is not int or not 0 <= cantidad <= MAX_PIEZAS_BANDEJA:
+            raise _EntradaInvalida(f"La cantidad debe ser un entero entre 0 y {MAX_PIEZAS_BANDEJA}.")
+        actual = next((i for i in items if i["key"] == clave), None)
+        if actual is None:
+            raise _OfertaNoDisponible("Ese producto ya no está en la bandeja.")
+        actual["quantity"] = cantidad
+        items = [i for i in items if i["quantity"] > 0]
+    elif request.method == "DELETE":
+        if request.body:
+            claves = _leer_json(request, {"keys"}).get("keys")
+            if not isinstance(claves, list) or len(claves) > MAX_BANDEJA:
+                raise _EntradaInvalida("keys debe ser una lista de productos.")
+            quitar = {_clave_texto(c) for c in claves}
+            items = [i for i in items if i["key"] not in quitar]
+        else:
+            items = []
+    if request.method != "GET":
+        await request.session.aset(CLAVE_BANDEJA, items)
+    return JsonResponse({"success": True, "data": items, "pieces": sum(i["quantity"] for i in items)})
+
+
+MAX_CLIENTES = 50
+
+
+def _clientes_frecuentes(actor, params):
+    """18B: clientes de las cotizaciones propias, sin tabla nueva.
+
+    Un cliente se reconoce por su RFC (o, sin RFC, por la razón social). Sus datos son los de la
+    revisión más reciente; el proyecto no se devuelve porque cambia en cada cotización.
+    """
+    actor = require_commercial_permission(actor)
+    if set(params) - {"q", "order"} or any(len(params.getlist(k)) != 1 for k in params):
+        raise _EntradaInvalida("Filtros de clientes inválidos.")
+    query = params.get("q", "").strip().casefold()
+    order = params.get("order", "recent")
+    if len(query) > 200 or order not in ("recent", "count", "az"):
+        raise _EntradaInvalida("Búsqueda u orden inválidos.")
+    latest = QuoteRevision.objects.filter(quote_id=OuterRef("quote_id")).order_by("-number").values("pk")[:1]
+    rows = (QuoteRevision.objects.filter(quote__advisor_id=actor.pk).annotate(latest_id=Subquery(latest))
+            .filter(pk=F("latest_id")).select_related("quote").order_by("-created_at", "-pk"))
+    clientes = {}
+    for revision in rows:
+        datos = revision.header.get("client") or {}
+        nombre = (datos.get("business_name") or "").strip()
+        if not nombre:
+            continue
+        rfc = (datos.get("rfc") or "").strip().upper()
+        clave = ("rfc", rfc) if rfc else ("nombre", " ".join(nombre.casefold().split()))
+        if clave in clientes:  # ya está con sus datos más recientes; solo se cuenta
+            clientes[clave]["quotes_count"] += 1
+            continue
+        clientes[clave] = {"business_name": nombre, "rfc": rfc, "email": datos.get("email") or "",
+                           "contact": datos.get("contact") or "", "phone": datos.get("phone") or "",
+                           "source_folio": revision.quote.folio, "last_date": revision.created_at.isoformat(),
+                           "quotes_count": 1}
+    lista = [c for c in clientes.values()
+             if not query or any(query in c[k].casefold() for k in ("business_name", "rfc", "email", "contact"))]
+    if order == "count":
+        lista.sort(key=lambda c: -c["quotes_count"])  # sort estable: empates quedan por recientes
+    elif order == "az":
+        lista.sort(key=lambda c: c["business_name"].casefold())
+    return {"data": lista[:MAX_CLIENTES], "count": len(lista)}
+
+
+@_api("GET")
+async def clientes_frecuentes(request):
+    return JsonResponse({"success": True, **await sync_to_async(_clientes_frecuentes, thread_sensitive=True)(
+        await request.auser(), request.GET)})
+
+
 @_api("GET")
 async def resumen_documental(request, folio, numero):
     def read(actor):
@@ -609,7 +714,7 @@ async def resumen_documental(request, folio, numero):
             output = {**_resumen(revision, folio), "actor_id": actor.pk,
                 "schema_version": revision.schema_version, "state_fingerprint": revision.state_fingerprint,
                 "quote_status": quote.status, "client_name": revision.header["client"]["business_name"],
-                "cliente": None, "warnings": [],
+                "cliente": None, "warnings": [], "prices_captured_at": None,
                 "emission_enabled": bool(settings.COTIZACIONES_EMISION_HABILITADA and revision.schema_version == 2),
                 "revisiones": [{**_resumen(r, folio), "schema_version": r.schema_version}
                                for r in quote.revisions.order_by("number")]}
@@ -619,6 +724,9 @@ async def resumen_documental(request, folio, numero):
                         actor=actor, expected_version=revision.edit_version)
                     output["cliente"] = preview["cliente"]
                     output["warnings"] = _warning_states(preview["resultado"], revision, quote)
+                    # 23C: el precio de proveedor más antiguo del borrador, para recordar revisarlo antes de emitir.
+                    capturas = [s.captured_at for s in revision.snapshots.all() if s.source_kind == "API"]
+                    output["prices_captured_at"] = min(capturas).isoformat() if capturas else None
                 else:
                     output["cliente"] = commercial_services.contexto_revision(revision)
             return _wire(output)
@@ -966,6 +1074,9 @@ def _exact_detail(folio, number, actor):
                           "source_unit_price": s.source_unit_price, "source_currency": s.source_currency} for s in snapshots],
             "confirmations": list(revision.commercial_confirmations.values("edit_version", "state_fingerprint", "warning_code", "scope_ref", "confirmed_by_id", "confirmed_at"))}
         if revision.schema_version == 2:
+            # 23A: cuándo se capturó el precio de cada partida, para «Revisar precios».
+            for item, snapshot in zip(output["items"], snapshots, strict=True):
+                item["captured_at"] = snapshot.captured_at.isoformat()
             if revision.status == "DRAFT":
                 output["preview"] = commercial_services.previsualizar_revision_comercial(revision.pk, actor=actor, expected_version=revision.edit_version)
                 output["preview"]["warnings"] = _warning_states(output["preview"]["resultado"], revision, quote)
@@ -1117,7 +1228,8 @@ async def tipo_cambio_sesion(request):
             await request.session.aset(CLAVE_TIPO_CAMBIO, recordado)
     syscom, fallo = await tipo_cambio_sugerido()
     return JsonResponse({"success": True, "data": {
-        "session": {"value": recordado["valor"], "date": recordado["fecha"], "source": recordado.get("origen", "manual")}
+        "session": {"value": recordado["valor"], "date": recordado["fecha"], "source": recordado.get("origen", "manual"),
+                    "confirmed": recordado.get("confirmado")}
         if recordado else None,
         "syscom": {"value": f"{syscom:f}", "label": ETIQUETAS_TIPO_CAMBIO_SYSCOM.get(settings.SYSCOM_TIPO_CAMBIO_CAMPO, "")}
         if syscom is not None else None,

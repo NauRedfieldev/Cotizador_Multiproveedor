@@ -1077,3 +1077,325 @@ body.quote-scrolled .quote-error-toast { top: 84px; }
     font-weight: 700;
     color: var(--cconor-azul-marino);
 }
+
+/* ==========================================================================
+   18B: ELEGIR CLIENTE (cotizador, paso 1)
+   ========================================================================== */
+.clients-dialog {
+    width: min(760px, calc(100vw - 32px));
+}
+
+.clients-list {
+    max-height: min(420px, 55vh);
+    overflow-y: auto;
+}
+
+.clients-list .clients-rfc {
+    width: 8.5rem;
+    flex-shrink: 0;
+}
+
+.clients-list .clients-uso {
+    width: 9.5rem;
+    flex-shrink: 0;
+}
+
+@media (max-width: 575.98px) {
+    .clients-list .list-group-item { flex-wrap: wrap; }
+    .clients-list .clients-rfc,
+    .clients-list .clients-uso { width: auto; }
+}
+
+/* Campos llenados con «Elegir cliente»: verde suave hasta que el asesor los edite. */
+.client-filled-field {
+    background-color: #F1F8F7 !important;
+}
+
+.client-filled-notice {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 10px;
+    background: #F1F8F7;
+    color: var(--cconor-eleccion);
+    font-size: 0.875rem;
+}
+
+.client-filled-notice.d-none {
+    display: none !important;
+}
+
+.client-filled-notice .btn-link {
+    color: var(--cconor-azul-marino);
+    font-weight: 600;
+}
+
+/* ==========================================================================
+   19A: BANDEJA DEL COMPARADOR
+   ========================================================================== */
+.bandeja {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 1040;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+.bandeja[hidden],
+.bandeja-panel[hidden],
+.bandeja-pastilla[hidden] {
+    display: none !important;
+}
+
+.bandeja-pastilla {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    height: 48px;
+    padding: 0 1.1rem;
+    border: 0;
+    border-radius: 999px;
+    background: var(--cconor-azul-marino);
+    color: #FFFFFF;
+    font-weight: 700;
+    box-shadow: 0 12px 30px rgba(17, 22, 56, 0.3);
+}
+
+.bandeja-panel {
+    width: min(360px, calc(100vw - 32px));
+    max-height: min(70vh, 560px);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.9rem 1rem;
+    background: #FFFFFF;
+    border: 1px solid #EAE7F3;
+    border-radius: 16px;
+    box-shadow: 0 18px 44px rgba(17, 22, 56, 0.22);
+}
+
+.bandeja-icono {
+    color: var(--cconor-eleccion);
+}
+
+.bandeja-piezas {
+    padding: 0.1rem 0.5rem;
+    border-radius: 6px;
+    background: #E6F2F0;
+    color: var(--cconor-eleccion);
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+/* Con muchos productos solo la lista se desplaza; encabezado y botones quedan fijos. */
+.bandeja-lista {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.bandeja-lista li {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.55rem 0;
+    border-bottom: 1px solid #EAE7F3;
+    font-size: 0.85rem;
+}
+
+.bandeja-nombre {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.3;
+}
+
+.bandeja-detalle {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+}
+
+.bandeja-cantidad {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid #D9D6E8;
+    border-radius: 8px;
+}
+
+.bandeja-cantidad button {
+    width: 32px;
+    height: 32px;
+    border: 0;
+    background: transparent;
+    color: var(--cconor-azul-marino);
+    font-weight: 700;
+}
+
+.bandeja-cantidad strong {
+    min-width: 1.6rem;
+    text-align: center;
+}
+
+.bandeja-quitar {
+    border: 0;
+    background: transparent;
+    color: #B42318;
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+/* Botón de una oferta que ya está en la bandeja. */
+.bandeja-agregar.bandeja-en {
+    background: #E6F2F0;
+    border-color: #E6F2F0;
+    color: var(--cconor-eleccion);
+}
+
+/* Cotizador, paso 3: aviso y resultado de «Traer a esta cotización». */
+.tray-notice {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    padding: 0.65rem 0.85rem;
+    border-radius: 12px;
+    background: #E6F2F0;
+    font-size: 0.9rem;
+}
+
+.tray-notice.d-none,
+.tray-results.d-none {
+    display: none !important;
+}
+
+.tray-results {
+    margin-bottom: 0.75rem;
+    padding: 0.25rem 0.85rem 0.5rem;
+    border: 1px solid #EAE7F3;
+    border-radius: 12px;
+}
+
+.tray-results li {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0;
+    border-bottom: 1px solid #EAE7F3;
+    font-size: 0.875rem;
+}
+
+.tray-results li:last-child {
+    border-bottom: 0;
+}
+
+.tray-dot {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #FFFFFF;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.tray-dot--ok { background: #067647; }
+.tray-dot--warn { background: #F79009; }
+.tray-dot--error { background: #B42318; }
+
+/* ==========================================================================
+   23A/23C: REVISAR PRECIOS DE UN BORRADOR
+   ========================================================================== */
+.price-age {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.75rem;
+    padding: 0.55rem 0.85rem;
+    border-radius: 12px;
+    background: #F4F3FA;
+    color: #5A5F7A;
+    font-size: 0.9rem;
+}
+
+.price-age--old {
+    background: #FFF4E5;
+    color: #93370D;
+    font-weight: 600;
+}
+
+.price-age.d-none,
+.price-review.d-none {
+    display: none !important;
+}
+
+.price-review {
+    margin-bottom: 0.75rem;
+    padding: 0.75rem 0.85rem;
+    border: 1px solid #EAE7F3;
+    border-radius: 12px;
+}
+
+.price-review-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0;
+    border-top: 1px solid #EAE7F3;
+    font-size: 0.9rem;
+}
+
+.price-review-col {
+    width: 9rem;
+    flex-shrink: 0;
+}
+
+.price-review-action {
+    width: 12rem;
+    flex-shrink: 0;
+    text-align: right;
+}
+
+.price-badge {
+    flex-shrink: 0;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.price-badge--up { background: #FEF3F2; color: #B42318; }
+.price-badge--down { background: #E7F6EC; color: #067647; }
+.price-badge--same { background: #F4F3FA; color: #5A5F7A; }
+.price-badge--warn { background: #FFF4E5; color: #93370D; }
+
+@media (max-width: 767.98px) {
+    .price-review-col,
+    .price-review-action { width: auto; text-align: left; }
+}
+
+/* 23C: Mis cotizaciones, recordatorio de precios de otro día antes de emitir. */
+.mis-precios-viejos {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.75rem;
+    padding: 0.6rem 0.85rem;
+    border-radius: 10px;
+    background: #FFF4E5;
+    color: #93370D;
+    font-size: 0.9rem;
+}

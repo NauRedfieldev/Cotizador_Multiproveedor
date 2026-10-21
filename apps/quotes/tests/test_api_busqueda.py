@@ -19,7 +19,7 @@ from apps.providers.models import Provider
 from apps.providers.tests.soporte import adaptadores_registrados, crear_proveedor, sin_red
 from apps.quotes import api
 from apps.quotes.tests.test_vistas_cotizacion import adaptador, crear_asesor, mxn, usd
-from apps.quotes.views import CLAVE_TIPO_CAMBIO, LIMITE_COTIZACIONES
+from apps.quotes.views import CLAVE_OFERTAS_VISTAS, CLAVE_TIPO_CAMBIO, LIMITE_COTIZACIONES, clave_limite
 from apps.quotes.tests.test_commercial_persistence import CommercialFixtures
 from apps.quotes.tests.test_api_cotizaciones import alta_comercial
 from apps.quotes.models import QuoteSelectionContext
@@ -219,7 +219,7 @@ class ApiBusquedaTests(TestCase):
         self.assertEqual(cuerpo, {"success": False, "error": "Inicia sesión para continuar.",
                                 "code": "UNAUTHENTICATED", "details": {}})
         self.assertEqual(llamadas, [])
-        self.assertIsNone(await cache.aget("cotizar:127.0.0.1"))
+        self.assertIsNone(await cache.aget("cotizar:ip:127.0.0.1"))
 
     # 15A/16A: tipo de cambio de la sesión, uno solo para el chip del menú, el comparador y el cotizador.
     async def tc(self, metodo="get", cuerpo=None, consulta=None):
@@ -245,7 +245,8 @@ class ApiBusquedaTests(TestCase):
         self.assertEqual(respuesta.status_code, 200)
         guardado = await self.recordado()
         self.assertEqual((guardado["valor"], guardado["origen"]), ("18.70", "manual"))
-        self.assertEqual(cuerpo["data"]["session"], {"value": "18.70", "date": guardado["fecha"], "source": "manual"})
+        self.assertEqual(cuerpo["data"]["session"], {"value": "18.70", "date": guardado["fecha"], "source": "manual",
+                                                      "confirmed": None})
         with sin_red():
             comparador = await self.async_client.get(reverse("cotizar_productos"))
         self.assertContains(comparador, "1 USD = $18.70 MXN")
@@ -285,11 +286,112 @@ class ApiBusquedaTests(TestCase):
                 self.assertEqual(respuesta.status_code, 400)
                 self.assertIsNone(await self.recordado())
 
+    async def test_a16b_el_chip_sabe_si_se_confirmo(self):
+        """21A: «Sigue vigente» del comparador llega al chip del menú; escribir el mismo valor lo conserva."""
+        sesion = await self.async_client.asession()
+        await sesion.aset(CLAVE_TIPO_CAMBIO, {"valor": "18.54", "fecha": "2026-10-19T10:00:00+00:00", "origen": "syscom",
+                                              "confirmado": "2026-10-20T15:00:00+00:00"})
+        await sesion.asave()
+        _, cuerpo = await self.tc()
+        self.assertEqual(cuerpo["data"]["session"]["confirmed"], "2026-10-20T15:00:00+00:00")
+        _, cuerpo = await self.tc("put", {"value": "18.54"})
+        self.assertEqual(cuerpo["data"]["session"]["confirmed"], "2026-10-20T15:00:00+00:00")
+        _, cuerpo = await self.tc("put", {"value": "18.60"})                  # otro valor empieza de cero
+        self.assertIsNone(cuerpo["data"]["session"]["confirmed"])
+
     async def test_a17_tipo_cambio_sesion_pide_sesion_y_solo_get_o_put(self):
         respuesta, _ = await self.tc("post", {"value": "18.70"})
         self.assertEqual(respuesta.status_code, 405)
         await self.async_client.alogout()
         respuesta, cuerpo = await self.tc("put", {"value": "18.70"})
+        self.assertEqual((respuesta.status_code, cuerpo["code"]), (401, "UNAUTHENTICATED"))
+
+    # 19A: bandeja del comparador. Solo acepta ofertas que el comparador mostró, con datos del servidor.
+    async def comparar(self, *adaptadores, **parametros):
+        parametros.setdefault("q", "camara ip")
+        with adaptadores_registrados(*adaptadores), sin_red():
+            return await self.async_client.get(reverse("cotizar_productos"), parametros)
+
+    async def bandeja(self, metodo="get", cuerpo=None):
+        url = reverse("api_bandeja")
+        if metodo == "get":
+            respuesta = await self.async_client.get(url)
+        elif cuerpo is None:
+            respuesta = await getattr(self.async_client, metodo)(url)
+        else:
+            respuesta = await getattr(self.async_client, metodo)(url, json.dumps(cuerpo), content_type="application/json")
+        return respuesta, json.loads(respuesta.content) if respuesta["Content-Type"] == "application/json" else None
+
+    async def test_a18_el_comparador_ofrece_agregar_y_recuerda_lo_que_mostro(self):
+        pagina = await self.comparar(adaptador("alfa", mxn("7", "100.50", modelo="M-1", nombre="Cámara A")), adaptador("beta"))
+        self.assertContains(pagina, 'data-bandeja-clave="alfa:7"')
+        self.assertContains(pagina, 'id="bandeja"')
+        self.assertContains(pagina, "/cotizador/?sku=M-1")                       # sigue el enlace al cotizador
+        vistas = await (await self.async_client.asession()).aget(CLAVE_OFERTAS_VISTAS)
+        self.assertEqual(vistas["alfa:7"], {"provider_code": "alfa", "provider_name": vistas["alfa:7"]["provider_name"],
+                                            "external_id": "7", "name": "Cámara A", "model": "M-1", "price": "100.50", "currency": "MXN"})
+
+    async def test_a19_agregar_suma_piezas_y_usa_los_datos_del_servidor(self):
+        await self.comparar(adaptador("alfa", mxn("7", "100.50", modelo="M-1", nombre="Cámara A"), usd("8", "9.99", modelo="M-2")), adaptador("beta"),
+                            tipo_cambio="17.50")
+        respuesta, cuerpo = await self.bandeja("post", {"key": "alfa:7"})
+        self.assertEqual(respuesta.status_code, 200)
+        await self.bandeja("post", {"key": "alfa:7"})
+        _, cuerpo = await self.bandeja("post", {"key": "alfa:8"})
+        self.assertEqual([(i["key"], i["name"], i["price"], i["currency"], i["quantity"]) for i in cuerpo["data"]],
+                         [("alfa:7", "Cámara A", "100.50", "MXN", 2), ("alfa:8", cuerpo["data"][1]["name"], "9.99", "USD", 1)])
+        self.assertEqual(cuerpo["pieces"], 3)
+        _, leida = await self.bandeja()
+        self.assertEqual(leida, cuerpo)
+        self.assertFalse(await QuoteSelectionContext.objects.aexists())        # no toca cotizaciones
+
+    async def test_a20_no_acepta_lo_que_el_comparador_no_mostro(self):
+        for clave in ("alfa:999", "beta:7"):
+            respuesta, cuerpo = await self.bandeja("post", {"key": clave})
+            self.assertEqual((respuesta.status_code, cuerpo["code"]), (409, "CONFLICT"))
+        for cuerpo in ({"key": 7}, {"key": ""}, {"key": "alfa:7", "name": "Falso"}, {}):
+            respuesta, _ = await self.bandeja("post", cuerpo)
+            self.assertEqual(respuesta.status_code, 400, cuerpo)
+        _, cuerpo = await self.bandeja()
+        self.assertEqual(cuerpo, {"success": True, "data": [], "pieces": 0})
+
+    async def test_a21_cantidades_quitar_y_vaciar(self):
+        await self.comparar(adaptador("alfa", mxn("7", "1.00"), mxn("8", "2.00")), adaptador("beta"))
+        await self.bandeja("post", {"key": "alfa:7"})
+        await self.bandeja("post", {"key": "alfa:8"})
+        _, cuerpo = await self.bandeja("patch", {"key": "alfa:7", "quantity": 5})
+        self.assertEqual([i["quantity"] for i in cuerpo["data"]], [5, 1])
+        for malo in (True, -1, 10000, "3", 2.0):
+            respuesta, _ = await self.bandeja("patch", {"key": "alfa:7", "quantity": malo})
+            self.assertEqual(respuesta.status_code, 400, malo)
+        respuesta, _ = await self.bandeja("patch", {"key": "alfa:9", "quantity": 1})
+        self.assertEqual(respuesta.status_code, 409)
+        _, cuerpo = await self.bandeja("patch", {"key": "alfa:8", "quantity": 0})   # 0 lo quita
+        self.assertEqual([i["key"] for i in cuerpo["data"]], ["alfa:7"])
+        await self.bandeja("post", {"key": "alfa:8"})
+        _, cuerpo = await self.bandeja("delete", {"keys": ["alfa:7", "otro:1"]})
+        self.assertEqual([i["key"] for i in cuerpo["data"]], ["alfa:8"])
+        _, cuerpo = await self.bandeja("delete")
+        self.assertEqual(cuerpo["data"], [])
+
+    async def test_a22_limites_de_la_bandeja(self):
+        with override_settings(OFERTAS_POR_PROVEEDOR=40):
+            await self.comparar(adaptador("alfa", *[mxn(str(i), "1.00") for i in range(31)]), adaptador("beta"))
+        for i in range(30):
+            respuesta, _ = await self.bandeja("post", {"key": f"alfa:{i}"})
+            self.assertEqual(respuesta.status_code, 200)
+        respuesta, cuerpo = await self.bandeja("post", {"key": "alfa:30"})
+        self.assertEqual(respuesta.status_code, 400)
+        self.assertIn("hasta 30", cuerpo["error"])
+        await self.bandeja("patch", {"key": "alfa:0", "quantity": 9999})
+        respuesta, _ = await self.bandeja("post", {"key": "alfa:0"})
+        self.assertEqual(respuesta.status_code, 400)
+
+    async def test_a23_bandeja_pide_sesion(self):
+        respuesta, _ = await self.bandeja("put", {"key": "alfa:7"})
+        self.assertEqual(respuesta.status_code, 405)
+        await self.async_client.alogout()
+        respuesta, cuerpo = await self.bandeja()
         self.assertEqual((respuesta.status_code, cuerpo["code"]), (401, "UNAUTHENTICATED"))
 
 

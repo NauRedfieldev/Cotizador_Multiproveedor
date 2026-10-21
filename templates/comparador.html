@@ -20,6 +20,8 @@
     .fx-aplicado { display: inline-flex; align-items: center; gap: 6px; padding: 0.35rem 0.85rem; border-radius: 999px;
         background: #E6F2F0; color: #00796B; font-weight: 700; }
     .fx-cambiar { display: inline-block; }
+    /* 21A: aviso de tipo de cambio de otro día, con «Sigue vigente» y «Usar el de hoy». */
+    .fx-otro-dia { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 10px; background: #FFF4E5; color: #93370D; font-size: 14px; }
     .fx-cambiar > summary { display: inline; cursor: pointer; font-weight: 600; text-decoration: underline; color: var(--cconor-azul-marino); }
     .fx-cambiar > summary::-webkit-details-marker { display: none; }
     .fx-cambiar[open] > summary { margin-right: 0.5rem; }
@@ -79,16 +81,33 @@
                 </button>
             </div>
         </div>
+        {% if busqueda_restaurada %}
+        {# 22A: al volver desde el menú se muestra la última búsqueda; «Nueva búsqueda» la olvida. #}
+        <div class="small text-secondary mt-2 d-flex flex-wrap align-items-center gap-2" role="status">
+            <span>Mostrando tu última búsqueda ({{ busqueda_restaurada }}).</span>
+            <a class="fw-semibold" style="color: var(--cconor-azul-marino);" href="{% url 'comparador' %}?nueva=1">Nueva búsqueda</a>
+        </div>
+        {% endif %}
         <div class="comparador-fx border-top mt-3 pt-3 d-flex flex-wrap align-items-center gap-2">
             <label for="tipo_cambio" class="fw-semibold mb-0">Tipo de cambio para precios en dólares:</label>
             {% if tipo_cambio %}
             <span class="fx-aplicado"><i class="bi bi-check-lg" aria-hidden="true"></i> 1 USD = ${{ tipo_cambio.valor }} MXN</span>
-            <span class="small text-secondary">{% if tipo_cambio.origen == "syscom" %}SYSCOM · {% else %}capturado {% endif %}{{ tipo_cambio.fecha|date:'d/m/Y H:i' }} UTC · se conserva durante tu sesión</span>
+            <span class="small text-secondary">{% if tipo_cambio.origen == "syscom" %}SYSCOM · {% else %}capturado {% endif %}<span title="{{ tipo_cambio_exacta }}">{{ tipo_cambio_hace }}</span>{% if tipo_cambio_confirmado and not tipo_cambio_otro_dia %} · <span title="{{ tipo_cambio_confirmado_exacta }}">confirmado {{ tipo_cambio_confirmado_hace }}</span>{% endif %} · se conserva durante tu sesión</span>
             {% if tipo_cambio_syscom_nuevo %}
             <span class="fx-sugerido">SYSCOM ahora: <strong>${{ tipo_cambio_syscom_nuevo }}</strong>
                 <button type="submit" name="usar_tipo_cambio" value="actualizar" class="btn btn-sm btn-outline-primary">Actualizar</button></span>
             {% endif %}
-            {% if tipo_cambio_otro_dia %}<span class="small fw-semibold" style="color: #B54708;">Capturado otro día: confirma que siga vigente.</span>{% endif %}
+            {% if tipo_cambio_otro_dia %}
+            {# 21A: «Sigue vigente» oculta el aviso hasta mañana; «Usar el de hoy» solo si SYSCOM cambió. Nunca automático. #}
+            <div class="fx-otro-dia w-100" role="status">
+                <strong>Capturado otro día:</strong> <span>confirma que siga vigente.</span>
+                {% if tipo_cambio_syscom_hoy %}<span>SYSCOM hoy: <strong>${{ tipo_cambio_syscom_hoy }}</strong></span>{% endif %}
+                <span class="ms-auto d-flex flex-wrap gap-2">
+                    <button type="submit" name="usar_tipo_cambio" value="confirmar" class="btn btn-sm btn-outline-primary">Sigue vigente</button>
+                    {% if tipo_cambio_syscom_hoy %}<button type="submit" name="usar_tipo_cambio" value="actualizar" class="btn btn-sm btn-cconor-primary">Usar ${{ tipo_cambio_syscom_hoy }} de hoy</button>{% endif %}
+                </span>
+            </div>
+            {% endif %}
             <details class="fx-cambiar">
                 <summary>Cambiar</summary>
                 <span class="d-inline-flex align-items-center gap-2"><span class="fw-semibold">1 USD =</span>
@@ -190,19 +209,21 @@
                 {% endif %}
             </div>
             <div class="col-md-3 d-flex flex-column gap-2">
-                {% if o.oferta.model %}
-                <a class="btn btn-cconor-primary btn-sm d-inline-flex align-items-center justify-content-center gap-1 w-100"
-                    href="{% url 'cotizador' %}?sku={{ o.oferta.model|urlencode }}"
-                    title="Buscar este modelo y seleccionar una captura comercial; no agrega ni cambia el tipo de cambio automáticamente">
-                     <i class="bi bi-search"></i> Buscar en cotizador
-                </a>
-                {% endif %}
+                {# 19A: agrega esta oferta exacta a la bandeja (static/js/main.js); cada clic suma una pieza. #}
+                <button type="button" class="btn btn-cconor-primary btn-sm d-inline-flex align-items-center justify-content-center gap-1 w-100 bandeja-agregar"
+                        data-bandeja-clave="{{ o.oferta.provider_code }}:{{ o.oferta.external_id }}" aria-label="Agregar {{ o.oferta.name }} de {{ o.proveedor_nombre }} a la bandeja">
+                    <i class="bi bi-plus-lg" aria-hidden="true"></i> <span>Agregar</span>
+                </button>
                 {% if o.oferta.product_url %}
                 <a class="btn btn-outline-primary btn-sm d-inline-flex align-items-center justify-content-center gap-1 w-100"
                     href="{{ o.oferta.product_url }}" target="_blank" rel="noopener noreferrer"
                     title="Abre la ficha pública del producto en una pestaña nueva">
                     Ver en {{ o.proveedor_nombre }} <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
                 </a>
+                {% endif %}
+                {% if o.oferta.model %}
+                <a class="small text-center fw-semibold" href="{% url 'cotizador' %}?sku={{ o.oferta.model|urlencode }}"
+                    title="Buscar este modelo y seleccionar una captura comercial; no agrega ni cambia el tipo de cambio automáticamente">Buscar en cotizador</a>
                 {% endif %}
             </div>
         </div>
@@ -228,4 +249,25 @@
     {% endfor %}
 
 </div>
+
+<!-- 19A: bandeja para cotizar (static/js/main.js). Vive en la sesión; oculta hasta cargarla. -->
+<section id="bandeja" class="bandeja" aria-label="Bandeja para cotizar" hidden>
+    <button type="button" id="bandejaPastilla" class="bandeja-pastilla" aria-expanded="false" aria-controls="bandejaPanel">
+        <i class="bi bi-basket2" aria-hidden="true"></i><span id="bandejaPastillaTexto">Bandeja</span><i class="bi bi-chevron-up" aria-hidden="true"></i>
+    </button>
+    <div id="bandejaPanel" class="bandeja-panel" hidden>
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-basket2 bandeja-icono" aria-hidden="true"></i><strong>Bandeja para cotizar</strong>
+            <span id="bandejaPiezas" class="bandeja-piezas"></span>
+            <button type="button" id="bandejaMinimizar" class="btn btn-sm btn-link ms-auto p-0" aria-label="Minimizar la bandeja"><i class="bi bi-chevron-down" aria-hidden="true"></i></button>
+        </div>
+        <ul id="bandejaLista" class="bandeja-lista list-unstyled mb-0"></ul>
+        <div class="small text-muted">Precios de referencia: el cotizador los vuelve a consultar al traerlos.</div>
+        <div id="bandejaError" class="small text-danger" role="alert"></div>
+        <div class="d-flex align-items-center gap-2">
+            <a class="btn btn-sm btn-cconor-primary" href="{% url 'cotizador' %}">Abrir el cotizador →</a>
+            <button type="button" id="bandejaVaciar" class="btn btn-sm btn-link ms-auto">Vaciar</button>
+        </div>
+    </div>
+</section>
 {% endblock %}

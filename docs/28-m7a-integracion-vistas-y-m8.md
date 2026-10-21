@@ -37,7 +37,7 @@ la versión async conservando lo que aportaba:
 | Se conserva de 7bf8e93 | Se recupera de M7 (docs/26) |
 |---|---|
 | Ruta `/comparador/` (nombres `comparador` y `cotizar_productos`) | Vista `async def`: bajo ASGI una vista síncrona ocupa el hilo compartido de las vistas síncronas, y una búsqueda lenta de proveedores bloquearía las demás |
-| Sin `q` ni `sku`: 200 con el formulario en blanco | Rate limit 10/60 s por IP antes de cualquier I/O |
+| Sin `q` ni `sku`: 200 con el formulario en blanco | Rate limit 20/60 s por usuario (antes 10 por IP) antes de cualquier I/O |
 | Las seis claves siempre, con `error=None` en los 200 | M6 **por proveedor**: datos incoherentes de uno solo lo dejan fuera a él (una sola llamada tiraba toda la búsqueda) |
 | La categoría debe ser una de las activas del formulario (400 si no) | `CONFIANZA_POR_PROVEEDOR`: SYSCOM empareja por modelo/MPN (sin ella, M5 nunca emparejaba por clave) |
 | Fallo inesperado de `search_all` → 503 genérico | USD sin tipo de cambio → 400 mirando las ofertas, no el texto de un error |
@@ -691,7 +691,7 @@ solo crean su contenedor cuando hay mensajes. Caché: `custom.css?v=10`, `home.c
   los campos (`.comparador-buscar`) y la lupa junto al texto.
 - El tipo de cambio va en su propia línea como frase: «Tipo de cambio para precios en dólares:
   1 USD = $ [Ej. 18.50] MXN» (el ejemplo en gris e itálica; lo escrito, en negritas). Ya aplicado
-  se muestra como etiqueta verde «✓ 1 USD = $X MXN», la hora de captura (UTC) y «Cambiar», que abre
+  se muestra como etiqueta verde «✓ 1 USD = $X MXN», la hora de captura (hora de Ciudad de México, ver §14.11) y «Cambiar», que abre
   el campo con el valor anterior. Sustituye la línea gris que aparecía sobre los resultados.
 - Sin cambio de funcionamiento: el valor se sigue enviando con cada búsqueda (GET) y no se recuerda
   entre visitas. Estilos dentro de `comparador.html`.
@@ -735,6 +735,96 @@ solo crean su contenedor cuando hay mensajes. Caché: `custom.css?v=10`, `home.c
     aplica solo.**
   - La cotización sigue guardando el origen `manual` (decisión del usuario): el cliente nunca ve el tipo
     de cambio; el PDF comercial v2 no lo muestra (solo los PDF históricos v1 lo traían).
+
+### 14.9 Cotizador: «Elegir cliente» (diseño 18B, 2026-10-21)
+
+- En el paso 1, «Elegir cliente» abre una ventana con los clientes de las **cotizaciones propias**
+  (como Mis cotizaciones), con buscador (nombre, RFC, correo o contacto) y orden: Recientes, Más
+  cotizados o A–Z. «Usar» llena razón social, RFC, correo, contacto y teléfono; el **proyecto no se
+  copia** porque cambia en cada cotización. Los campos llenados se ven en verde suave hasta editarlos, y el
+  aviso «Datos tomados de FOLIO (fecha) · Deshacer» devuelve lo que había. Nada se guarda hasta «Guardar
+  borrador». Deshabilitado cuando el paso 1 no se puede editar (emitida, sin permiso, transición v1).
+- **Sin tabla nueva:** `GET /api/v1/clients/?q=&order=recent|count|az` (`api.clientes_frecuentes`, mismo
+  permiso que el listado) recorre la última revisión de cada cotización propia. Un cliente se reconoce por
+  su RFC; sin RFC, por la razón social (sin distinguir mayúsculas ni espacios de más). Sus datos son los de
+  la revisión más reciente; `quotes_count` cuenta sus cotizaciones. Devuelve hasta 50 y `count` total.
+- Pruebas: `ClientesFrecuentesTests` (C1–C6) en `test_api_cotizaciones.py`.
+
+### 14.10 Bandeja del comparador (diseño 19A, 2026-10-21)
+
+- **Comparador:** cada oferta tiene «+ Agregar» (la oferta exacta: proveedor y producto); otro clic suma
+  una pieza y el botón dice «En la bandeja · N». «Buscar en cotizador» queda como enlace pequeño. La bandeja
+  flota abajo a la derecha (`static/js/main.js`): productos con proveedor y precio de referencia, cantidad
+  − / +, quitar, «Vaciar» y «Abrir el cotizador →»; minimizada es una pastilla «Bandeja · N productos».
+- **Datos del servidor, no del navegador:** el comparador recuerda en la sesión las ofertas que mostró
+  (`comparador_ofertas_vistas`, las 100 más recientes). La bandeja (`comparador_bandeja`, hasta 30 productos y
+  9999 piezas cada uno) solo acepta esas claves `proveedor:id` y copia su nombre, modelo y precio de
+  referencia. API `api/v1/tray/` (`api.bandeja`, con sesión): GET; POST `{"key"}` suma una pieza (409 si el
+  comparador no la mostró); PATCH `{"key", "quantity"}` (0 la quita); DELETE `{"keys": [...]}` o sin cuerpo
+  para vaciar.
+- **Cotizador, paso 3:** si hay productos, «Tienes N productos en la bandeja · Traer a esta cotización»
+  (cotización nueva o borrador). «Traer» vuelve a buscar cada modelo con la búsqueda del cotizador (captura
+  comercial nueva) y agrega la oferta del mismo proveedor con la cantidad de la bandeja, como «Agregar
+  captura». Resultado por producto: agregado; precio cambiado (se agrega con el de hoy y se avisa); ya no
+  aparece, base IVA sin verificar, en dólares sin tipo de cambio o límite de búsquedas (sigue en la
+  bandeja). Lo agregado sale de la bandeja. Las unidades se confirman igual que siempre antes de guardar.
+- Pruebas: `test_a18`–`test_a23` en `test_api_busqueda.py`.
+
+### 14.11 Ajustes: contador de la bandeja, «Sigue vigente», última búsqueda y zona horaria (2026-10-21)
+
+- **Bandeja (20A):** cada producto muestra el nombre en hasta dos líneas y debajo proveedor, precio, contador
+  − / + y ×; un nombre largo ya no saca los botones del recuadro. Con muchos productos solo la lista se
+  desplaza; encabezado y botones quedan fijos.
+- **Tipo de cambio de otro día (21A):** el aviso «Capturado otro día: confirma que siga vigente.» trae
+  «Sigue vigente» (`usar_tipo_cambio=confirmar`), que guarda `confirmado` en la sesión sin cambiar valor,
+  hora ni origen; el aviso no vuelve hasta el día siguiente y la etiqueta dice «confirmado hoy HH:MM». Si
+  SYSCOM tiene otro valor, también «Usar $X de hoy» (`actualizar`), sea el aplicado manual o de SYSCOM; en ese
+  caso no se repite el aviso «SYSCOM ahora». El chip del menú usa la misma confirmación (`confirmed` en
+  `api/v1/fx/session/`). Nunca se aplica nada solo.
+- **Última búsqueda (22A):** el comparador guarda en la sesión la última búsqueda válida (`q`, `sku`,
+  `categoria` y su hora; no el tipo de cambio). Abrir `/comparador/` sin parámetros (menú) redirige a ella con
+  `ultima=1` y muestra «Mostrando tu última búsqueda (hace N min). Nueva búsqueda». «Nueva búsqueda»
+  (`?nueva=1`) o buscar con el formulario vacío la olvidan; una búsqueda inválida (400) o con límite (429) no
+  se guarda. Al volver se consulta otra vez a los proveedores (cuenta en el límite por minuto).
+- **Zona horaria:** `TIME_ZONE = 'America/Mexico_City'` (antes UTC). «Hoy», la fecha de emisión por defecto,
+  el año del folio y las horas mostradas usan la hora de Ciudad de México; la base de datos sigue en UTC y las
+  huellas de FX se siguen canonizando a UTC (docs/24). Antes, después de las 18:00 «hoy» ya era el día
+  siguiente (aviso de otro día falso y fecha de cotización adelantada).
+- Pruebas: `test_v29`–`test_v32` y `test_a16b`.
+
+### 14.12 Revisar precios de un borrador (diseño 23A y 23C, 2026-10-21)
+
+- **Cotizador, paso 3 (23A):** si hay partidas de proveedor se indica de cuándo son los precios («Precios
+  capturados hace N días (dd/mm)», en ámbar si no son de hoy) con «Revisar precios». Al pulsarlo se busca otra
+  vez cada modelo (búsqueda del cotizador, una por modelo) y se compara con la oferta del mismo proveedor:
+  cambió (▲/▼ %, «Usar precio de hoy»; con más de una, también «Usar precios de hoy en las N que cambiaron»),
+  sin cambio, ya no aparece («Buscar otro») o no se pudo revisar (proveedor caído, base IVA sin verificar,
+  búsqueda con dólares sin tipo de cambio, límite de búsquedas): **la partida se conserva**, nunca en cero ni
+  borrada (docs/25 M9). «Usar precio de hoy» sustituye la partida por la captura nueva conservando cantidad,
+  unidades, margen o precio fijo y descripción; el precio sale de la captura del servidor, no del navegador.
+  Nada se revisa ni cambia solo; solo borradores editables.
+- **Datos:** el detalle v2 (`GET …/revisiones/N/`) trae `captured_at` por partida, que se conserva por
+  `line_key` al editar (una partida sustituida es nueva). `resumen_documental` trae `prices_captured_at`: la
+  captura de proveedor más antigua de un borrador v2 (`null` en emitidas o sin partidas de proveedor).
+- **Mis cotizaciones (23C):** si ese precio no es de hoy, «Los precios son del dd/mm (hace N días). Revísalos
+  antes de emitir. Revisar en el cotizador →» (`?revisar=precios` lleva al botón). No bloquea «Emitir».
+- Pruebas: `FechasDePrecioTests` (P1–P3) en `test_api_cotizaciones.py`.
+
+### 14.13 Fechas relativas en el sitio (diseño 24C, 2026-10-21)
+
+- En pantalla las fechas son relativas y la exacta aparece al pasar el cursor (`title`, «20 oct 2026, 16:30»
+  o «20 oct 2026» si es solo día, en hora de Ciudad de México). Reglas: «hace un momento», «hace N min»,
+  «hace N horas» (mismo día), «hace N días», «hace N meses», «hace N años»; un día sin hora es «hoy» o
+  «hace N días»; la vigencia es «vence hoy», «vence mañana», «vence en N días» o «venció hace N días».
+- Un solo lugar por lado: `window.cconorFechas` (`hace`, `vence`, `exacta`) en `static/js/api.js`, que cargan
+  todas las páginas y las pruebas JS; en el servidor `hace_texto` y `fecha_exacta` (`apps/quotes/views.py`)
+  con las mismas reglas (comparador: tipo de cambio, «confirmado», «última búsqueda»). Acepta ISO o
+  «dd/mm/aaaa» (así manda las fechas el contexto del PDF); nunca se lee como mes/día.
+- Dónde: comparador, chip del menú, cotizador (tipo de cambio aplicado, «Tu sesión», edad de los precios,
+  «Elegir cliente»), Mis cotizaciones (lista, detalle con vigencia, recordatorio de precios) e Inicio.
+- **El PDF del cliente no cambia** (sigue «Fecha de propuesta: 20/10/2026»).
+- Límite de búsquedas: ahora 20 por minuto **por usuario** (docs/26 §6).
+- Pruebas: JS «24C: fechas relativas…» y `test_v33`.
 
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
