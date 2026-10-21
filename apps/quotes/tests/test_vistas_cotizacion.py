@@ -4,6 +4,7 @@ CotizarProductosTests (del equipo, M7b): página en blanco, validaciones y 503 s
 proveedores activos, todo antes de cualquier HTTP. VistaCotizacionTests (V1–V16): modo
 degradado con adaptadores de prueba cuyo fetch no hace HTTP.
 """
+from datetime import datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 from unittest import mock
 
@@ -27,7 +28,7 @@ from apps.providers.tests.soporte import (
     producto,
     sin_red,
 )
-from apps.quotes.views import CLAVE_TIPO_CAMBIO, LIMITE_COTIZACIONES
+from apps.quotes.views import CLAVE_TIPO_CAMBIO, CLAVE_ULTIMA_BUSQUEDA, LIMITE_COTIZACIONES
 
 PLANTILLA = "comparador.html"
 
@@ -463,7 +464,7 @@ class VistaCotizacionTests(TestCase):
         self.assertContains(segunda, 'value="17.50"')                  # viaja en la siguiente búsqueda
 
         with sin_red():
-            blanco = await self.async_client.get(reverse("cotizar_productos"))
+            blanco = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})   # 22A: sin volver a la última
         self.assertContains(blanco, "1 USD = $17.50 MXN")
 
         await self.buscar(adaptadores, tipo_cambio="18.00")
@@ -484,8 +485,9 @@ class VistaCotizacionTests(TestCase):
         with sin_red():
             respuesta = await self.async_client.get(reverse("cotizar_productos"))
         self.assertContains(respuesta, "1 USD = $17.50 MXN")
-        self.assertContains(respuesta, "Capturado otro día: confirma que siga vigente.")
-        self.assertContains(respuesta, "capturado 02/01/2020 10:00 UTC")
+        self.assertContains(respuesta, "<strong>Capturado otro día:</strong> <span>confirma que siga vigente.</span>", html=False)
+        self.assertContains(respuesta, "capturado 02/01/2020 04:00 · se conserva")       # hora de Ciudad de México
+        self.assertNotContains(respuesta, "UTC")
 
     async def test_v25_sugiere_el_de_syscom_y_solo_se_aplica_al_pulsar_usar(self):
         """14A: nada se aplica solo; «Usar» toma el valor del servidor, lo marca SYSCOM y lo recuerda."""
@@ -561,6 +563,95 @@ class VistaCotizacionTests(TestCase):
             manual = await self.async_client.get(reverse("cotizar_productos"))
         self.assertContains(manual, "1 USD = $18.40 MXN")
         self.assertNotContains(manual, "SYSCOM ahora:")
+
+    async def guardar_tipo_cambio(self, **datos):
+        sesion = await self.async_client.asession()
+        await sesion.aset(CLAVE_TIPO_CAMBIO, datos)
+        await sesion.asave()
+
+    async def test_v29_sigue_vigente_oculta_el_aviso_hasta_otro_dia(self):
+        """21A: «Sigue vigente» guarda cuándo se revisó; conserva valor, hora y origen; nunca cambia el valor."""
+        ayer = (timezone.now() - timedelta(days=1)).isoformat()
+        await self.guardar_tipo_cambio(valor="17.50", fecha=ayer, origen="manual")
+        with sin_red():
+            aviso = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
+            self.assertContains(aviso, 'name="usar_tipo_cambio" value="confirmar"')
+            confirmado = await self.async_client.get(reverse("cotizar_productos"),
+                                                     {"nueva": "1", "tipo_cambio": "17.50", "usar_tipo_cambio": "confirmar"})
+        self.assertNotContains(confirmado, "Capturado otro día")
+        self.assertContains(confirmado, "1 USD = $17.50 MXN")
+        self.assertContains(confirmado, "confirmado hoy")
+        guardado = await (await self.async_client.asession()).aget(CLAVE_TIPO_CAMBIO)
+        self.assertEqual((guardado["valor"], guardado["fecha"], guardado["origen"]), ("17.50", ayer, "manual"))
+        self.assertEqual(timezone.localdate(datetime.fromisoformat(guardado["confirmado"])), timezone.localdate())
+        with sin_red():
+            despues = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
+        self.assertNotContains(despues, "Capturado otro día")
+        # Confirmado ayer vuelve a avisar hoy.
+        await self.guardar_tipo_cambio(valor="17.50", fecha=ayer, origen="manual", confirmado=ayer)
+        with sin_red():
+            otra_vez = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
+        self.assertContains(otra_vez, "Capturado otro día")
+
+    async def test_v30_de_otro_dia_ofrece_el_de_syscom_de_hoy_sin_aplicarlo(self):
+        await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
+        ayer = (timezone.now() - timedelta(days=1)).isoformat()
+        consulta = mock.AsyncMock(return_value=Decimal("18.54"))
+        for origen in ("manual", "syscom"):
+            await self.guardar_tipo_cambio(valor="18.40", fecha=ayer, origen=origen)
+            with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta), sin_red():
+                respuesta = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
+            self.assertContains(respuesta, "1 USD = $18.40 MXN")                       # sigue el aplicado
+            self.assertContains(respuesta, "Usar $18.54 de hoy")
+            self.assertContains(respuesta, 'name="usar_tipo_cambio" value="actualizar"')
+            self.assertNotContains(respuesta, "SYSCOM ahora:")                          # un solo aviso
+        await self.guardar_tipo_cambio(valor="18.54", fecha=ayer, origen="syscom")       # SYSCOM no cambió
+        with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta), sin_red():
+            igual = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
+        self.assertContains(igual, "Sigue vigente")
+        self.assertNotContains(igual, "de hoy</button>")
+
+    async def test_v31_otro_dia_se_cuenta_en_hora_de_ciudad_de_mexico(self):
+        """Capturado 16:30 y revisado 19:29 del mismo día en México: en UTC ya era otro día; no debe avisar."""
+        ahora = datetime(2026, 10, 21, 1, 29, tzinfo=dt_timezone.utc)                 # 20/10 19:29 en México
+        await self.guardar_tipo_cambio(valor="18.54", fecha="2026-10-20T22:30:00+00:00", origen="syscom")
+        with mock.patch("django.utils.timezone.now", return_value=ahora), sin_red():
+            respuesta = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
+        self.assertNotContains(respuesta, "Capturado otro día")
+        self.assertContains(respuesta, "SYSCOM · 20/10/2026 16:30")
+
+    async def test_v32_al_volver_se_muestra_la_ultima_busqueda(self):
+        """22A: el menú (sin parámetros) lleva a la última búsqueda; «Nueva búsqueda» y un formulario vacío la olvidan."""
+        adaptadores = [adaptador("alfa", mxn("1", "100.00")), adaptador("beta")]
+        categoria = await Category.objects.acreate(name="QA categoría")
+        await self.buscar(adaptadores, q="monitor", categoria=str(categoria.pk), tipo_cambio="17.50")
+        with sin_red():
+            volver = await self.async_client.get(reverse("cotizar_productos"))
+        self.assertEqual(volver.status_code, 302)
+        self.assertEqual(volver["Location"], f"{reverse('cotizar_productos')}?q=monitor&categoria={categoria.pk}&ultima=1")
+        with adaptadores_registrados(*adaptadores), sin_red():
+            restaurada = await self.async_client.get(volver["Location"])
+        self.assertContains(restaurada, "Mostrando tu última búsqueda (hace un momento).")
+        self.assertContains(restaurada, 'value="monitor"')
+        sesion = await self.async_client.asession()                            # «hace N min» cuenta desde la búsqueda
+        ultima = await sesion.aget(CLAVE_ULTIMA_BUSQUEDA)
+        await sesion.aset(CLAVE_ULTIMA_BUSQUEDA, {**ultima, "fecha": (timezone.now() - timedelta(minutes=10)).isoformat()})
+        await sesion.asave()
+        with adaptadores_registrados(*adaptadores), sin_red():
+            otra_vez = await self.async_client.get(reverse("cotizar_productos"), follow=True)
+        self.assertContains(otra_vez, "Mostrando tu última búsqueda (hace 10 min).")
+        with sin_red():
+            nueva = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
+            self.assertEqual(nueva.status_code, 200)
+            self.assertEqual((await self.async_client.get(reverse("cotizar_productos"))).status_code, 200)   # ya no redirige
+        await self.buscar(adaptadores, q="switch")
+        with sin_red():
+            await self.async_client.get(reverse("cotizar_productos"), {"q": "", "sku": ""})                  # buscar vacío
+            self.assertEqual((await self.async_client.get(reverse("cotizar_productos"))).status_code, 200)
+        invalida = await self.buscar(adaptadores, q="switch", categoria="abc")                               # 400: no se guarda
+        self.assertEqual(invalida.status_code, 400)
+        with sin_red():
+            self.assertEqual((await self.async_client.get(reverse("cotizar_productos"))).status_code, 200)
 
     async def test_v18_sin_relacionados_no_aparece_el_titulo_del_bloque(self):
         respuesta = await self.buscar([adaptador("alfa", mxn("1", "100.00"))])

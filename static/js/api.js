@@ -598,6 +598,11 @@ apiClient.commercial = Object.freeze({
     revision: (folio, number) => commercialRequest(revisionPath(folio, number)),
     list: (filters, signal) => commercialRequest(`/quotes/?${new URLSearchParams(filters)}`, { signal }),
     clients: (filters, signal) => commercialRequest(`/clients/?${new URLSearchParams(filters)}`, { signal }),
+    // 19A: bandeja del comparador (sesión).
+    tray: () => commercialRequest('/tray/'),
+    trayAdd: key => commercialRequest('/tray/', { method: 'POST', data: { key } }),
+    traySet: (key, quantity) => commercialRequest('/tray/', { method: 'PATCH', data: { key, quantity } }),
+    trayRemove: keys => commercialRequest('/tray/', { method: 'DELETE', ...(keys ? { data: { keys } } : {}) }),
     summary: (folio, number, signal) => commercialRequest(`${revisionPath(folio, number)}resumen/`, { signal }),
     emit: (folio, number, data) => commercialRequest(`${revisionPath(folio, number)}emitir/`, { method: 'POST', data, mutation: true }),
     clone: (folio, number, data) => commercialRequest(`${revisionPath(folio, number)}nueva/`, { method: 'POST', data, mutation: true }),

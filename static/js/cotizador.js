@@ -131,6 +131,7 @@
         const $ = id => document.getElementById(id);
         if (!$('commercialQuoteApp')) return;
         const api = window.apiClient.commercial;
+        let trayItems = []; // 19A: bandeja del comparador
         let fxSession = null; // 16A: tipo de cambio de la sesión y de SYSCOM (main.js)
         const initialIssueDate = $('issueDate').value;
         const defaultConditions = defaultConditionsText($('defaultConditions')?.textContent);
@@ -305,6 +306,7 @@
             }
             text('quoteIdentity', identity); text('stickyIdentity', identity);
             $('stickyNewBtn').disabled = $('newQuoteBtn').disabled;
+            trayNotice();
             fxShortcuts();
             $('stickySaveBtn').disabled = $('saveQuoteBtn').disabled;
             text('stickySaveBtn', $('saveQuoteBtn').textContent);
@@ -664,6 +666,84 @@
                 knownCost: false, cost: { amount: '', currency: 'MXN', vat_basis: '', vat_rate: '0.16' },
                 sale: { amount: '', currency: 'MXN', vat_basis: '', vat_rate: '0.16' }, expanded: true };
         }
+        function lineFromOffer(offer, quantity = '1') {
+            const line = blankLine();
+            Object.assign(line, { kind: 'API', name: offer.name, provider: offer.provider_label, offer, quantity,
+                originalPrice: offer.price_original, originalCurrency: offer.currency,
+                originalVat: offer.vat.vat_basis === 'INCLUDED' ? offer.vat.vat_rate : null,
+                brand: offer.brand, model: offer.model, mode: 'MARGIN' });
+            return line;
+        }
+        // 19A: bandeja del comparador. «Traer» vuelve a buscar cada producto (por modelo) y agrega la
+        // oferta exacta del mismo proveedor con el precio de ese momento; nada se toma del navegador.
+        const sameAmount = (a, b) => String(a).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') === String(b).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+        function trayNotice() {
+            const pieces = trayItems.reduce((total, item) => total + item.quantity, 0);
+            $('trayNotice').classList.toggle('d-none', !trayItems.length || !editable());
+            text('trayNoticeText', `Tienes ${trayItems.length} ${trayItems.length === 1 ? 'producto' : 'productos'} en la bandeja del comparador (${pieces} ${pieces === 1 ? 'pieza' : 'piezas'}).`);
+            $('trayBringBtn').disabled = state.busy || !!state.pending || !editable();
+        }
+        async function loadTray() {
+            try { trayItems = (await api.tray()).data; } catch (_) { trayItems = []; }
+            trayNotice();
+        }
+        function trayResults(results) {
+            const list = element('ul', '', 'list-unstyled mb-0');
+            for (const r of results) {
+                const row = element('li');
+                const [mark, kind] = r.kind === 'ok' ? ['✓', 'ok'] : r.kind === 'changed' ? ['!', 'warn'] : ['×', 'error'];
+                row.append(element('span', mark, `tray-dot tray-dot--${kind}`), element('span', `${r.item.name} · ${r.item.provider_name}: ${r.message}`, 'flex-grow-1'));
+                list.append(row);
+            }
+            $('trayResults').replaceChildren(element('div', 'Resultado al traer la bandeja', 'small fw-bold text-muted pt-2'), list);
+            $('trayResults').classList.remove('d-none');
+        }
+        async function bringTray() {
+            if (!editable() || state.busy || state.pending || !trayItems.length) return;
+            state.busy = true; locks();
+            const results = [], added = [];
+            const groups = new Map();
+            for (const item of trayItems) {
+                const query = item.model ? `sku:${item.model}` : `q:${item.name}`;
+                if (!groups.has(query)) groups.set(query, []);
+                groups.get(query).push(item);
+            }
+            let stopped = false;
+            for (const [query, items] of groups) {
+                if (stopped) { for (const item of items) results.push({ item, kind: 'error', message: 'quedó pendiente por el límite de búsquedas; espera un minuto y vuelve a pulsar «Traer».' }); continue; }
+                const filters = query.startsWith('sku:') ? { sku: query.slice(4) } : { q: query.slice(2) };
+                if (state.fx && has('change_commercial_fx')) filters.tipo_cambio = state.fx.value;
+                let offers;
+                try { offers = (await api.search(filters)).data || []; }
+                catch (err) {
+                    if (err.status === 429) stopped = true;
+                    const message = err.status === 429 ? 'quedó pendiente por el límite de búsquedas; espera un minuto y vuelve a pulsar «Traer».'
+                        : /tipo de cambio/i.test(err.message) ? 'está en dólares: aplica primero el tipo de cambio del paso 2 y vuelve a pulsar «Traer».'
+                        : `no se pudo consultar (${err.message}). Sigue en la bandeja.`;
+                    for (const item of items) results.push({ item, kind: 'error', message });
+                    continue;
+                }
+                for (const item of items) {
+                    const offer = offers.find(o => o.provider === item.provider_code && o.external_id === item.external_id);
+                    if (!offer) { results.push({ item, kind: 'error', message: 'ya no aparece en el proveedor. Sigue en la bandeja; busca otro.' }); continue; }
+                    if (!offer.vat?.vat_basis || offer.vat.vat_basis === 'UNKNOWN') { results.push({ item, kind: 'error', message: 'base IVA de origen no verificada: captura bloqueada. Sigue en la bandeja.' }); continue; }
+                    state.lines.push(lineFromOffer(offer, String(item.quantity)));
+                    added.push(item.key);
+                    const same = offer.currency === item.currency && sameAmount(offer.price_original, item.price);
+                    results.push({ item, kind: same ? 'ok' : 'changed', message: same
+                        ? `${item.quantity} ${item.quantity === 1 ? 'pieza agregada' : 'piezas agregadas'} con el precio de hoy.`
+                        : `el precio cambió de $${item.price} ${item.currency} a $${offer.price_original} ${offer.currency}; se agregó con el de hoy.` });
+                }
+            }
+            if (added.length) {
+                try { trayItems = (await api.trayRemove(added)).data; } catch (_) { trayItems = trayItems.filter(i => !added.includes(i.key)); }
+            }
+            state.busy = false;
+            if (added.length) changed();
+            locks(); renderLines();
+            trayResults(results); trayNotice();
+        }
+        $('trayBringBtn').addEventListener('click', bringTray);
         function renderProducts() {
             $('resultsList').replaceChildren();
             for (const offer of state.products.filter(p => !$('providerFilter').value || p.provider === $('providerFilter').value)) {
@@ -684,12 +764,7 @@
                 add.dataset.verified = String(!!verified);
                 add.addEventListener('click', () => {
                     if (!editable()) return;
-                    const line = blankLine();
-                    Object.assign(line, { kind: 'API', name: offer.name, provider: offer.provider_label, offer,
-                        originalPrice: offer.price_original, originalCurrency: offer.currency,
-                        originalVat: offer.vat.vat_basis === 'INCLUDED' ? offer.vat.vat_rate : null,
-                        brand: offer.brand, model: offer.model, mode: 'MARGIN' });
-                    state.lines.push(line); renderLines(); changed();
+                    state.lines.push(lineFromOffer(offer)); renderLines(); changed();
                 });
                 box.append(info, add); $('resultsList').append(box);
             }
@@ -1001,6 +1076,7 @@
             try { await sameActor(); error(); }
             catch (err) { state.caps = null; clearSummary('No hay conexión financiera autorizada.'); showError(err); }
             locks(); renderLines(); renderProducts();
+            if (state.caps) loadTray();
         }
         async function sameActor(expected = state.actor) {
             const response = await api.capabilities();

@@ -133,7 +133,9 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# Hora de Ciudad de México: «hoy», la fecha de las cotizaciones y las horas que se muestran.
+# La base de datos sigue guardando en UTC (USE_TZ).
+TIME_ZONE = 'America/Mexico_City'
 
 USE_I18N = True
 

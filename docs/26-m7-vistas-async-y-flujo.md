@@ -131,7 +131,7 @@ salir a la red.
 | V18 | Todo coincide | No aparece el bloque de relacionados |
 | V19 | Modelo exacto (`sku`) | Sin niveles: se conserva el orden por precio |
 | V20 | Foto y ficha del proveedor (8B) | `<img>` con `loading="lazy"` y `referrerpolicy="no-referrer"`; «Sin foto» si falta; «Ver en …» con `target="_blank" rel="noopener noreferrer"` solo si hay ficha |
-| V21 | Tipo de cambio (11B) | Sin valor: «1 USD = $ … MXN» con ejemplo «Ej. 18.50»; aplicado: etiqueta «1 USD = $X MXN», hora de captura (UTC) y «Cambiar» (`<details>`, sin JS); el valor sigue en el formulario para la siguiente búsqueda |
+| V21 | Tipo de cambio (11B) | Sin valor: «1 USD = $ … MXN» con ejemplo «Ej. 18.50»; aplicado: etiqueta «1 USD = $X MXN», hora de captura (hora de Ciudad de México desde 2026-10-21) y «Cambiar» (`<details>`, sin JS); el valor sigue en el formulario para la siguiente búsqueda |
 | V22 | Avisos emergentes | Error y proveedores caídos como aviso emergente con X; con error de tipo de cambio, botón «Escribir tipo de cambio» (`data-enfocar`) |
 
 Comandos (desde la raíz):

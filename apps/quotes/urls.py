@@ -22,6 +22,8 @@ urlpatterns = [
     path("api/v1/quotes/", api.crear_cotizacion, name="api_crear_cotizacion"),
     # 18B: clientes de las cotizaciones propias para «Elegir cliente».
     path("api/v1/clients/", api.clientes_frecuentes, name="api_clientes_frecuentes"),
+    # 19A: bandeja del comparador (sesión) que el cotizador trae a una cotización.
+    path("api/v1/tray/", api.bandeja, name="api_bandeja"),
     path("api/v1/quotes/<str:folio>/", api.detalle_cotizacion, name="api_detalle_cotizacion"),
     path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/", api.guardar_revision, name="api_guardar_revision"),
     path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/resumen/", api.resumen_documental, name="api_resumen_documental"),

@@ -39,7 +39,7 @@ from .snapshots import (
     ArchivedPDFError, PartidaCapturada, RevisionConflict, acrear_revision, aemitir_revision,
     authorize, crear_borrador,
 )
-from .views import CLAVE_TIPO_CAMBIO, ETIQUETAS_TIPO_CAMBIO_SYSCOM, buscar, tipo_cambio_sugerido
+from .views import CLAVE_OFERTAS_VISTAS, CLAVE_TIPO_CAMBIO, ETIQUETAS_TIPO_CAMBIO_SYSCOM, buscar, tipo_cambio_sugerido
 
 logger = logging.getLogger(__name__)
 
@@ -599,6 +599,62 @@ def _listado_propio(actor, params):
         "client_name": r.header["client"]["business_name"], "issue_date": r.issue_date.isoformat(),
         "items_count": r.item_count} for r in selected],
         "pagination": {"page": selected.number, "pages": paginator.num_pages, "count": paginator.count}}
+
+
+# 19A: bandeja del comparador. Vive en la sesión; solo guarda referencias de lo que el comparador
+# mostró. El cotizador vuelve a consultar al proveedor antes de agregar una partida.
+CLAVE_BANDEJA = "comparador_bandeja"
+MAX_BANDEJA = 30
+MAX_PIEZAS_BANDEJA = 9999
+
+
+def _clave_texto(valor):
+    if not isinstance(valor, str) or not valor or len(valor) > 300:
+        raise _EntradaInvalida("Producto de la bandeja inválido.")
+    return valor
+
+
+@_api("GET POST PATCH DELETE")
+async def bandeja(request):
+    """GET la lista; POST {"key"} agrega una pieza; PATCH {"key", "quantity"} fija la cantidad
+    (0 la quita); DELETE {"keys": [...]} quita esos productos o, sin cuerpo, la vacía."""
+    items = [dict(i) for i in await request.session.aget(CLAVE_BANDEJA, [])]
+    if request.method == "POST":
+        clave = _clave_texto(_leer_json(request, {"key"}).get("key"))
+        actual = next((i for i in items if i["key"] == clave), None)
+        if actual is not None:
+            if actual["quantity"] >= MAX_PIEZAS_BANDEJA:
+                raise _EntradaInvalida(f"Máximo {MAX_PIEZAS_BANDEJA} piezas por producto.")
+            actual["quantity"] += 1
+        else:
+            vista = (await request.session.aget(CLAVE_OFERTAS_VISTAS, {})).get(clave)
+            if vista is None:
+                raise _OfertaNoDisponible("Ese producto ya no está en tus resultados; vuelve a buscarlo en el comparador.")
+            if len(items) >= MAX_BANDEJA:
+                raise _EntradaInvalida(f"La bandeja admite hasta {MAX_BANDEJA} productos; pasa algunos al cotizador.")
+            items.append({"key": clave, **vista, "quantity": 1})
+    elif request.method == "PATCH":
+        data = _leer_json(request, {"key", "quantity"})
+        clave, cantidad = _clave_texto(data.get("key")), data.get("quantity")
+        if type(cantidad) is not int or not 0 <= cantidad <= MAX_PIEZAS_BANDEJA:
+            raise _EntradaInvalida(f"La cantidad debe ser un entero entre 0 y {MAX_PIEZAS_BANDEJA}.")
+        actual = next((i for i in items if i["key"] == clave), None)
+        if actual is None:
+            raise _OfertaNoDisponible("Ese producto ya no está en la bandeja.")
+        actual["quantity"] = cantidad
+        items = [i for i in items if i["quantity"] > 0]
+    elif request.method == "DELETE":
+        if request.body:
+            claves = _leer_json(request, {"keys"}).get("keys")
+            if not isinstance(claves, list) or len(claves) > MAX_BANDEJA:
+                raise _EntradaInvalida("keys debe ser una lista de productos.")
+            quitar = {_clave_texto(c) for c in claves}
+            items = [i for i in items if i["key"] not in quitar]
+        else:
+            items = []
+    if request.method != "GET":
+        await request.session.aset(CLAVE_BANDEJA, items)
+    return JsonResponse({"success": True, "data": items, "pieces": sum(i["quantity"] for i in items)})
 
 
 MAX_CLIENTES = 50
@@ -1166,7 +1222,8 @@ async def tipo_cambio_sesion(request):
             await request.session.aset(CLAVE_TIPO_CAMBIO, recordado)
     syscom, fallo = await tipo_cambio_sugerido()
     return JsonResponse({"success": True, "data": {
-        "session": {"value": recordado["valor"], "date": recordado["fecha"], "source": recordado.get("origen", "manual")}
+        "session": {"value": recordado["valor"], "date": recordado["fecha"], "source": recordado.get("origen", "manual"),
+                    "confirmed": recordado.get("confirmado")}
         if recordado else None,
         "syscom": {"value": f"{syscom:f}", "label": ETIQUETAS_TIPO_CAMBIO_SYSCOM.get(settings.SYSCOM_TIPO_CAMBIO_CAMPO, "")}
         if syscom is not None else None,

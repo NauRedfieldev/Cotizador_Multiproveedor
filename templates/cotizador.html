@@ -78,6 +78,12 @@
 
     <section class="cconor-card p-3 mb-4" aria-labelledby="step3Title">
         <div class="step-title"><span class="step-badge" aria-hidden="true">3</span><h5 class="fw-bold mb-0" id="step3Title">Productos y conceptos</h5></div>
+        <!-- 19A: productos de la bandeja del comparador; se vuelven a consultar al traerlos. -->
+        <div id="trayNotice" class="tray-notice d-none" role="status"><i class="bi bi-basket2" aria-hidden="true" style="color: var(--cconor-eleccion);"></i>
+            <span id="trayNoticeText"></span>
+            <span class="ms-auto d-flex flex-wrap gap-2"><button type="button" id="trayBringBtn" class="btn btn-sm btn-cconor-primary">Traer a esta cotización</button>
+                <a class="btn btn-sm btn-outline-primary d-inline-flex align-items-center" href="{% url 'comparador' %}">Ver bandeja</a></span></div>
+        <div id="trayResults" class="tray-results d-none" aria-live="polite"></div>
         <div class="row g-2 align-items-end">
             <div class="col-md-6"><label for="productSearchInput" class="form-label">Código, modelo o descripción</label><input id="productSearchInput" class="form-control" autocomplete="off" placeholder="Buscar en catálogos" disabled></div>
             <div class="col-md-3"><label for="providerFilter" class="form-label">Proveedor (interno)</label><select id="providerFilter" class="form-select"><option value="">Todos</option></select></div>
@@ -188,4 +194,4 @@
     </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=21"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=22"></script>{% endblock %}

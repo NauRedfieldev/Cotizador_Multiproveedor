@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from urllib.parse import urlencode
 
 import httpx
 from asgiref.sync import sync_to_async
@@ -21,7 +22,7 @@ from django.core.cache import cache
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.mail import EmailMultiAlternatives
 from django.core.validators import validate_email
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 from django.template.loader import render_to_string
 from django.utils import timezone
@@ -270,6 +271,11 @@ async def cotizar_productos(request):
     tiene su propio contexto con permisos) y se usa mientras no se envíe otro. Enviarlo vacío lo
     olvida; cerrar sesión también.
     """
+    # 22A: al volver al comparador sin parámetros (menú) se muestra la última búsqueda de la sesión.
+    ultima = await request.session.aget(CLAVE_ULTIMA_BUSQUEDA)
+    if not request.GET and ultima:
+        parametros = {k: v for k, v in ultima["params"].items() if v}
+        return HttpResponseRedirect(f"{request.path}?{urlencode({**parametros, 'ultima': '1'})}")
     recordado = await request.session.aget(CLAVE_TIPO_CAMBIO)
     usado = None
     accion = request.GET.get("usar_tipo_cambio")
@@ -286,21 +292,56 @@ async def cotizar_productos(request):
         parametros["tipo_cambio"] = recordado["valor"]
         request.GET = parametros
     status, contexto = await buscar(request)
-    await _recordar_tipo_cambio(request, contexto, recordado, usado)
+    await _recordar_ofertas_vistas(request.session, contexto)
+    await _recordar_busqueda(request, contexto, status, ultima)
+    await _recordar_tipo_cambio(request, contexto, recordado, usado, confirmar=accion == "confirmar")
     if contexto["tipo_cambio"] is None:
         contexto["tipo_cambio_sugerido"], contexto["tipo_cambio_syscom_fallo"] = await tipo_cambio_sugerido()
         contexto["tipo_cambio_sugerido_etiqueta"] = ETIQUETAS_TIPO_CAMBIO_SYSCOM.get(settings.SYSCOM_TIPO_CAMBIO_CAMPO, "")
-    elif contexto["tipo_cambio"].origen == "syscom":
+    elif contexto["tipo_cambio"].origen == "syscom" or contexto["tipo_cambio_otro_dia"]:
         # Opción 1: si el aplicado salió de SYSCOM y SYSCOM ya tiene otro, se avisa con «Actualizar» (nunca solo).
+        # 21A: si es de otro día, el aviso ofrece «Usar el de hoy» (también para uno capturado a mano).
         actual, _ = await tipo_cambio_sugerido()
         if actual is not None and actual != contexto["tipo_cambio"].valor:
-            contexto["tipo_cambio_syscom_nuevo"] = actual
+            clave = "tipo_cambio_syscom_hoy" if contexto["tipo_cambio_otro_dia"] else "tipo_cambio_syscom_nuevo"
+            contexto[clave] = actual
     # Fuera del event loop: los context processors pueden leer la sesión (ORM síncrono).
     return await sync_to_async(render)(request, PLANTILLA_COMPARADOR, contexto, status=status)
 
 
-async def _recordar_tipo_cambio(request, contexto, recordado, usado=None):
-    """Guarda el tipo de cambio aplicado y conserva su hora y origen de captura mientras no cambie."""
+# 22A: última búsqueda del comparador en la sesión: {"params": {q, sku, categoria}, "fecha": ISO}.
+CLAVE_ULTIMA_BUSQUEDA = "comparador_ultima_busqueda"
+
+
+def _hace(fecha):
+    minutos = int((timezone.now() - fecha).total_seconds() // 60)
+    if minutos < 1:
+        return "hace un momento"
+    if minutos < 60:
+        return f"hace {minutos} min"
+    horas = minutos // 60
+    return f"hace {horas} h" if horas < 24 else f"del {timezone.localtime(fecha):%d/%m/%Y}"
+
+
+async def _recordar_busqueda(request, contexto, status, ultima):
+    """Guarda la búsqueda válida (también con proveedores caídos); un formulario vacío o «Nueva búsqueda» la olvida."""
+    params = {k: request.GET.get(k, "").strip() for k in ("q", "sku", "categoria")}
+    if params["q"] or params["sku"]:
+        if status not in (400, 429):
+            # La misma búsqueda conserva su hora: «hace N min» cuenta desde que se buscó, no desde que se volvió.
+            fecha = ultima["fecha"] if ultima and ultima["params"] == params else timezone.now().isoformat()
+            await request.session.aset(CLAVE_ULTIMA_BUSQUEDA, {"params": params, "fecha": fecha})
+            if request.GET.get("ultima") == "1":
+                contexto["busqueda_restaurada"] = _hace(datetime.fromisoformat(fecha))
+    elif ultima and ("q" in request.GET or "sku" in request.GET or "nueva" in request.GET):
+        await request.session.apop(CLAVE_ULTIMA_BUSQUEDA)
+
+
+async def _recordar_tipo_cambio(request, contexto, recordado, usado=None, confirmar=False):
+    """Guarda el tipo de cambio aplicado y conserva su hora y origen de captura mientras no cambie.
+
+    21A: «Sigue vigente» (confirmar) guarda cuándo se revisó; el aviso de otro día cuenta desde ahí.
+    """
     texto = request.GET.get("tipo_cambio", "").strip()
     tipo = contexto["tipo_cambio"]
     if tipo is None and texto and not contexto["error"]:
@@ -312,15 +353,43 @@ async def _recordar_tipo_cambio(request, contexto, recordado, usado=None):
     if tipo is not None:
         if usado is not None and tipo.valor == usado:
             tipo = TipoCambio(tipo.valor, "syscom", tipo.fecha)
+        confirmado = None
         if recordado and recordado["valor"] == f"{tipo.valor:f}" and usado is None:
             tipo = TipoCambio(tipo.valor, recordado.get("origen", tipo.origen), datetime.fromisoformat(recordado["fecha"]))
+            confirmado = recordado.get("confirmado")
+            if confirmar:
+                confirmado = timezone.now().isoformat()
+                await request.session.aset(CLAVE_TIPO_CAMBIO, {**recordado, "confirmado": confirmado})
         else:
             await request.session.aset(CLAVE_TIPO_CAMBIO, {"valor": f"{tipo.valor:f}", "fecha": tipo.fecha.isoformat(),
                                                            "origen": tipo.origen})
         contexto["tipo_cambio"] = tipo
-        contexto["tipo_cambio_otro_dia"] = timezone.localdate(tipo.fecha) != timezone.localdate()
+        contexto["tipo_cambio_confirmado"] = datetime.fromisoformat(confirmado) if confirmado else None
+        revisado = contexto["tipo_cambio_confirmado"] or tipo.fecha
+        contexto["tipo_cambio_otro_dia"] = timezone.localdate(revisado) != timezone.localdate()
     elif not texto and recordado:
         await request.session.apop(CLAVE_TIPO_CAMBIO)  # vacío a propósito: se olvida
+
+
+# 19A: ofertas que el comparador mostró; la bandeja solo acepta estas, con datos del servidor.
+CLAVE_OFERTAS_VISTAS = "comparador_ofertas_vistas"
+MAX_OFERTAS_VISTAS = 100
+
+
+async def _recordar_ofertas_vistas(session, contexto):
+    if not contexto["ofertas"]:
+        return
+    vistas = dict(await session.aget(CLAVE_OFERTAS_VISTAS, {}))
+    for presentada in contexto["ofertas"]:
+        oferta = presentada.oferta
+        clave = f"{oferta.provider_code}:{oferta.external_id}"
+        vistas.pop(clave, None)  # reinsertar al final: las más recientes quedan detrás
+        vistas[clave] = {"provider_code": oferta.provider_code, "provider_name": presentada.proveedor_nombre,
+                         "external_id": oferta.external_id, "name": oferta.name, "model": oferta.model or "",
+                         "price": f"{oferta.price:f}", "currency": oferta.currency}
+    for clave in list(vistas)[:-MAX_OFERTAS_VISTAS]:
+        del vistas[clave]
+    await session.aset(CLAVE_OFERTAS_VISTAS, vistas)
 
 
 async def tipo_cambio_sugerido():

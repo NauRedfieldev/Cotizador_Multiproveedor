@@ -86,7 +86,8 @@ document.addEventListener('DOMContentLoaded', function () {
         chip.setAttribute('aria-label', s ? `Tipo de cambio de tu sesión: 1 USD = ${mostrar(s.value)} MXN, ${origen(s)}` : 'Tipo de cambio sin capturar');
         $('fxMenuValue').textContent = s ? `1 USD = $${mostrar(s.value)} MXN` : 'Sin capturar';
         $('fxMenuOrigin').textContent = s ? `${s.source === 'syscom' ? 'SYSCOM' : 'Capturado a mano'}, ${cuando(s.date)}` : '';
-        $('fxMenuOtroDia').textContent = s && !esHoy(s.date) ? 'Capturado otro día: confirma que siga vigente.' : '';
+        // 21A: «Sigue vigente» en el comparador guarda confirmed; el aviso cuenta desde ahí.
+        $('fxMenuOtroDia').textContent = s && !esHoy(s.confirmed || s.date) ? 'Capturado otro día: confirma que siga vigente.' : '';
         // SYSCOM: «Usar» si aún no hay uno; «Actualizar» si el de la sesión vino de SYSCOM y cambió.
         const ofrecer = sys && (!s || (s.source === 'syscom' && sinCeros(s.value) !== sinCeros(sys.value)));
         $('fxMenuSyscom').hidden = !ofrecer;
@@ -124,4 +125,89 @@ document.addEventListener('DOMContentLoaded', function () {
         aplicar({ value: valor });
     });
     window.cconorTipoCambio.cargar().catch(() => { /* sin chip si no se pudo leer */ });
+})();
+
+/* 19A: bandeja del comparador. «Agregar» pone la oferta exacta en la bandeja de la sesión; el cotizador
+ * la trae volviendo a consultar al proveedor. Aquí solo se muestran precios de referencia. */
+(function () {
+    'use strict';
+    const caja = document.getElementById('bandeja');
+    const api = window.apiClient?.commercial;
+    if (!caja || !api) return;
+    const $ = id => document.getElementById(id);
+    let items = [];
+    let abierta = false;
+
+    function nodo(tag, texto, clase) {
+        const n = document.createElement(tag);
+        if (texto !== undefined) n.textContent = texto;
+        if (clase) n.className = clase;
+        return n;
+    }
+    function boton(texto, etiqueta, clase, accion) {
+        const b = nodo('button', texto, clase);
+        b.type = 'button';
+        b.setAttribute('aria-label', etiqueta);
+        b.addEventListener('click', accion);
+        return b;
+    }
+    async function cambiar(peticion) {
+        $('bandejaError').textContent = '';
+        try {
+            pintar((await peticion).data);
+        } catch (err) {
+            abrir(true);
+            $('bandejaError').textContent = err.message;
+        }
+    }
+    function abrir(valor) {
+        abierta = valor;
+        $('bandejaPanel').hidden = !abierta;
+        $('bandejaPastilla').hidden = abierta;
+        $('bandejaPastilla').setAttribute('aria-expanded', String(abierta));
+    }
+    function pintar(lista) {
+        items = lista;
+        const piezas = items.reduce((total, i) => total + i.quantity, 0);
+        caja.hidden = !items.length && !$('bandejaError').textContent;
+        $('bandejaPastillaTexto').textContent = `Bandeja · ${items.length} ${items.length === 1 ? 'producto' : 'productos'}`;
+        $('bandejaPiezas').textContent = `${piezas} ${piezas === 1 ? 'pieza' : 'piezas'}`;
+        $('bandejaLista').replaceChildren(...items.map(item => {
+            // 20A: el nombre ocupa hasta dos líneas; debajo, proveedor y precio con el contador a la derecha.
+            const fila = nodo('li');
+            const nombre = nodo('strong', item.name, 'bandeja-nombre');
+            nombre.title = item.name;
+            const detalle = nodo('div', undefined, 'bandeja-detalle');
+            const cantidad = nodo('span', undefined, 'bandeja-cantidad');
+            cantidad.append(
+                boton('−', `Quitar una pieza de ${item.name}`, '', () => cambiar(api.traySet(item.key, item.quantity - 1))),
+                nodo('strong', String(item.quantity)),
+                boton('+', `Agregar una pieza de ${item.name}`, '', () => cambiar(api.trayAdd(item.key))));
+            detalle.append(nodo('span', `${item.provider_name} · $${item.price} ${item.currency}`, 'text-muted flex-grow-1'),
+                cantidad, boton('×', `Quitar ${item.name} de la bandeja`, 'bandeja-quitar', () => cambiar(api.traySet(item.key, 0))));
+            fila.append(nombre, detalle);
+            return fila;
+        }));
+        // Cada oferta de la página indica si ya está en la bandeja y cuántas piezas lleva.
+        for (const b of document.querySelectorAll('[data-bandeja-clave]')) {
+            const enBandeja = items.find(i => i.key === b.dataset.bandejaClave);
+            b.classList.toggle('bandeja-en', !!enBandeja);
+            b.querySelector('span').textContent = enBandeja ? `En la bandeja · ${enBandeja.quantity}` : 'Agregar';
+            b.querySelector('i').className = enBandeja ? 'bi bi-check-lg' : 'bi bi-plus-lg';
+        }
+        if (!items.length) abrir(false);
+    }
+    document.addEventListener('click', event => {
+        const b = event.target.closest('[data-bandeja-clave]');
+        if (!b) return;
+        abrir(true);
+        cambiar(api.trayAdd(b.dataset.bandejaClave));
+    });
+    $('bandejaPastilla').addEventListener('click', () => abrir(true));
+    $('bandejaMinimizar').addEventListener('click', () => abrir(false));
+    $('bandejaVaciar').addEventListener('click', () => {
+        if (window.confirm('¿Vaciar la bandeja? No cambia ninguna cotización.')) cambiar(api.trayRemove());
+    });
+    abrir(false);
+    api.tray().then(r => pintar(r.data)).catch(() => { /* sin bandeja si no se pudo leer */ });
 })();
