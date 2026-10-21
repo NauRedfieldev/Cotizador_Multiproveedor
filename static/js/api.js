@@ -624,13 +624,16 @@ apiClient.commercial = Object.freeze({
  * @param {'success'|'danger'|'warning'|'info'} type - Tipo de notificación
  * @param {string} title - Título opcional
  * @param {number} duration - Duración en milisegundos (default: 3500ms)
+ * @param {'top'|'bottom'} position - Esquina derecha donde aparece (default: arriba)
  */
-function showToast(message, type = 'success', title = '', duration = 3500) {
-    let container = document.getElementById('cconorToastContainer');
+function showToast(message, type = 'success', title = '', duration = 3500, position = 'top') {
+    const bottom = position === 'bottom';
+    const containerId = bottom ? 'cconorToastContainerBottom' : 'cconorToastContainer';
+    let container = document.getElementById(containerId);
     if (!container) {
         container = document.createElement('div');
-        container.id = 'cconorToastContainer';
-        container.className = 'cconor-toast-container';
+        container.id = containerId;
+        container.className = 'cconor-toast-container' + (bottom ? ' cconor-toast-container--bottom' : '');
         document.body.appendChild(container);
     }
 

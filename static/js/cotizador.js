@@ -312,6 +312,8 @@
             fxShortcuts();
             $('stickySaveBtn').disabled = $('saveQuoteBtn').disabled;
             text('stickySaveBtn', $('saveQuoteBtn').textContent);
+            $('topSaveBtn').disabled = $('saveQuoteBtn').disabled;
+            text('topSaveBtn', $('saveQuoteBtn').textContent);
             syncStickyTotal();
         }
         // Avisos: el recuadro solo se muestra si el cálculo trae alguno.
@@ -877,6 +879,7 @@
                 add.addEventListener('click', () => {
                     if (!editable()) return;
                     state.lines.push(lineFromOffer(offer)); renderLines(); changed();
+                    window.showToast(`${offer.name} · 1 pieza · ${money(offer.price_original)} ${offer.currency}`, 'success', 'Producto agregado a la cotización', 4000, 'bottom');
                 });
                 box.append(info, add); $('resultsList').append(box);
             }
@@ -1233,6 +1236,7 @@
         window.addEventListener('focus', refreshSession);
         $('stickyNewBtn').addEventListener('click', () => $('newQuoteBtn').click());
         $('stickySaveBtn').addEventListener('click', () => $('saveQuoteBtn').click());
+        $('topSaveBtn').addEventListener('click', () => $('saveQuoteBtn').click());
         // La barra aparece cuando el encabezado sale de la pantalla por arriba.
         if ('IntersectionObserver' in window) {
             new IntersectionObserver(([entry]) => {
