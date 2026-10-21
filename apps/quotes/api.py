@@ -714,7 +714,7 @@ async def resumen_documental(request, folio, numero):
             output = {**_resumen(revision, folio), "actor_id": actor.pk,
                 "schema_version": revision.schema_version, "state_fingerprint": revision.state_fingerprint,
                 "quote_status": quote.status, "client_name": revision.header["client"]["business_name"],
-                "cliente": None, "warnings": [],
+                "cliente": None, "warnings": [], "prices_captured_at": None,
                 "emission_enabled": bool(settings.COTIZACIONES_EMISION_HABILITADA and revision.schema_version == 2),
                 "revisiones": [{**_resumen(r, folio), "schema_version": r.schema_version}
                                for r in quote.revisions.order_by("number")]}
@@ -724,6 +724,9 @@ async def resumen_documental(request, folio, numero):
                         actor=actor, expected_version=revision.edit_version)
                     output["cliente"] = preview["cliente"]
                     output["warnings"] = _warning_states(preview["resultado"], revision, quote)
+                    # 23C: el precio de proveedor más antiguo del borrador, para recordar revisarlo antes de emitir.
+                    capturas = [s.captured_at for s in revision.snapshots.all() if s.source_kind == "API"]
+                    output["prices_captured_at"] = min(capturas).isoformat() if capturas else None
                 else:
                     output["cliente"] = commercial_services.contexto_revision(revision)
             return _wire(output)
@@ -1071,6 +1074,9 @@ def _exact_detail(folio, number, actor):
                           "source_unit_price": s.source_unit_price, "source_currency": s.source_currency} for s in snapshots],
             "confirmations": list(revision.commercial_confirmations.values("edit_version", "state_fingerprint", "warning_code", "scope_ref", "confirmed_by_id", "confirmed_at"))}
         if revision.schema_version == 2:
+            # 23A: cuándo se capturó el precio de cada partida, para «Revisar precios».
+            for item, snapshot in zip(output["items"], snapshots, strict=True):
+                item["captured_at"] = snapshot.captured_at.isoformat()
             if revision.status == "DRAFT":
                 output["preview"] = commercial_services.previsualizar_revision_comercial(revision.pk, actor=actor, expected_version=revision.edit_version)
                 output["preview"]["warnings"] = _warning_states(output["preview"]["resultado"], revision, quote)

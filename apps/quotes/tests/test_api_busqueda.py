@@ -19,7 +19,7 @@ from apps.providers.models import Provider
 from apps.providers.tests.soporte import adaptadores_registrados, crear_proveedor, sin_red
 from apps.quotes import api
 from apps.quotes.tests.test_vistas_cotizacion import adaptador, crear_asesor, mxn, usd
-from apps.quotes.views import CLAVE_OFERTAS_VISTAS, CLAVE_TIPO_CAMBIO, LIMITE_COTIZACIONES
+from apps.quotes.views import CLAVE_OFERTAS_VISTAS, CLAVE_TIPO_CAMBIO, LIMITE_COTIZACIONES, clave_limite
 from apps.quotes.tests.test_commercial_persistence import CommercialFixtures
 from apps.quotes.tests.test_api_cotizaciones import alta_comercial
 from apps.quotes.models import QuoteSelectionContext
@@ -219,7 +219,7 @@ class ApiBusquedaTests(TestCase):
         self.assertEqual(cuerpo, {"success": False, "error": "Inicia sesión para continuar.",
                                 "code": "UNAUTHENTICATED", "details": {}})
         self.assertEqual(llamadas, [])
-        self.assertIsNone(await cache.aget("cotizar:127.0.0.1"))
+        self.assertIsNone(await cache.aget("cotizar:ip:127.0.0.1"))
 
     # 15A/16A: tipo de cambio de la sesión, uno solo para el chip del menú, el comparador y el cotizador.
     async def tc(self, metodo="get", cuerpo=None, consulta=None):

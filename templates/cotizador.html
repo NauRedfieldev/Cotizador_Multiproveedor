@@ -84,6 +84,10 @@
             <span class="ms-auto d-flex flex-wrap gap-2"><button type="button" id="trayBringBtn" class="btn btn-sm btn-cconor-primary">Traer a esta cotización</button>
                 <a class="btn btn-sm btn-outline-primary d-inline-flex align-items-center" href="{% url 'comparador' %}">Ver bandeja</a></span></div>
         <div id="trayResults" class="tray-results d-none" aria-live="polite"></div>
+        <!-- 23A: de cuándo son los precios de proveedor y «Revisar precios» (nada cambia solo). -->
+        <div id="priceAge" class="price-age d-none"><i class="bi bi-clock-history" aria-hidden="true"></i><span id="priceAgeText"></span>
+            <button type="button" id="reviewPricesBtn" class="btn btn-sm btn-cconor-primary ms-auto"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i> Revisar precios</button></div>
+        <div id="priceReview" class="price-review d-none" aria-live="polite"></div>
         <div class="row g-2 align-items-end">
             <div class="col-md-6"><label for="productSearchInput" class="form-label">Código, modelo o descripción</label><input id="productSearchInput" class="form-control" autocomplete="off" placeholder="Buscar en catálogos" disabled></div>
             <div class="col-md-3"><label for="providerFilter" class="form-label">Proveedor (interno)</label><select id="providerFilter" class="form-select"><option value="">Todos</option></select></div>
@@ -194,4 +198,4 @@
     </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=22"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=24"></script>{% endblock %}

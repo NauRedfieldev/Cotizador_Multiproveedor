@@ -50,12 +50,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const sinCeros = v => String(v).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
     // Para mostrar: sin ceros de más, pero con al menos dos decimales (18.70, 17.12345678).
     const mostrar = v => { const [entero, fraccion = ''] = sinCeros(v).split('.'); return `${entero}.${fraccion.padEnd(2, '0')}`; };
-    function cuando(iso) {
-        const fecha = new Date(iso);
-        if (Number.isNaN(fecha.getTime())) return '';
-        const hora = fecha.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
-        return esHoy(iso) ? `hoy ${hora}` : `${fecha.toLocaleDateString('es-MX', { dateStyle: 'short' })} ${hora}`;
-    }
+    const cuando = iso => window.cconorFechas.hace(iso);   // 24C: «hace 2 horas»; la exacta va en title
     const esHoy = iso => new Date(iso).toDateString() === new Date().toDateString();
     const origen = s => (s.source === 'syscom' ? 'SYSCOM' : 'manual');
 
@@ -86,6 +81,7 @@ document.addEventListener('DOMContentLoaded', function () {
         chip.setAttribute('aria-label', s ? `Tipo de cambio de tu sesión: 1 USD = ${mostrar(s.value)} MXN, ${origen(s)}` : 'Tipo de cambio sin capturar');
         $('fxMenuValue').textContent = s ? `1 USD = $${mostrar(s.value)} MXN` : 'Sin capturar';
         $('fxMenuOrigin').textContent = s ? `${s.source === 'syscom' ? 'SYSCOM' : 'Capturado a mano'}, ${cuando(s.date)}` : '';
+        $('fxMenuOrigin').title = s ? window.cconorFechas.exacta(s.date) : '';
         // 21A: «Sigue vigente» en el comparador guarda confirmed; el aviso cuenta desde ahí.
         $('fxMenuOtroDia').textContent = s && !esHoy(s.confirmed || s.date) ? 'Capturado otro día: confirma que siga vigente.' : '';
         // SYSCOM: «Usar» si aún no hay uno; «Actualizar» si el de la sesión vino de SYSCOM y cambió.

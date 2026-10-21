@@ -28,7 +28,8 @@ from apps.providers.tests.soporte import (
     producto,
     sin_red,
 )
-from apps.quotes.views import CLAVE_TIPO_CAMBIO, CLAVE_ULTIMA_BUSQUEDA, LIMITE_COTIZACIONES
+from apps.quotes.views import (CLAVE_TIPO_CAMBIO, CLAVE_ULTIMA_BUSQUEDA, LIMITE_COTIZACIONES, clave_limite, fecha_exacta,
+                               hace_texto)
 
 PLANTILLA = "comparador.html"
 
@@ -52,8 +53,9 @@ class CotizarProductosTests(TestCase):
     def setUp(self):
         exigir_bd_de_pruebas()
         self.enterContext(sin_red())
-        cache.clear()  # el rate limit es por IP y la LocMemCache dura toda la suite
-        self.client.force_login(crear_asesor())
+        cache.clear()  # el rate limit vive en la LocMemCache, que dura toda la suite
+        self.asesor = crear_asesor()
+        self.client.force_login(self.asesor)
         self.url = reverse("cotizar_productos")
         Category.objects.create(name="Alfas", is_active=True)
         Category.objects.create(name="Zetas", is_active=True)
@@ -167,7 +169,8 @@ class VistaCotizacionTests(TestCase):
         cache.clear()
         crear_proveedor("alfa")
         crear_proveedor("beta")
-        self.async_client.force_login(crear_asesor())
+        self.asesor = crear_asesor()
+        self.async_client.force_login(self.asesor)
 
     async def buscar(self, adaptadores, **parametros):
         parametros.setdefault("q", "camara ip")
@@ -274,11 +277,20 @@ class VistaCotizacionTests(TestCase):
         self.assertSinTraza(respuesta)
         self.assertEqual(len(llamadas), LIMITE_COTIZACIONES)
 
+    async def test_v7c_el_limite_es_por_usuario_aunque_compartan_ip(self):
+        adaptadores = [adaptador("alfa", mxn("1", "1.00"))]
+        for _ in range(LIMITE_COTIZACIONES):
+            self.assertEqual((await self.buscar(adaptadores)).status_code, 200)
+        self.assertEqual((await self.buscar(adaptadores)).status_code, 429)
+        await self.async_client.aforce_login(await get_user_model().objects.acreate_user("asesor_dos"))    # misma IP (127.0.0.1)
+        self.assertEqual((await self.buscar(adaptadores)).status_code, 200)
+        self.assertEqual(LIMITE_COTIZACIONES, 20)
+
     async def test_v7b_clave_caducada_entre_aadd_y_aincr_cuenta_como_primera(self):
         with mock.patch.object(cache, "aincr", side_effect=ValueError("Key not found")):
             respuesta = await self.buscar([adaptador("alfa", mxn("1", "1.00"))])
         self.assertEqual(respuesta.status_code, 200)
-        self.assertEqual(await cache.aget("cotizar:127.0.0.1"), 1)
+        self.assertEqual(await cache.aget(clave_limite(self.asesor)), 1)
 
     async def test_v8_excepcion_inesperada_de_un_adaptador_queda_degradada(self):
         with self.assertLogs("apps.providers", "ERROR"):
@@ -486,7 +498,8 @@ class VistaCotizacionTests(TestCase):
             respuesta = await self.async_client.get(reverse("cotizar_productos"))
         self.assertContains(respuesta, "1 USD = $17.50 MXN")
         self.assertContains(respuesta, "<strong>Capturado otro día:</strong> <span>confirma que siga vigente.</span>", html=False)
-        self.assertContains(respuesta, "capturado 02/01/2020 04:00 · se conserva")       # hora de Ciudad de México
+        self.assertContains(respuesta, 'capturado <span title="2 ene 2020, 04:00">hace ')   # 24C; exacta en hora de CDMX
+        self.assertContains(respuesta, " años</span> · se conserva")
         self.assertNotContains(respuesta, "UTC")
 
     async def test_v25_sugiere_el_de_syscom_y_solo_se_aplica_al_pulsar_usar(self):
@@ -580,7 +593,7 @@ class VistaCotizacionTests(TestCase):
                                                      {"nueva": "1", "tipo_cambio": "17.50", "usar_tipo_cambio": "confirmar"})
         self.assertNotContains(confirmado, "Capturado otro día")
         self.assertContains(confirmado, "1 USD = $17.50 MXN")
-        self.assertContains(confirmado, "confirmado hoy")
+        self.assertContains(confirmado, "confirmado hace un momento")
         guardado = await (await self.async_client.asession()).aget(CLAVE_TIPO_CAMBIO)
         self.assertEqual((guardado["valor"], guardado["fecha"], guardado["origen"]), ("17.50", ayer, "manual"))
         self.assertEqual(timezone.localdate(datetime.fromisoformat(guardado["confirmado"])), timezone.localdate())
@@ -618,7 +631,7 @@ class VistaCotizacionTests(TestCase):
         with mock.patch("django.utils.timezone.now", return_value=ahora), sin_red():
             respuesta = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
         self.assertNotContains(respuesta, "Capturado otro día")
-        self.assertContains(respuesta, "SYSCOM · 20/10/2026 16:30")
+        self.assertContains(respuesta, 'SYSCOM · <span title="20 oct 2026, 16:30">hace 2 horas</span>')
 
     async def test_v32_al_volver_se_muestra_la_ultima_busqueda(self):
         """22A: el menú (sin parámetros) lleva a la última búsqueda; «Nueva búsqueda» y un formulario vacío la olvidan."""
@@ -653,6 +666,19 @@ class VistaCotizacionTests(TestCase):
         with sin_red():
             self.assertEqual((await self.async_client.get(reverse("cotizar_productos"))).status_code, 200)
 
+    def test_v33_fechas_relativas_igual_que_en_el_navegador(self):
+        """24C: mismas reglas que window.cconorFechas; la exacta en hora de Ciudad de México."""
+        ahora = datetime(2026, 10, 21, 1, 30, tzinfo=dt_timezone.utc)                 # 20/10 19:30 en México
+        casos = [((2026, 10, 21, 1, 29, 40), "hace un momento"), ((2026, 10, 21, 1, 5), "hace 25 min"),
+                 ((2026, 10, 21, 0, 0), "hace 1 hora"), ((2026, 10, 20, 22, 30), "hace 3 horas"),
+                 ((2026, 10, 20, 5, 0), "hace 1 día"), ((2026, 10, 17, 18, 0), "hace 3 días"),
+                 ((2026, 7, 1, 18, 0), "hace 3 meses"), ((2024, 10, 1, 18, 0), "hace 2 años")]
+        with mock.patch("django.utils.timezone.now", return_value=ahora):
+            for partes, esperado in casos:
+                with self.subTest(esperado=esperado):
+                    self.assertEqual(hace_texto(datetime(*partes, tzinfo=dt_timezone.utc)), esperado)
+        self.assertEqual(fecha_exacta(datetime(2026, 10, 20, 22, 5, tzinfo=dt_timezone.utc)), "20 oct 2026, 16:05")
+
     async def test_v18_sin_relacionados_no_aparece_el_titulo_del_bloque(self):
         respuesta = await self.buscar([adaptador("alfa", mxn("1", "100.00"))])
         self.assertNotContains(respuesta, "Otros resultados relacionados")
@@ -671,7 +697,7 @@ class VistaCotizacionTests(TestCase):
             respuesta = await self.buscar(adaptadores, q="  ", sku="")
             self.assertEqual(respuesta.status_code, 200)
         self.assertEqual(llamadas, [])
-        self.assertIsNone(await cache.aget("cotizar:127.0.0.1"))
+        self.assertIsNone(await cache.aget(clave_limite(self.asesor)))
 
     async def test_v16_el_menu_marca_el_comparador_como_activo(self):
         respuesta = await self.buscar([adaptador("alfa", mxn("1", "1.00"))])
@@ -700,7 +726,8 @@ class ProteccionTests(TestCase):
                         fetch_redirect_response=False,
                     )
         self.assertEqual(llamadas, [])
-        self.assertIsNone(cache.get("cotizar:127.0.0.1"))
+        self.assertIsNone(cache.get(clave_limite(self.asesor)))
+        self.assertIsNone(cache.get("cotizar:ip:127.0.0.1"))
 
     def test_p2_solo_el_login_es_publico_inicio_exige_sesion(self):
         self.assertRedirects(self.client.get(reverse("inicio")), f"{reverse('login')}?next={reverse('inicio')}",

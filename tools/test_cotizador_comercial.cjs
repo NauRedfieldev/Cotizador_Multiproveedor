@@ -299,20 +299,48 @@ function homeContext(panel = null, fetch = async () => { throw Error('No red'); 
         document: { cookie: 'csrftoken=synthetic-csrf', createElement: fakeNode,
             getElementById: id => id === 'homePanel' ? panel : panel ? (nodes.get(id) || nodes.set(id, fakeNode('div')).get(id)) : null } });
     for (const name of ['api.js', 'inicio.js']) vm.runInContext(fs.readFileSync(path.join(root, 'static/js', name), 'utf8'), context);
-    return { tools: context.window.CCONORHomeTools, nodes };
+    return { tools: context.window.CCONORHomeTools, nodes, fechas: context.window.cconorFechas };
 }
 function anchorsOf(node, found = []) {
     if (node.tag === 'a') found.push(node);
     for (const child of node.children || []) if (typeof child === 'object') anchorsOf(child, found);
     return found;
 }
+test('24C: fechas relativas en pantalla y la exacta para el cursor', () => {
+    const { fechas } = homeContext();
+    const now = new Date(2026, 9, 20, 19, 30);
+    const at = (...a) => new Date(...a).toISOString();
+    assert.equal(fechas.hace(at(2026, 9, 20, 19, 29, 40), now), 'hace un momento');
+    assert.equal(fechas.hace(at(2026, 9, 20, 19, 5), now), 'hace 25 min');
+    assert.equal(fechas.hace(at(2026, 9, 20, 18, 0), now), 'hace 1 hora');
+    assert.equal(fechas.hace(at(2026, 9, 20, 16, 30), now), 'hace 3 horas');
+    assert.equal(fechas.hace(at(2026, 9, 19, 23, 0), now), 'hace 1 día');          // otro día aunque sean 20 h
+    assert.equal(fechas.hace('2026-10-20', now), 'hoy');
+    assert.equal(fechas.hace('2026-10-17', now), 'hace 3 días');
+    assert.equal(fechas.hace('2026-07-01', now), 'hace 3 meses');
+    assert.equal(fechas.hace('2024-10-01', now), 'hace 2 años');
+    assert.equal(fechas.vence('2026-11-04', now), 'vence en 15 días');
+    assert.equal(fechas.vence('2026-10-20', now), 'vence hoy');
+    assert.equal(fechas.vence('2026-10-21', now), 'vence mañana');
+    assert.equal(fechas.vence('2026-10-18', now), 'venció hace 2 días');
+    assert.equal(fechas.exacta('2026-10-20'), '20 oct 2026');
+    // El contexto del PDF manda día/mes/año: 04/11/2026 es 4 de noviembre, nunca 11 de abril.
+    assert.equal(fechas.vence('04/11/2026', now), 'vence en 15 días');
+    assert.equal(fechas.exacta('04/11/2026'), '4 nov 2026');
+    assert.equal(fechas.hace('20/10/2026', now), 'hoy');
+    assert.equal(fechas.hace('4/11/2026', now), '');
+    assert.equal(fechas.exacta(at(2026, 9, 20, 16, 5)), '20 oct 2026, 16:05');
+    for (const malo of ['mal', '', null, undefined]) assert.equal(fechas.hace(malo, now), '');
+});
 test('inicio: importes, fechas y conteo del mes sin float', () => {
     const { tools } = homeContext();
     assert.equal(tools.money('48230.5'), '$48,230.50');
     assert.equal(tools.money('1234567.891'), '$1,234,567.891');
     assert.equal(tools.money(null), 'Sin total sellado');
     assert.equal(tools.money('1e2'), '—');
-    assert.equal(tools.shortDate('2026-10-05'), '5 oct');
+    // 24C: fecha relativa; la exacta va en el title.
+    assert.equal(tools.shortDate('2026-10-05', new Date(2026, 9, 20)), 'hace 15 días');
+    assert.equal(tools.shortDate('2026-10-20', new Date(2026, 9, 20)), 'hoy');
     assert.equal(tools.shortDate('mal'), '');
     const now = new Date(2026, 9, 20);
     assert.equal(tools.monthLabel(now), 'Octubre 2026');

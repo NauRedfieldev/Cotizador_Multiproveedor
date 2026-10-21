@@ -32,7 +32,7 @@ identidad canónica de cada oferta y responde:
 
 ```
 GET /cotizaciones/buscar/
- 1. rate limit por IP ─────────────────────────► 429 (antes de cualquier I/O)
+ 1. rate limit por usuario ────────────────────► 429 (antes de cualquier I/O)
  2. validar q/sku, categoria, tipo_cambio ─────► 400 (sin consultar a nadie)
  3. M2  resultados = await search_all(consulta)        (paralelo, timeouts, token)
  4.     disponibles = r.ok ; caidos = r.provider_code de los que fallaron
@@ -96,7 +96,9 @@ Al integrar un proveedor nuevo (docs/20), su declaración se añade aquí junto 
 
 ## 6. Rate limiting
 
-- 10 búsquedas por IP (`REMOTE_ADDR`) cada 60 s (`LIMITE_COTIZACIONES`, `VENTANA_SEGUNDOS`).
+- 20 búsquedas **por usuario** cada 60 s (`LIMITE_COTIZACIONES`, `VENTANA_SEGUNDOS`, clave `clave_limite`).
+  Hasta 2026-10-21 eran 10 por IP (`REMOTE_ADDR`): en una oficina con una sola IP pública lo compartían todos
+  los asesores. Sin sesión (no debería ocurrir: comparador y API la exigen) se cuenta por IP.
 - Usa la caché de Django con su API async (`aadd` y `aincr`), sin dependencias nuevas. Si la clave caduca
   entre las dos llamadas, cuenta como la primera petición.
 - El límite se comprueba antes de consultar a nadie, así que también protege los límites de peticiones de
@@ -166,8 +168,8 @@ comparador.html (M7b) ◄── contexto §4 ── cotizar_productos (M7)
 
 - **Sesión.** El acuerdo de SYSCOM (docs/02 §8.2) recomienda mostrar los precios de distribuidor solo a
   usuarios con sesión. Hoy no se exige, porque no hay flujo de login fuera del admin.
-- **Rate limit compartido.** Configurar `CACHES` con un backend común entre procesos y, detrás de un proxy,
-  tomar la IP real de una cabecera de confianza (hoy se usa `REMOTE_ADDR`).
+- **Rate limit compartido.** Configurar `CACHES` con un backend común entre procesos (el contador ya es por
+  usuario, así que no depende de la IP detrás de un proxy).
 - **Tipo de cambio.** Obtenerlo y cachearlo (p. ej. con `GET /tipocambio` de SYSCOM) en lugar de la captura
   manual. Necesita su propio plan y un presupuesto de llamadas reales.
 - **Frontend.** `static/js/api.js` espera una API JSON (`/api/v1/products/search/`) y sigue con

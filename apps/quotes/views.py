@@ -218,8 +218,9 @@ def demo_pdf_cotizacion(request, folio):
 # ==============================================================================
 
 PLANTILLA_COMPARADOR = "comparador.html"
-# Por IP y ventana. Con la LocMemCache por defecto el contador es por proceso (docs/26 §6).
-LIMITE_COTIZACIONES = 10
+# Por usuario y ventana (antes por IP: en una oficina con una sola IP lo compartían todos los asesores).
+# Con la LocMemCache por defecto el contador es por proceso (docs/26 §6).
+LIMITE_COTIZACIONES = 20
 VENTANA_SEGUNDOS = 60
 # Declaración del consumidor de M5 (docs/21): SYSCOM manda el número de parte del
 # fabricante en model y mpn, verificado con la API real (docs/16 D11). Un proveedor
@@ -313,14 +314,34 @@ async def cotizar_productos(request):
 CLAVE_ULTIMA_BUSQUEDA = "comparador_ultima_busqueda"
 
 
-def _hace(fecha):
+# 24C: fechas relativas en pantalla («hace 3 días») y la exacta para el title. Mismas reglas que
+# window.cconorFechas (static/js/api.js). El PDF del cliente no las usa.
+MESES_CORTOS = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+def _plural(n, uno, varios):
+    return f"{n} {uno if n == 1 else varios}"
+
+
+def hace_texto(fecha):
     minutos = int((timezone.now() - fecha).total_seconds() // 60)
     if minutos < 1:
         return "hace un momento"
     if minutos < 60:
         return f"hace {minutos} min"
-    horas = minutos // 60
-    return f"hace {horas} h" if horas < 24 else f"del {timezone.localtime(fecha):%d/%m/%Y}"
+    dias = (timezone.localdate() - timezone.localtime(fecha).date()).days
+    if dias <= 0:
+        return f"hace {_plural(minutos // 60, 'hora', 'horas')}"
+    if dias < 30:
+        return f"hace {_plural(dias, 'día', 'días')}"
+    if dias < 365:
+        return f"hace {_plural(dias // 30, 'mes', 'meses')}"
+    return f"hace {_plural(dias // 365, 'año', 'años')}"
+
+
+def fecha_exacta(fecha):
+    local = timezone.localtime(fecha)
+    return f"{local.day} {MESES_CORTOS[local.month - 1]} {local.year}, {local:%H:%M}"
 
 
 async def _recordar_busqueda(request, contexto, status, ultima):
@@ -332,7 +353,7 @@ async def _recordar_busqueda(request, contexto, status, ultima):
             fecha = ultima["fecha"] if ultima and ultima["params"] == params else timezone.now().isoformat()
             await request.session.aset(CLAVE_ULTIMA_BUSQUEDA, {"params": params, "fecha": fecha})
             if request.GET.get("ultima") == "1":
-                contexto["busqueda_restaurada"] = _hace(datetime.fromisoformat(fecha))
+                contexto["busqueda_restaurada"] = hace_texto(datetime.fromisoformat(fecha))
     elif ultima and ("q" in request.GET or "sku" in request.GET or "nueva" in request.GET):
         await request.session.apop(CLAVE_ULTIMA_BUSQUEDA)
 
@@ -365,6 +386,10 @@ async def _recordar_tipo_cambio(request, contexto, recordado, usado=None, confir
                                                            "origen": tipo.origen})
         contexto["tipo_cambio"] = tipo
         contexto["tipo_cambio_confirmado"] = datetime.fromisoformat(confirmado) if confirmado else None
+        contexto["tipo_cambio_hace"], contexto["tipo_cambio_exacta"] = hace_texto(tipo.fecha), fecha_exacta(tipo.fecha)
+        if confirmado:
+            contexto["tipo_cambio_confirmado_hace"] = hace_texto(contexto["tipo_cambio_confirmado"])
+            contexto["tipo_cambio_confirmado_exacta"] = fecha_exacta(contexto["tipo_cambio_confirmado"])
         revisado = contexto["tipo_cambio_confirmado"] or tipo.fecha
         contexto["tipo_cambio_otro_dia"] = timezone.localdate(revisado) != timezone.localdate()
     elif not texto and recordado:
@@ -518,8 +543,13 @@ def _leer_parametros(parametros, categorias):
     return categoria_id, tipo_cambio
 
 
+def clave_limite(usuario, ip=""):
+    """Contador del límite de búsquedas: por usuario; sin sesión (no debería llegar aquí), por IP."""
+    return f"cotizar:usuario:{usuario.pk}" if usuario.is_authenticated else f"cotizar:ip:{ip}"
+
+
 async def _limite_superado(request):
-    clave = f"cotizar:{request.META.get('REMOTE_ADDR', '')}"
+    clave = clave_limite(await request.auser(), request.META.get("REMOTE_ADDR", ""))
     await cache.aadd(clave, 0, VENTANA_SEGUNDOS)
     try:
         cuenta = await cache.aincr(clave)

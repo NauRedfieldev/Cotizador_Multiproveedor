@@ -1157,3 +1157,47 @@ class ClientesFrecuentesTests(CommercialFixtures, TestCase):
         self.assertEqual(self.client.post(url).status_code, 405)
         self.client.logout()
         self.assertEqual(self.client.get(url).status_code, 401)
+
+
+@override_settings(CCONOR_EMPRESA=EMPRESA_QA)
+class FechasDePrecioTests(CommercialFixtures, TestCase):
+    """23A/23C: el borrador dice cuándo se capturó cada precio de proveedor; nada cambia solo."""
+    send = CommercialAPITests.send
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.actor)
+
+    def test_p1_detalle_trae_la_fecha_de_captura_de_cada_partida(self):
+        from apps.quotes.tests.test_commercial_persistence import commercial_line
+        draft = self.commercial_draft([commercial_line(kind="API"), commercial_line()])
+        snapshots = list(draft.snapshots.order_by("position"))
+        detail = self.send("api_guardar_revision", method="get", args=(self.quote.folio, draft.number))
+        self.assertEqual([i["captured_at"] for i in detail["items"]], [s.captured_at.isoformat() for s in snapshots])
+        self.assertEqual((detail["items"][0]["provider_code"], detail["items"][0]["external_id"]), ("qa", "QA-1"))
+
+    def test_p2_resumen_da_la_captura_mas_antigua_de_proveedor_solo_en_borradores(self):
+        from datetime import datetime, timezone as dt_timezone
+        from apps.quotes.models import QuoteSnapshot
+        from apps.quotes.tests.test_commercial_persistence import commercial_line
+        manual, viejo, nuevo = commercial_line(key=uuid4()), commercial_line(kind="API", key=uuid4()), commercial_line(kind="API", key=uuid4(), external_id="QA-2")
+        hace_anios = datetime(2020, 1, 1, 12, tzinfo=dt_timezone.utc)
+        hace_dias = datetime(2026, 10, 17, 16, 30, tzinfo=dt_timezone.utc)
+        with mock.patch("django.utils.timezone.now", return_value=hace_anios):
+            draft = self.commercial_draft([manual])                         # la manual es la más vieja, pero no cuenta
+        with mock.patch("django.utils.timezone.now", return_value=hace_dias):
+            draft = self.commercial_edit(draft, [manual, viejo])
+        draft = self.commercial_edit(draft, [manual, viejo, nuevo])           # la nueva se captura ahora
+        fechas = dict(QuoteSnapshot.objects.filter(revision=draft).values_list("line_key", "captured_at"))
+        self.assertEqual((fechas[manual.line_key], fechas[viejo.line_key]), (hace_anios, hace_dias))   # se conserva por partida
+        resumen = self.send("api_resumen_documental", method="get", args=(self.quote.folio, draft.number))
+        self.assertEqual(resumen["prices_captured_at"], hace_dias.isoformat())
+        emitida = self.issue(draft)
+        resumen = self.send("api_resumen_documental", method="get", args=(self.quote.folio, emitida.number))
+        self.assertIsNone(resumen["prices_captured_at"])                    # una emitida no se revisa
+
+    def test_p3_sin_partidas_de_proveedor_no_hay_fecha(self):
+        from apps.quotes.tests.test_commercial_persistence import commercial_line
+        draft = self.commercial_draft([commercial_line()])
+        resumen = self.send("api_resumen_documental", method="get", args=(self.quote.folio, draft.number))
+        self.assertIsNone(resumen["prices_captured_at"])

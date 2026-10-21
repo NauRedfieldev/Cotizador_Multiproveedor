@@ -688,4 +688,49 @@ function showToast(message, type = 'success', title = '', duration = 3500) {
 
 // Exponer globalmente
 window.apiClient = apiClient;
+
+// 24C: fechas relativas en el sitio («hace 3 días») y la exacta para mostrar al pasar el cursor
+// («20 oct 2026, 16:30»). Acepta ISO con hora o solo día («2026-10-20», día local). El PDF no las usa.
+const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+function leerFecha(valor) {
+    // Solo día: «2026-10-20» o «20/10/2026» (día/mes/año, como lo manda el contexto del PDF; nunca mes/día).
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(valor ?? ''));
+    const mx = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(valor ?? ''));
+    const dia = iso ? [iso[1], iso[2], iso[3]] : mx ? [mx[3], mx[2], mx[1]] : null;
+    const fecha = dia ? new Date(Number(dia[0]), Number(dia[1]) - 1, Number(dia[2])) : mx === null && iso === null && /^\d{1,2}\//.test(String(valor ?? '')) ? new Date(NaN) : new Date(valor);
+    return valor === null || valor === undefined || valor === '' || Number.isNaN(fecha.getTime()) ? null : { fecha, soloDia: !!dia };
+}
+const diasEntre = (a, b) => Math.round((new Date(b.getFullYear(), b.getMonth(), b.getDate()) - new Date(a.getFullYear(), a.getMonth(), a.getDate())) / 86400000);
+const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
+function haceDias(dias) {
+    if (dias < 30) return `hace ${plural(dias, 'día', 'días')}`;
+    if (dias < 365) return `hace ${plural(Math.floor(dias / 30), 'mes', 'meses')}`;
+    return `hace ${plural(Math.floor(dias / 365), 'año', 'años')}`;
+}
+window.cconorFechas = Object.freeze({
+    hace(valor, ahora = new Date()) {
+        const leida = leerFecha(valor);
+        if (!leida) return '';
+        const dias = diasEntre(leida.fecha, ahora);
+        if (leida.soloDia) return dias <= 0 ? 'hoy' : haceDias(dias);
+        const minutos = Math.floor((ahora - leida.fecha) / 60000);
+        if (minutos < 1) return 'hace un momento';
+        if (minutos < 60) return `hace ${minutos} min`;
+        return dias <= 0 ? `hace ${plural(Math.floor(minutos / 60), 'hora', 'horas')}` : haceDias(dias);
+    },
+    vence(valor, ahora = new Date()) {
+        const leida = leerFecha(valor);
+        if (!leida) return '';
+        const dias = diasEntre(ahora, leida.fecha);
+        if (dias === 0) return 'vence hoy';
+        if (dias === 1) return 'vence mañana';
+        return dias > 0 ? `vence en ${dias} días` : `venció ${haceDias(-dias)}`;
+    },
+    exacta(valor) {
+        const leida = leerFecha(valor);
+        if (!leida) return '';
+        const f = leida.fecha, dia = `${f.getDate()} ${MESES_CORTOS[f.getMonth()]} ${f.getFullYear()}`;
+        return leida.soloDia ? dia : `${dia}, ${String(f.getHours()).padStart(2, '0')}:${String(f.getMinutes()).padStart(2, '0')}`;
+    },
+});
 window.showToast = showToast;

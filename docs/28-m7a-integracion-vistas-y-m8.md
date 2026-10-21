@@ -37,7 +37,7 @@ la versión async conservando lo que aportaba:
 | Se conserva de 7bf8e93 | Se recupera de M7 (docs/26) |
 |---|---|
 | Ruta `/comparador/` (nombres `comparador` y `cotizar_productos`) | Vista `async def`: bajo ASGI una vista síncrona ocupa el hilo compartido de las vistas síncronas, y una búsqueda lenta de proveedores bloquearía las demás |
-| Sin `q` ni `sku`: 200 con el formulario en blanco | Rate limit 10/60 s por IP antes de cualquier I/O |
+| Sin `q` ni `sku`: 200 con el formulario en blanco | Rate limit 20/60 s por usuario (antes 10 por IP) antes de cualquier I/O |
 | Las seis claves siempre, con `error=None` en los 200 | M6 **por proveedor**: datos incoherentes de uno solo lo dejan fuera a él (una sola llamada tiraba toda la búsqueda) |
 | La categoría debe ser una de las activas del formulario (400 si no) | `CONFIANZA_POR_PROVEEDOR`: SYSCOM empareja por modelo/MPN (sin ella, M5 nunca emparejaba por clave) |
 | Fallo inesperado de `search_all` → 503 genérico | USD sin tipo de cambio → 400 mirando las ofertas, no el texto de un error |
@@ -791,6 +791,40 @@ solo crean su contenedor cuando hay mensajes. Caché: `custom.css?v=10`, `home.c
   huellas de FX se siguen canonizando a UTC (docs/24). Antes, después de las 18:00 «hoy» ya era el día
   siguiente (aviso de otro día falso y fecha de cotización adelantada).
 - Pruebas: `test_v29`–`test_v32` y `test_a16b`.
+
+### 14.12 Revisar precios de un borrador (diseño 23A y 23C, 2026-10-21)
+
+- **Cotizador, paso 3 (23A):** si hay partidas de proveedor se indica de cuándo son los precios («Precios
+  capturados hace N días (dd/mm)», en ámbar si no son de hoy) con «Revisar precios». Al pulsarlo se busca otra
+  vez cada modelo (búsqueda del cotizador, una por modelo) y se compara con la oferta del mismo proveedor:
+  cambió (▲/▼ %, «Usar precio de hoy»; con más de una, también «Usar precios de hoy en las N que cambiaron»),
+  sin cambio, ya no aparece («Buscar otro») o no se pudo revisar (proveedor caído, base IVA sin verificar,
+  búsqueda con dólares sin tipo de cambio, límite de búsquedas): **la partida se conserva**, nunca en cero ni
+  borrada (docs/25 M9). «Usar precio de hoy» sustituye la partida por la captura nueva conservando cantidad,
+  unidades, margen o precio fijo y descripción; el precio sale de la captura del servidor, no del navegador.
+  Nada se revisa ni cambia solo; solo borradores editables.
+- **Datos:** el detalle v2 (`GET …/revisiones/N/`) trae `captured_at` por partida, que se conserva por
+  `line_key` al editar (una partida sustituida es nueva). `resumen_documental` trae `prices_captured_at`: la
+  captura de proveedor más antigua de un borrador v2 (`null` en emitidas o sin partidas de proveedor).
+- **Mis cotizaciones (23C):** si ese precio no es de hoy, «Los precios son del dd/mm (hace N días). Revísalos
+  antes de emitir. Revisar en el cotizador →» (`?revisar=precios` lleva al botón). No bloquea «Emitir».
+- Pruebas: `FechasDePrecioTests` (P1–P3) en `test_api_cotizaciones.py`.
+
+### 14.13 Fechas relativas en el sitio (diseño 24C, 2026-10-21)
+
+- En pantalla las fechas son relativas y la exacta aparece al pasar el cursor (`title`, «20 oct 2026, 16:30»
+  o «20 oct 2026» si es solo día, en hora de Ciudad de México). Reglas: «hace un momento», «hace N min»,
+  «hace N horas» (mismo día), «hace N días», «hace N meses», «hace N años»; un día sin hora es «hoy» o
+  «hace N días»; la vigencia es «vence hoy», «vence mañana», «vence en N días» o «venció hace N días».
+- Un solo lugar por lado: `window.cconorFechas` (`hace`, `vence`, `exacta`) en `static/js/api.js`, que cargan
+  todas las páginas y las pruebas JS; en el servidor `hace_texto` y `fecha_exacta` (`apps/quotes/views.py`)
+  con las mismas reglas (comparador: tipo de cambio, «confirmado», «última búsqueda»). Acepta ISO o
+  «dd/mm/aaaa» (así manda las fechas el contexto del PDF); nunca se lee como mes/día.
+- Dónde: comparador, chip del menú, cotizador (tipo de cambio aplicado, «Tu sesión», edad de los precios,
+  «Elegir cliente»), Mis cotizaciones (lista, detalle con vigencia, recordatorio de precios) e Inicio.
+- **El PDF del cliente no cambia** (sigue «Fecha de propuesta: 20/10/2026»).
+- Límite de búsquedas: ahora 20 por minuto **por usuario** (docs/26 §6).
+- Pruebas: JS «24C: fechas relativas…» y `test_v33`.
 
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 

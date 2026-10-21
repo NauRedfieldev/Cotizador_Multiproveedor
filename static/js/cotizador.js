@@ -132,6 +132,8 @@
         if (!$('commercialQuoteApp')) return;
         const api = window.apiClient.commercial;
         let trayItems = []; // 19A: bandeja del comparador
+        const hace = iso => window.cconorFechas?.hace(iso) ?? String(iso ?? '');
+        const exacta = iso => window.cconorFechas?.exacta(iso) ?? String(iso ?? '');
         let fxSession = null; // 16A: tipo de cambio de la sesión y de SYSCOM (main.js)
         const initialIssueDate = $('issueDate').value;
         const defaultConditions = defaultConditionsText($('defaultConditions')?.textContent);
@@ -306,7 +308,7 @@
             }
             text('quoteIdentity', identity); text('stickyIdentity', identity);
             $('stickyNewBtn').disabled = $('newQuoteBtn').disabled;
-            trayNotice();
+            trayNotice(); priceAge();
             fxShortcuts();
             $('stickySaveBtn').disabled = $('saveQuoteBtn').disabled;
             text('stickySaveBtn', $('saveQuoteBtn').textContent);
@@ -669,6 +671,7 @@
         function lineFromOffer(offer, quantity = '1') {
             const line = blankLine();
             Object.assign(line, { kind: 'API', name: offer.name, provider: offer.provider_label, offer, quantity,
+                providerCode: offer.provider, externalId: offer.external_id, capturedAt: new Date().toISOString(),
                 originalPrice: offer.price_original, originalCurrency: offer.currency,
                 originalVat: offer.vat.vat_basis === 'INCLUDED' ? offer.vat.vat_rate : null,
                 brand: offer.brand, model: offer.model, mode: 'MARGIN' });
@@ -718,7 +721,7 @@
                 catch (err) {
                     if (err.status === 429) stopped = true;
                     const message = err.status === 429 ? 'quedó pendiente por el límite de búsquedas; espera un minuto y vuelve a pulsar «Traer».'
-                        : /tipo de cambio/i.test(err.message) ? 'está en dólares: aplica primero el tipo de cambio del paso 2 y vuelve a pulsar «Traer».'
+                        : /tipo de cambio/i.test(err.message) ? 'la búsqueda trae precios en dólares: aplica primero el tipo de cambio del paso 2 y vuelve a pulsar «Traer».'
                         : `no se pudo consultar (${err.message}). Sigue en la bandeja.`;
                     for (const item of items) results.push({ item, kind: 'error', message });
                     continue;
@@ -732,7 +735,7 @@
                     const same = offer.currency === item.currency && sameAmount(offer.price_original, item.price);
                     results.push({ item, kind: same ? 'ok' : 'changed', message: same
                         ? `${item.quantity} ${item.quantity === 1 ? 'pieza agregada' : 'piezas agregadas'} con el precio de hoy.`
-                        : `el precio cambió de $${item.price} ${item.currency} a $${offer.price_original} ${offer.currency}; se agregó con el de hoy.` });
+                        : `el precio cambió de ${shownPrice(item.price, item.currency)} a ${shownPrice(offer.price_original, offer.currency)}; se agregó con el de hoy.` });
                 }
             }
             if (added.length) {
@@ -744,6 +747,115 @@
             trayResults(results); trayNotice();
         }
         $('trayBringBtn').addEventListener('click', bringTray);
+        // 23A: «Revisar precios» consulta otra vez a cada proveedor y compara; el asesor decide cada cambio.
+        // Si el proveedor no responde o el producto ya no aparece, la partida se queda como está.
+        const shownPrice = (value, currency) => `${money(trimZeros(value))} ${currency}`;
+        const reviewable = () => state.lines.filter(l => l.kind === 'API' && l.providerCode && l.externalId);
+        const daysAgo = iso => Math.round((new Date(new Date().toDateString()) - new Date(new Date(iso).toDateString())) / 86400000);
+        function priceAge() {
+            const lines = reviewable();
+            const oldest = lines.map(l => l.capturedAt).filter(Boolean).sort()[0];
+            $('priceAge').classList.toggle('d-none', !lines.length || !editable() || !oldest);
+            if (!oldest) return;
+            const days = daysAgo(oldest);
+            text('priceAgeText', state.priceReviewed ? `Precios revisados ${hace(state.priceReviewed.at)}` : `Precios capturados ${hace(oldest)}`);
+            $('priceAgeText').title = exacta(state.priceReviewed ? state.priceReviewed.at : oldest);
+            $('priceAge').classList.toggle('price-age--old', days >= 1 && !state.priceReviewed);
+            $('reviewPricesBtn').disabled = state.busy || !!state.pending || !editable();
+        }
+        function pct(before, after) {
+            const a = Number(before), b = Number(after); // Solo para mostrar el porcentaje; el dinero sigue en texto.
+            return a > 0 ? `${b >= a ? '▲ +' : '▼ −'}${Math.abs((b - a) / a * 100).toFixed(1)}%` : '';
+        }
+        function replaceWithOffer(line, offer) {
+            const fresh = lineFromOffer(offer, line.quantity);
+            Object.assign(fresh, { description: line.description, units: { ...line.units, confirmed: true }, mode: line.mode,
+                margin: line.margin, sale: { ...line.sale }, expanded: false });
+            const index = state.lines.indexOf(line);
+            if (index >= 0) state.lines.splice(index, 1, fresh);
+        }
+        function renderReview(rows) {
+            const box = $('priceReview');
+            const changed = rows.filter(r => r.kind === 'changed' && state.lines.includes(r.line));
+            const head = element('div', '', 'd-flex flex-wrap align-items-center gap-2 mb-2');
+            head.append(element('strong', 'Revisión de precios'),
+                element('span', [[rows.filter(r => r.kind === 'changed').length, 'cambió', 'cambiaron'], [rows.filter(r => r.kind === 'same').length, 'sin cambio', 'sin cambio'],
+                    [rows.filter(r => r.kind === 'missing').length, 'ya no aparece', 'ya no aparecen'], [rows.filter(r => r.kind === 'error').length, 'no se pudo revisar', 'no se pudieron revisar']]
+                    .filter(([n]) => n).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`).join(' · '), 'small text-muted'));
+            if (changed.length > 1) {   // con una sola basta el botón de su fila
+                const all = element('button', `Usar precios de hoy en las ${changed.length} que cambiaron`, 'btn btn-sm btn-cconor-primary ms-auto');
+                all.type = 'button';
+                all.addEventListener('click', () => { for (const r of changed) replaceWithOffer(r.line, r.offer); afterReplace(rows); });
+                head.append(all);
+            }
+            const list = element('ul', '', 'list-unstyled mb-0');
+            for (const r of rows) {
+                const row = element('li', '', 'price-review-row');
+                const info = element('div', '', 'flex-grow-1');
+                info.append(element('strong', r.line.name), element('div', `${r.line.provider} · ${r.line.quantity} ${r.line.units.sale_label || 'pzas'}`, 'small text-muted'));
+                if (r.kind === 'changed' && r.line.mode === 'MANUAL') info.append(element('div', 'Precio de venta fijo: solo cambiaría el costo; revisa el margen.', 'small text-warning-emphasis'));
+                const saved = element('span', shownPrice(r.line.originalPrice, r.line.originalCurrency), 'price-review-col');
+                const today = element('span', r.offer ? shownPrice(r.offer.price_original, r.offer.currency) : '—', 'price-review-col fw-semibold');
+                const [label, kind] = r.kind === 'changed' ? [pct(r.line.originalPrice, r.offer.price_original) || 'Cambió', Number(r.offer.price_original) > Number(r.line.originalPrice) ? 'up' : 'down']
+                    : r.kind === 'same' ? ['Sin cambio', 'same'] : r.kind === 'missing' ? ['Ya no aparece', 'up'] : ['No se pudo revisar', 'warn'];
+                const badge = element('span', label, `price-badge price-badge--${kind}`);
+                const action = element('span', '', 'price-review-action');
+                if (r.kind === 'changed' && state.lines.includes(r.line)) {
+                    const use = element('button', 'Usar precio de hoy', 'btn btn-sm btn-outline-primary'); use.type = 'button';
+                    use.addEventListener('click', () => { replaceWithOffer(r.line, r.offer); afterReplace(rows); });
+                    action.append(use);
+                } else if (r.kind === 'changed') action.append(element('span', '✓ Actualizado', 'small text-success fw-semibold'));
+                else if (r.kind === 'missing') {
+                    const other = element('button', 'Buscar otro', 'btn btn-sm btn-outline-primary'); other.type = 'button';
+                    other.addEventListener('click', () => { $('productSearchInput').value = r.line.model || r.line.name; search(); $('productSearchInput').focus(); });
+                    action.append(other);
+                } else if (r.kind === 'error') action.append(element('span', r.message, 'small text-muted'));
+                row.append(info, saved, today, badge, action);
+                list.append(row);
+            }
+            box.replaceChildren(head, list, element('div', 'Al usar el precio de hoy se conservan cantidad, unidades y margen; la venta se recalcula. Si la partida tiene precio de venta fijo, solo cambia el costo.', 'small text-muted mt-2'));
+            box.classList.remove('d-none');
+        }
+        function afterReplace(rows) {
+            changed(); renderLines(); renderReview(rows); priceAge();
+        }
+        async function reviewPrices() {
+            const lines = reviewable();
+            if (!editable() || state.busy || state.pending || !lines.length) return;
+            state.busy = true; locks();
+            const rows = [], groups = new Map();
+            for (const line of lines) {
+                const query = line.model ? `sku:${line.model}` : `q:${line.name}`;
+                if (!groups.has(query)) groups.set(query, []);
+                groups.get(query).push(line);
+            }
+            let stopped = false;
+            for (const [query, group] of groups) {
+                if (stopped) { for (const line of group) rows.push({ line, kind: 'error', message: 'Límite de búsquedas: vuelve a revisar en un minuto. Se conserva.' }); continue; }
+                const filters = query.startsWith('sku:') ? { sku: query.slice(4) } : { q: query.slice(2) };
+                if (state.fx && has('change_commercial_fx')) filters.tipo_cambio = state.fx.value;
+                let offers;
+                try { offers = (await api.search(filters)).data || []; }
+                catch (err) {
+                    if (err.status === 429) stopped = true;
+                    const message = err.status === 429 ? 'Límite de búsquedas: vuelve a revisar en un minuto. Se conserva.'
+                        : /tipo de cambio/i.test(err.message) ? 'La búsqueda trae precios en dólares: aplica el tipo de cambio del paso 2 y vuelve a revisar. Se conserva.'
+                        : 'El proveedor no respondió. Se conserva el precio guardado.';
+                    for (const line of group) rows.push({ line, kind: 'error', message });
+                    continue;
+                }
+                for (const line of group) {
+                    const offer = offers.find(o => o.provider === line.providerCode && o.external_id === line.externalId);
+                    if (!offer) rows.push({ line, kind: 'missing' });
+                    else if (!offer.vat?.vat_basis || offer.vat.vat_basis === 'UNKNOWN') rows.push({ line, kind: 'error', message: 'Base IVA sin verificar. Se conserva.' });
+                    else rows.push({ line, offer, kind: offer.currency === line.originalCurrency && sameAmount(offer.price_original, line.originalPrice) ? 'same' : 'changed' });
+                }
+            }
+            state.busy = false;
+            state.priceReviewed = { folio: state.saved?.folio ?? null, at: new Date().toISOString() };
+            locks(); renderLines(); renderReview(rows); priceAge();
+        }
+        $('reviewPricesBtn').addEventListener('click', reviewPrices);
         function renderProducts() {
             $('resultsList').replaceChildren();
             for (const offer of state.products.filter(p => !$('providerFilter').value || p.provider === $('providerFilter').value)) {
@@ -806,18 +918,16 @@
         }
         function fxDisplay() {
             const value = state.fx ? String(state.fx.value).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') : '';
-            const when = state.fx ? new Date(state.fx.date) : null;
-            const date = when && !Number.isNaN(when.getTime()) ? when.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : state.fx?.date;
             text('exchangeRate', state.fx ? `Aplicado: 1 USD = ${value} MXN` : 'Sin tipo de cambio');
             $('exchangeRate').classList.toggle('fx-status-ok', !!state.fx);
-            text('fxEvidence', state.fx ? `Capturado el ${date} · ${state.fx.source === 'manual' ? 'captura manual' : state.fx.source}` : 'El sistema no supone un tipo de cambio. Si todo es en pesos, puede quedar vacío.');
+            text('fxEvidence', state.fx ? `Capturado ${hace(state.fx.date)} · ${state.fx.source === 'manual' ? 'captura manual' : state.fx.source}` : 'El sistema no supone un tipo de cambio. Si todo es en pesos, puede quedar vacío.');
+            $('fxEvidence').title = state.fx ? exacta(state.fx.date) : '';
             if (state.fx) clearFieldError($('newExchangeRate'));
             fxShortcuts();
         }
         // 18B: «Elegir cliente» llena el paso 1 con los datos más recientes de un cliente propio.
         const CLIENT_FIELDS = { clientName: 'business_name', clientRfc: 'rfc', clientEmail: 'email', clientContact: 'contact', clientPhone: 'phone' };
         let clientsOrder = 'recent', clientsTimer = null, clientsAbort = null, clientUndo = null;
-        const shortDate = iso => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('es-MX', { dateStyle: 'short' }); };
         async function loadClients() {
             clientsAbort?.abort();
             clientsAbort = new AbortController();
@@ -844,8 +954,9 @@
                 use.type = 'button';
                 use.setAttribute('aria-label', `Usar ${client.business_name}`);
                 use.addEventListener('click', () => useClient(client));
-                item.append(info, element('span', client.rfc || 'Sin RFC', 'small text-muted font-monospace clients-rfc'),
-                    element('span', `${client.quotes_count} ${client.quotes_count === 1 ? 'cotización' : 'cotizaciones'} · ${shortDate(client.last_date)}`, 'small text-muted clients-uso'), use);
+                const usage = element('span', `${client.quotes_count} ${client.quotes_count === 1 ? 'cotización' : 'cotizaciones'} · ${hace(client.last_date)}`, 'small text-muted clients-uso');
+                usage.title = `Última: ${exacta(client.last_date)}`;
+                item.append(info, element('span', client.rfc || 'Sin RFC', 'small text-muted font-monospace clients-rfc'), usage, use);
                 return item;
             }));
         }
@@ -868,7 +979,8 @@
                 $(id).classList.add('client-filled-field');
                 clearFieldError($(id));
             }
-            text('clientFilledText', `Datos tomados de ${client.source_folio} (${shortDate(client.last_date)}). Revísalos: puedes corregir cualquiera.`);
+            text('clientFilledText', `Datos tomados de ${client.source_folio} (${hace(client.last_date)}). Revísalos: puedes corregir cualquiera.`);
+            $('clientFilledText').title = exacta(client.last_date);
             $('clientFilledNotice').classList.remove('d-none');
             closeClients();
             changed();
@@ -910,7 +1022,7 @@
             const session = fxSession.session, syscom = fxSession.syscom;
             const applied = state.fx ? sinCeros(state.fx.value) : null;
             const otherDay = !!state.fx && !esHoy(state.fx.date);
-            const add = (label, note, button, run) => {
+            const add = (label, note, button, run, title = '') => {
                 const chip = document.createElement('span');
                 chip.className = 'fx-sugerido';
                 const strong = document.createElement('strong');
@@ -918,6 +1030,7 @@
                 const small = document.createElement('span');
                 small.className = 'small text-muted';
                 small.textContent = `(${note})`;
+                small.title = title;
                 const action = document.createElement('button');
                 action.type = 'button'; action.className = 'btn btn-sm btn-outline-primary'; action.textContent = button;
                 action.addEventListener('click', run);
@@ -929,7 +1042,7 @@
                 try { use((await tools.guardar({ use_syscom: true })).session.value); } catch (err) { showError(err); }
             };
             if (session && sinCeros(session.value) !== applied) {
-                add(['Tu sesión:', `$${mostrar(session.value)}`], `${origen(session)}, ${cuando(session.date)}`, 'Usar', () => use(session.value));
+                add(['Tu sesión:', `$${mostrar(session.value)}`], `${origen(session)}, ${cuando(session.date)}`, 'Usar', () => use(session.value), exacta(session.date));
             }
             const syscomNew = syscom && sinCeros(syscom.value) !== applied && !(session && sinCeros(session.value) === sinCeros(syscom.value));
             const syscomOffer = !state.fx || otherDay || (session?.source === 'syscom' && sinCeros(session.value) === applied);
@@ -948,6 +1061,7 @@
             const line = blankLine();
             Object.assign(line, { key: snapshot.line_key, persisted: true, kind: snapshot.source_kind,
                 name: snapshot.name, provider: snapshot.provider_name, brand: snapshot.brand, model: snapshot.model,
+                providerCode: snapshot.provider_code, externalId: snapshot.external_id, capturedAt: snapshot.captured_at,
                 description: snapshot.description, quantity: String(storedInteger(snapshot.quantity)),
                 originalPrice: snapshot.source_unit_price, originalCurrency: snapshot.source_currency,
                 originalVat: snapshot.cost_tax_rate_included, mode: snapshot.pricing_mode,
@@ -965,6 +1079,7 @@
             $('transitionNotice').classList.add('d-none');
             state.loadedDetail = detail;
             forgetClientFill();
+            if (state.priceReviewed?.folio !== detail.folio) { state.priceReviewed = null; $('priceReview').classList.add('d-none'); }
             clearIssues(); notice('');
             state.caps = detail.capabilities;
             state.saved = { folio: detail.folio, revision: detail.revision, edit_version: detail.edit_version, state_fingerprint: detail.state_fingerprint };
@@ -1160,6 +1275,7 @@
             state.saved = null; state.transition = null; state.loadedDetail = null; state.readonly = false; state.conflict = false; state.lines = []; state.fx = null;
             $('transitionNotice').classList.add('d-none');
             forgetClientFill();
+            state.priceReviewed = null; $('priceReview').classList.add('d-none');
             for (const id of ['clientName', 'clientRfc', 'clientEmail', 'clientContact', 'clientPhone', 'clientProject', 'quoteNotes', 'newExchangeRate']) $(id).value = '';
             $('quoteConditions').value = defaultConditions;
             $('quoteFolio').value = 'Se asigna al guardar'; $('quoteRevision').value = 'Sin guardar';
@@ -1184,6 +1300,7 @@
             try {
                 const detail = (await api.revision(folio, integer(query.get('transition_revision') || query.get('revision'), 2147483647))).data;
                 loadDetail(detail);
+                if (query.get('revisar') === 'precios') setTimeout(() => { $('priceAge').scrollIntoView({ block: 'center' }); $('reviewPricesBtn').focus(); }, 0);
                 if (query.has('transition_folio')) {
                     if (detail.schema_version !== 1) fail('Esta preparación es solo para un histórico v1.');
                     state.transition = { folio: detail.folio, revision: detail.revision, edit_version: detail.edit_version };

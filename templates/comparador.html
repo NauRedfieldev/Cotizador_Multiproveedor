@@ -92,7 +92,7 @@
             <label for="tipo_cambio" class="fw-semibold mb-0">Tipo de cambio para precios en dólares:</label>
             {% if tipo_cambio %}
             <span class="fx-aplicado"><i class="bi bi-check-lg" aria-hidden="true"></i> 1 USD = ${{ tipo_cambio.valor }} MXN</span>
-            <span class="small text-secondary">{% if tipo_cambio.origen == "syscom" %}SYSCOM · {% else %}capturado {% endif %}{{ tipo_cambio.fecha|date:'d/m/Y H:i' }}{% if tipo_cambio_confirmado and not tipo_cambio_otro_dia %} · confirmado hoy {{ tipo_cambio_confirmado|date:'H:i' }}{% endif %} · se conserva durante tu sesión</span>
+            <span class="small text-secondary">{% if tipo_cambio.origen == "syscom" %}SYSCOM · {% else %}capturado {% endif %}<span title="{{ tipo_cambio_exacta }}">{{ tipo_cambio_hace }}</span>{% if tipo_cambio_confirmado and not tipo_cambio_otro_dia %} · <span title="{{ tipo_cambio_confirmado_exacta }}">confirmado {{ tipo_cambio_confirmado_hace }}</span>{% endif %} · se conserva durante tu sesión</span>
             {% if tipo_cambio_syscom_nuevo %}
             <span class="fx-sugerido">SYSCOM ahora: <strong>${{ tipo_cambio_syscom_nuevo }}</strong>
                 <button type="submit" name="usar_tipo_cambio" value="actualizar" class="btn btn-sm btn-outline-primary">Actualizar</button></span>
