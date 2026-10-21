@@ -601,6 +601,55 @@ def _listado_propio(actor, params):
         "pagination": {"page": selected.number, "pages": paginator.num_pages, "count": paginator.count}}
 
 
+MAX_CLIENTES = 50
+
+
+def _clientes_frecuentes(actor, params):
+    """18B: clientes de las cotizaciones propias, sin tabla nueva.
+
+    Un cliente se reconoce por su RFC (o, sin RFC, por la razón social). Sus datos son los de la
+    revisión más reciente; el proyecto no se devuelve porque cambia en cada cotización.
+    """
+    actor = require_commercial_permission(actor)
+    if set(params) - {"q", "order"} or any(len(params.getlist(k)) != 1 for k in params):
+        raise _EntradaInvalida("Filtros de clientes inválidos.")
+    query = params.get("q", "").strip().casefold()
+    order = params.get("order", "recent")
+    if len(query) > 200 or order not in ("recent", "count", "az"):
+        raise _EntradaInvalida("Búsqueda u orden inválidos.")
+    latest = QuoteRevision.objects.filter(quote_id=OuterRef("quote_id")).order_by("-number").values("pk")[:1]
+    rows = (QuoteRevision.objects.filter(quote__advisor_id=actor.pk).annotate(latest_id=Subquery(latest))
+            .filter(pk=F("latest_id")).select_related("quote").order_by("-created_at", "-pk"))
+    clientes = {}
+    for revision in rows:
+        datos = revision.header.get("client") or {}
+        nombre = (datos.get("business_name") or "").strip()
+        if not nombre:
+            continue
+        rfc = (datos.get("rfc") or "").strip().upper()
+        clave = ("rfc", rfc) if rfc else ("nombre", " ".join(nombre.casefold().split()))
+        if clave in clientes:  # ya está con sus datos más recientes; solo se cuenta
+            clientes[clave]["quotes_count"] += 1
+            continue
+        clientes[clave] = {"business_name": nombre, "rfc": rfc, "email": datos.get("email") or "",
+                           "contact": datos.get("contact") or "", "phone": datos.get("phone") or "",
+                           "source_folio": revision.quote.folio, "last_date": revision.created_at.isoformat(),
+                           "quotes_count": 1}
+    lista = [c for c in clientes.values()
+             if not query or any(query in c[k].casefold() for k in ("business_name", "rfc", "email", "contact"))]
+    if order == "count":
+        lista.sort(key=lambda c: -c["quotes_count"])  # sort estable: empates quedan por recientes
+    elif order == "az":
+        lista.sort(key=lambda c: c["business_name"].casefold())
+    return {"data": lista[:MAX_CLIENTES], "count": len(lista)}
+
+
+@_api("GET")
+async def clientes_frecuentes(request):
+    return JsonResponse({"success": True, **await sync_to_async(_clientes_frecuentes, thread_sensitive=True)(
+        await request.auser(), request.GET)})
+
+
 @_api("GET")
 async def resumen_documental(request, folio, numero):
     def read(actor):

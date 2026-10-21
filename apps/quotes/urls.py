@@ -20,6 +20,8 @@ urlpatterns = [
     path("api/v1/commercial/permissions/<int:user_id>/", api.permisos_comerciales, name="api_permisos_comerciales"),
     # M7a: cotizaciones sobre los servicios de M8 (docs/28 y docs/25 M8 §2).
     path("api/v1/quotes/", api.crear_cotizacion, name="api_crear_cotizacion"),
+    # 18B: clientes de las cotizaciones propias para «Elegir cliente».
+    path("api/v1/clients/", api.clientes_frecuentes, name="api_clientes_frecuentes"),
     path("api/v1/quotes/<str:folio>/", api.detalle_cotizacion, name="api_detalle_cotizacion"),
     path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/", api.guardar_revision, name="api_guardar_revision"),
     path("api/v1/quotes/<str:folio>/revisiones/<int:numero>/resumen/", api.resumen_documental, name="api_resumen_documental"),

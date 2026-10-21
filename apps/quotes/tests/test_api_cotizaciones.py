@@ -1074,3 +1074,86 @@ class CommercialAPIMigrationTests(TransactionTestCase):
             self.assertTrue(historical.get_model("quotes", "QuoteRevision").objects.filter(pk=revision.pk).exists())
         finally:
             MigrationExecutor(connection).migrate(latest)
+
+
+@override_settings(CCONOR_EMPRESA=EMPRESA_QA)
+class ClientesFrecuentesTests(CommercialFixtures, TestCase):
+    """18B: «Elegir cliente» lista los clientes de las cotizaciones propias, sin tabla nueva."""
+    send = CommercialAPITests.send
+    create = CommercialAPITests.create
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.actor)
+
+    def clientes(self, status=200, **params):
+        response = self.client.get(reverse("api_clientes_frecuentes"), params)
+        self.assertEqual(response.status_code, status, response.content.decode()[:500])
+        return response.json()
+
+    def alta(self, **cliente):
+        datos = {"client_name": "Constructora Norte SA de CV", "client_rfc": "CNO120304AB1", "client_email": "a@cnorte.example.com",
+                 "client_contact": "Ing. Ramírez", "client_phone": "618 000 0000", "client_project": "Obra sintética"}
+        datos.update(cliente)
+        return self.create(alta_comercial(**datos))
+
+    def test_c1_un_cliente_por_rfc_con_los_datos_mas_recientes(self):
+        self.alta(client_email="viejo@cnorte.example.com")
+        reciente = self.alta(client_name="Constructora Norte", client_email="nuevo@cnorte.example.com", client_contact="Lic. Soto")
+        resultado = self.clientes()
+        self.assertEqual(resultado["count"], 1)
+        cliente = resultado["data"][0]
+        self.assertEqual({k: cliente[k] for k in ("business_name", "rfc", "email", "contact", "phone", "source_folio", "quotes_count")},
+                         {"business_name": "Constructora Norte", "rfc": "CNO120304AB1", "email": "nuevo@cnorte.example.com",
+                          "contact": "Lic. Soto", "phone": "618 000 0000", "source_folio": reciente["folio"], "quotes_count": 2})
+        self.assertNotIn("project", cliente)                      # el proyecto cambia en cada cotización
+        self.assertNotIn("Obra sintética", json.dumps(resultado))
+
+    def test_c2_sin_rfc_se_agrupa_por_razon_social(self):
+        self.alta(client_name="Hotel  Río Nazas", client_rfc="", client_email="")
+        self.alta(client_name="hotel río nazas", client_rfc="")
+        self.alta(client_name="Hotel Río Nazas", client_rfc="HRN080512PQ3")   # con RFC es otro cliente
+        nombres = sorted((c["business_name"], c["rfc"], c["quotes_count"]) for c in self.clientes()["data"])
+        self.assertEqual(nombres, [("Hotel Río Nazas", "HRN080512PQ3", 1), ("hotel río nazas", "", 2)])
+
+    def test_c3_solo_cotizaciones_propias(self):
+        ajena = self.alta(client_name="Cliente ajeno", client_rfc="CAJ010101AA1")
+        quote = Quote.objects.get(folio=ajena["folio"])
+        quote.advisor = self.other
+        quote.save(update_fields=["advisor"])
+        self.alta()
+        self.assertEqual([c["business_name"] for c in self.clientes()["data"]], ["Constructora Norte SA de CV"])
+        self.client.force_login(self.staff)
+        self.assertEqual(self.clientes(), {"success": True, "data": [], "count": 0})
+
+    def test_c4_busqueda_y_orden(self):
+        self.alta(client_name="Beta Redes", client_rfc="BRE010101AA1", client_email="compras@beta.example.com", client_contact="Ana")
+        for _ in range(2):
+            self.alta(client_name="Alfa Seguridad", client_rfc="ASE010101AA1", client_email="", client_contact="Luis")
+        self.alta(client_name="Gamma Obras", client_rfc="GOB010101AA1", client_contact="")
+        nombres = lambda **p: [c["business_name"] for c in self.clientes(**p)["data"]]
+        self.assertEqual(nombres(), ["Gamma Obras", "Alfa Seguridad", "Beta Redes"])          # recientes
+        self.assertEqual(nombres(order="count"), ["Alfa Seguridad", "Gamma Obras", "Beta Redes"])
+        self.assertEqual(nombres(order="az"), ["Alfa Seguridad", "Beta Redes", "Gamma Obras"])
+        self.assertEqual(nombres(q="ase010101"), ["Alfa Seguridad"])                        # RFC
+        self.assertEqual(nombres(q="COMPRAS@BETA"), ["Beta Redes"])                         # correo
+        self.assertEqual(nombres(q="luis"), ["Alfa Seguridad"])                             # contacto
+        self.assertEqual(self.clientes(q="nadie"), {"success": True, "data": [], "count": 0})
+
+    def test_c5_usa_la_ultima_revision_de_cada_cotizacion(self):
+        original = self.issue(self.commercial_draft())
+        from apps.quotes.snapshots import crear_revision_comercial
+        from apps.quotes.tests.test_commercial_persistence import commercial_line
+        draft = crear_revision_comercial(original.pk, [commercial_line()], actor=self.actor, request_id=uuid4(),
+            tax_rate=Decimal(".16"), discount_percent=Decimal("0"), tipo_cambio=None, exchange_context_id=None)
+        self.commercial_edit(draft, client={**draft.header["client"], "business_name": "Cliente revisado", "email": "rev@example.com"})
+        resultado = self.clientes()["data"]
+        self.assertEqual([(c["business_name"], c["email"], c["quotes_count"]) for c in resultado], [("Cliente revisado", "rev@example.com", 1)])
+
+    def test_c6_entradas_invalidas_sesion_y_metodo(self):
+        url = reverse("api_clientes_frecuentes")
+        for query in ("order=precio", "q=a&q=b", "otro=1", "q=" + "x" * 201):
+            self.assertEqual(self.client.get(url + "?" + query).status_code, 400, query)
+        self.assertEqual(self.client.post(url).status_code, 405)
+        self.client.logout()
+        self.assertEqual(self.client.get(url).status_code, 401)

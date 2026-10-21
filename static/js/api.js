@@ -597,6 +597,7 @@ apiClient.commercial = Object.freeze({
     create: data => commercialRequest('/quotes/', { method: 'POST', data, mutation: true }),
     revision: (folio, number) => commercialRequest(revisionPath(folio, number)),
     list: (filters, signal) => commercialRequest(`/quotes/?${new URLSearchParams(filters)}`, { signal }),
+    clients: (filters, signal) => commercialRequest(`/clients/?${new URLSearchParams(filters)}`, { signal }),
     summary: (folio, number, signal) => commercialRequest(`${revisionPath(folio, number)}resumen/`, { signal }),
     emit: (folio, number, data) => commercialRequest(`${revisionPath(folio, number)}emitir/`, { method: 'POST', data, mutation: true }),
     clone: (folio, number, data) => commercialRequest(`${revisionPath(folio, number)}nueva/`, { method: 'POST', data, mutation: true }),

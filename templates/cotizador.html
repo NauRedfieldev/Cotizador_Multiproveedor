@@ -39,7 +39,11 @@
     <div id="quoteNotice" class="alert alert-info small d-none" role="status"></div>
 
     <section class="cconor-card p-3 mb-4" aria-labelledby="step1Title">
-        <div class="step-title"><span class="step-badge" aria-hidden="true">1</span><h5 class="fw-bold mb-0" id="step1Title">Datos del cliente</h5></div>
+        <div class="step-title"><span class="step-badge" aria-hidden="true">1</span><h5 class="fw-bold mb-0" id="step1Title">Datos del cliente</h5>
+            <button type="button" id="chooseClientBtn" class="btn btn-sm btn-outline-primary ms-auto" disabled><i class="bi bi-people me-1" aria-hidden="true"></i>Elegir cliente</button></div>
+        <!-- 18B: aviso tras llenar con «Elegir cliente»; «Deshacer» devuelve lo que había. -->
+        <div id="clientFilledNotice" class="client-filled-notice d-none" role="status"><i class="bi bi-check-lg" aria-hidden="true"></i>
+            <span id="clientFilledText"></span><button type="button" id="clientUndoBtn" class="btn btn-link btn-sm p-0 ms-auto">Deshacer</button></div>
         <fieldset id="quoteHeader" disabled>
             <div class="row g-3">
                 <div class="col-md-5"><label for="clientName" class="form-label">Razón social *</label><input id="clientName" class="form-control form-control-sm" maxlength="255" autocomplete="organization" required></div>
@@ -146,6 +150,28 @@
         </div>
         <button type="button" id="quoteErrorClose" class="btn-close" aria-label="Cerrar aviso"></button>
     </div>
+    <!-- 18B: clientes de las cotizaciones propias (api/v1/clients/). -->
+    <dialog id="clientsDialog" class="quote-issues-dialog clients-dialog" aria-labelledby="clientsTitle">
+        <div class="p-4">
+            <div class="d-flex gap-3 align-items-start mb-3">
+                <div class="flex-grow-1">
+                    <h5 id="clientsTitle" class="fw-bold mb-1">Elegir cliente</h5>
+                    <p class="small text-muted mb-0">Clientes de tus cotizaciones anteriores, con sus datos más recientes.</p>
+                </div>
+                <button type="button" id="clientsClose" class="btn-close" aria-label="Cerrar"></button>
+            </div>
+            <label for="clientsSearch" class="visually-hidden">Buscar cliente</label>
+            <input id="clientsSearch" type="search" class="form-control mb-2" placeholder="Buscar por nombre, RFC, correo o contacto" autocomplete="off" maxlength="200">
+            <div class="btn-group btn-group-sm mb-3" role="group" aria-label="Ordenar clientes">
+                <button type="button" class="btn btn-outline-primary active" data-client-order="recent" aria-pressed="true">Recientes</button>
+                <button type="button" class="btn btn-outline-primary" data-client-order="count" aria-pressed="false">Más cotizados</button>
+                <button type="button" class="btn btn-outline-primary" data-client-order="az" aria-pressed="false">A–Z</button>
+            </div>
+            <div id="clientsStatus" class="small text-muted mb-2" role="status" aria-live="polite"></div>
+            <ul id="clientsList" class="list-group clients-list"></ul>
+        </div>
+    </dialog>
+
     <dialog id="quoteIssuesDialog" class="quote-issues-dialog" aria-labelledby="quoteIssuesTitle">
         <div class="p-4">
             <div class="d-flex gap-3 align-items-start mb-3">
@@ -162,4 +188,4 @@
     </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=20"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=21"></script>{% endblock %}

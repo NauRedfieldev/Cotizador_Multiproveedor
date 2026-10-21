@@ -736,6 +736,20 @@ solo crean su contenedor cuando hay mensajes. Caché: `custom.css?v=10`, `home.c
   - La cotización sigue guardando el origen `manual` (decisión del usuario): el cliente nunca ve el tipo
     de cambio; el PDF comercial v2 no lo muestra (solo los PDF históricos v1 lo traían).
 
+### 14.9 Cotizador: «Elegir cliente» (diseño 18B, 2026-10-21)
+
+- En el paso 1, «Elegir cliente» abre una ventana con los clientes de las **cotizaciones propias**
+  (como Mis cotizaciones), con buscador (nombre, RFC, correo o contacto) y orden: Recientes, Más
+  cotizados o A–Z. «Usar» llena razón social, RFC, correo, contacto y teléfono; el **proyecto no se
+  copia** porque cambia en cada cotización. Los campos llenados se ven en verde suave hasta editarlos, y el
+  aviso «Datos tomados de FOLIO (fecha) · Deshacer» devuelve lo que había. Nada se guarda hasta «Guardar
+  borrador». Deshabilitado cuando el paso 1 no se puede editar (emitida, sin permiso, transición v1).
+- **Sin tabla nueva:** `GET /api/v1/clients/?q=&order=recent|count|az` (`api.clientes_frecuentes`, mismo
+  permiso que el listado) recorre la última revisión de cada cotización propia. Un cliente se reconoce por
+  su RFC; sin RFC, por la razón social (sin distinguir mayúsculas ni espacios de más). Sus datos son los de
+  la revisión más reciente; `quotes_count` cuenta sus cotizaciones. Devuelve hasta 50 y `count` total.
+- Pruebas: `ClientesFrecuentesTests` (C1–C6) en `test_api_cotizaciones.py`.
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 > **Rediseño 12A (2026-10-20, rama `feature/ui-interfaz-general`).** La pantalla pasó a lista y

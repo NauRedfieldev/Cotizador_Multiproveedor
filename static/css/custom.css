@@ -1077,3 +1077,57 @@ body.quote-scrolled .quote-error-toast { top: 84px; }
     font-weight: 700;
     color: var(--cconor-azul-marino);
 }
+
+/* ==========================================================================
+   18B: ELEGIR CLIENTE (cotizador, paso 1)
+   ========================================================================== */
+.clients-dialog {
+    width: min(760px, calc(100vw - 32px));
+}
+
+.clients-list {
+    max-height: min(420px, 55vh);
+    overflow-y: auto;
+}
+
+.clients-list .clients-rfc {
+    width: 8.5rem;
+    flex-shrink: 0;
+}
+
+.clients-list .clients-uso {
+    width: 9.5rem;
+    flex-shrink: 0;
+}
+
+@media (max-width: 575.98px) {
+    .clients-list .list-group-item { flex-wrap: wrap; }
+    .clients-list .clients-rfc,
+    .clients-list .clients-uso { width: auto; }
+}
+
+/* Campos llenados con «Elegir cliente»: verde suave hasta que el asesor los edite. */
+.client-filled-field {
+    background-color: #F1F8F7 !important;
+}
+
+.client-filled-notice {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 10px;
+    background: #F1F8F7;
+    color: var(--cconor-eleccion);
+    font-size: 0.875rem;
+}
+
+.client-filled-notice.d-none {
+    display: none !important;
+}
+
+.client-filled-notice .btn-link {
+    color: var(--cconor-azul-marino);
+    font-weight: 600;
+}

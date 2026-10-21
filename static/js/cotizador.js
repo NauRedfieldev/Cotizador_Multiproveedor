@@ -272,6 +272,8 @@
             if (state.busy || state.pending) for (const control of $('quoteWarnings').querySelectorAll('button')) control.disabled = true;
             for (const control of $('resultsList').querySelectorAll('button')) control.disabled = !allowed || control.dataset.verified !== 'true';
             $('quoteHeader').disabled = !allowed || !!state.transition;
+            $('chooseClientBtn').disabled = $('quoteHeader').disabled;
+            $('clientUndoBtn').disabled = $('quoteHeader').disabled;
             $('quoteNotes').disabled = !allowed || !!state.saved || !!state.transition;
             $('viewSummaryBtn').disabled = state.busy || !!state.pending || !!state.fxPending || !state.saved || state.dirty || !state.caps;
             for (const id of ['saveQuoteBtn', 'clearTableBtn', 'addManualBtn', 'searchProductBtn', 'productSearchInput', 'newQuoteBtn', 'applyFxBtn', 'clearFxBtn', 'newExchangeRate', 'taxRate', 'discountPercent']) {
@@ -737,6 +739,92 @@
             if (state.fx) clearFieldError($('newExchangeRate'));
             fxShortcuts();
         }
+        // 18B: «Elegir cliente» llena el paso 1 con los datos más recientes de un cliente propio.
+        const CLIENT_FIELDS = { clientName: 'business_name', clientRfc: 'rfc', clientEmail: 'email', clientContact: 'contact', clientPhone: 'phone' };
+        let clientsOrder = 'recent', clientsTimer = null, clientsAbort = null, clientUndo = null;
+        const shortDate = iso => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('es-MX', { dateStyle: 'short' }); };
+        async function loadClients() {
+            clientsAbort?.abort();
+            clientsAbort = new AbortController();
+            text('clientsStatus', 'Buscando…');
+            try {
+                const body = await api.clients({ q: $('clientsSearch').value.trim(), order: clientsOrder }, clientsAbort.signal);
+                renderClients(body.data, body.count);
+            } catch (err) {
+                if (err.name === 'AbortError') return;
+                $('clientsList').replaceChildren();
+                text('clientsStatus', err.message);
+            }
+        }
+        function renderClients(list, count) {
+            const searching = !!$('clientsSearch').value.trim();
+            text('clientsStatus', !count ? (searching ? 'Ningún cliente coincide con la búsqueda.' : 'Aún no tienes cotizaciones guardadas; captura el cliente a mano.')
+                : count > list.length ? `Mostrando ${list.length} de ${count}; escribe para afinar la búsqueda.` : `${count} ${count === 1 ? 'cliente' : 'clientes'}`);
+            $('clientsList').replaceChildren(...list.map(client => {
+                const item = element('li', '', 'list-group-item d-flex align-items-center gap-3');
+                const info = element('div', '', 'flex-grow-1');
+                info.append(element('div', client.business_name, 'fw-semibold'),
+                    element('div', [client.contact, client.email].filter(Boolean).join(' · ') || 'Sin contacto guardado', 'small text-muted'));
+                const use = element('button', 'Usar', 'btn btn-sm btn-outline-primary');
+                use.type = 'button';
+                use.setAttribute('aria-label', `Usar ${client.business_name}`);
+                use.addEventListener('click', () => useClient(client));
+                item.append(info, element('span', client.rfc || 'Sin RFC', 'small text-muted font-monospace clients-rfc'),
+                    element('span', `${client.quotes_count} ${client.quotes_count === 1 ? 'cotización' : 'cotizaciones'} · ${shortDate(client.last_date)}`, 'small text-muted clients-uso'), use);
+                return item;
+            }));
+        }
+        function openClients() {
+            if ($('chooseClientBtn').disabled) return;
+            const dialog = $('clientsDialog');
+            if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+            $('clientsSearch').focus();
+            loadClients();
+        }
+        function closeClients() {
+            clientsAbort?.abort();
+            const dialog = $('clientsDialog');
+            if (typeof dialog.close === 'function' && dialog.open) dialog.close(); else dialog.removeAttribute('open');
+        }
+        function useClient(client) {
+            clientUndo = Object.fromEntries(Object.keys(CLIENT_FIELDS).map(id => [id, $(id).value]));
+            for (const [id, key] of Object.entries(CLIENT_FIELDS)) {
+                $(id).value = client[key] || '';
+                $(id).classList.add('client-filled-field');
+                clearFieldError($(id));
+            }
+            text('clientFilledText', `Datos tomados de ${client.source_folio} (${shortDate(client.last_date)}). Revísalos: puedes corregir cualquiera.`);
+            $('clientFilledNotice').classList.remove('d-none');
+            closeClients();
+            changed();
+            $('clientProject').focus();
+        }
+        function forgetClientFill() {
+            clientUndo = null;
+            $('clientFilledNotice').classList.add('d-none');
+            for (const id of Object.keys(CLIENT_FIELDS)) $(id).classList.remove('client-filled-field');
+        }
+        $('chooseClientBtn').addEventListener('click', openClients);
+        $('clientsClose').addEventListener('click', closeClients);
+        $('clientsSearch').addEventListener('input', () => { clearTimeout(clientsTimer); clientsTimer = setTimeout(loadClients, 250); });
+        for (const button of document.querySelectorAll('[data-client-order]')) {
+            button.addEventListener('click', () => {
+                clientsOrder = button.dataset.clientOrder;
+                for (const other of document.querySelectorAll('[data-client-order]')) {
+                    other.classList.toggle('active', other === button);
+                    other.setAttribute('aria-pressed', String(other === button));
+                }
+                loadClients();
+            });
+        }
+        $('clientUndoBtn').addEventListener('click', () => {
+            if (!clientUndo || $('clientUndoBtn').disabled) return;
+            for (const [id, value] of Object.entries(clientUndo)) $(id).value = value;
+            forgetClientFill();
+            changed();
+        });
+        // Al editar un campo llenado deja de marcarse: ya es dato del asesor.
+        $('quoteHeader').addEventListener('input', event => event.target.classList.remove('client-filled-field'));
         // 16A: atajos del tipo de cambio de la sesión (main.js) y de SYSCOM. Nunca se aplican solos.
         function fxShortcuts() {
             const box = $('fxShortcuts');
@@ -801,6 +889,7 @@
             state.transition = null;
             $('transitionNotice').classList.add('d-none');
             state.loadedDetail = detail;
+            forgetClientFill();
             clearIssues(); notice('');
             state.caps = detail.capabilities;
             state.saved = { folio: detail.folio, revision: detail.revision, edit_version: detail.edit_version, state_fingerprint: detail.state_fingerprint };
@@ -994,6 +1083,7 @@
             if (state.dirty && !window.confirm('Descartar cambios no guardados y preparar otra cotización?')) return;
             state.saved = null; state.transition = null; state.loadedDetail = null; state.readonly = false; state.conflict = false; state.lines = []; state.fx = null;
             $('transitionNotice').classList.add('d-none');
+            forgetClientFill();
             for (const id of ['clientName', 'clientRfc', 'clientEmail', 'clientContact', 'clientPhone', 'clientProject', 'quoteNotes', 'newExchangeRate']) $(id).value = '';
             $('quoteConditions').value = defaultConditions;
             $('quoteFolio').value = 'Se asigna al guardar'; $('quoteRevision').value = 'Sin guardar';
