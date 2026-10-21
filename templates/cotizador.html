@@ -17,7 +17,10 @@
                 <p class="mb-0 mt-2">Guardar un borrador no emite ni envía documentos. «Ver resumen» abre únicamente la revisión guardada, sin cambios pendientes.</p>
             </details>
         </div>
-        <button type="button" id="newQuoteBtn" class="btn btn-outline-primary"><i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Nueva cotización</button>
+        <div class="d-flex flex-wrap gap-2">
+            <button type="button" id="newQuoteBtn" class="btn btn-outline-primary"><i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Nueva cotización</button>
+            <button type="button" id="topSaveBtn" class="btn btn-cconor-primary" disabled>Guardar borrador</button>
+        </div>
     </div>
     {# Barra fija (5B): aparece al bajar; el menú del sitio deja de ser fijo en esta página. #}
     <div id="quoteStickyBar" class="quote-sticky-bar" aria-hidden="true">
@@ -198,4 +201,4 @@
     </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=24"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=26"></script>{% endblock %}
