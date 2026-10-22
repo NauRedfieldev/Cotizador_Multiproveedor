@@ -1188,7 +1188,7 @@ body.quote-scrolled .quote-error-toast { top: 84px; }
 
 .bandeja-panel {
     width: min(360px, calc(100vw - 32px));
-    max-height: min(70vh, 560px);
+    max-height: min(82vh, 700px);   /* 6A: más alto para que quepan la lista y el destino */
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -1215,7 +1215,7 @@ body.quote-scrolled .quote-error-toast { top: 84px; }
 /* Con muchos productos solo la lista se desplaza; encabezado y botones quedan fijos. */
 .bandeja-lista {
     flex: 1 1 auto;
-    min-height: 0;
+    min-height: 4.5rem;
     overflow-y: auto;
 }
 
@@ -1593,4 +1593,197 @@ body.line-drag-active {
 .lines-order-hint {
     font-size: 0.8rem;
     color: #5B5F7A;
+}
+
+/* 6A: destino de la bandeja del comparador (cotización nueva o un borrador propio). */
+.bandeja-destino {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin: 0;
+    padding: 0.25rem 0 0;
+    border: 0;
+}
+
+.bandeja-destino-titulo {
+    float: none;
+    width: auto;
+    margin: 0 0 0.1rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.bandeja-opcion {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid #D9D6E8;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.bandeja-opcion input,
+.bandeja-borrador input {
+    margin: 0;
+    accent-color: var(--cconor-eleccion);
+}
+
+.bandeja-opcion:has(input:checked) {
+    border-color: var(--cconor-eleccion);
+    background: #F3FAF8;
+    font-weight: 600;
+}
+
+.bandeja-borradores {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding-top: 0.4rem;
+}
+
+.bandeja-borradores[hidden] {
+    display: none !important;
+}
+
+.bandeja-borradores-lista {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.bandeja-borrador {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0.4rem 0.5rem;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.bandeja-borrador:hover {
+    background: var(--cconor-lavanda-claro);
+}
+
+.bandeja-borrador:has(input:checked) {
+    background: #E6F2F0;
+}
+
+.bandeja-borrador-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.bandeja-borrador-cliente {
+    overflow: hidden;
+    color: #3D4160;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.bandeja-borrador-fecha {
+    color: #5B5F7A;
+    font-size: 0.75rem;
+    text-align: right;
+    white-space: nowrap;
+}
+
+/* 8C: «Agregar» con la bandeja cerrada: la pastilla se estira con el producto y un punto «vuela» hacia ella. */
+.bandeja-pastilla-base,
+.bandeja-pastilla-aviso,
+.bandeja-pastilla-conteo {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.bandeja-pastilla-aviso,
+.bandeja-pastilla-conteo,
+.bandeja-pastilla.is-aviso .bandeja-pastilla-base {
+    display: none;
+}
+
+.bandeja-pastilla.is-aviso {
+    height: 60px;
+    gap: 0.75rem;
+    padding: 0 0.6rem 0 0.5rem;
+    animation: bandeja-estirar 0.35s ease-out;
+}
+
+.bandeja-pastilla.is-aviso .bandeja-pastilla-aviso,
+.bandeja-pastilla.is-aviso .bandeja-pastilla-conteo {
+    display: inline-flex;
+}
+
+.bandeja-aviso-check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    background: var(--cconor-eleccion);
+    font-size: 1.3rem;
+}
+
+.bandeja-aviso-texto {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
+    max-width: min(300px, calc(100vw - 190px));
+    text-align: left;
+    line-height: 1.25;
+}
+
+.bandeja-aviso-texto strong {
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 0.95rem;
+}
+
+.bandeja-aviso-texto span {
+    color: var(--cconor-gris-violeta);
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.bandeja-pastilla-conteo {
+    gap: 0.35rem;
+    height: 40px;
+    padding: 0 0.75rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+@keyframes bandeja-estirar {
+    from { transform: scale(0.92); opacity: 0.6; }
+    to { transform: scale(1); opacity: 1; }
+}
+
+.bandeja-vuelo {
+    position: fixed;
+    z-index: 1050;
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: var(--cconor-eleccion);
+    box-shadow: 0 0 0 5px rgba(0, 121, 107, 0.25);
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .bandeja-pastilla.is-aviso { animation: none; }
 }

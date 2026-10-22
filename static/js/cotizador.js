@@ -1600,9 +1600,10 @@
             const folio = query.get('transition_folio') || query.get('folio');
             if (!folio || !state.caps) return;
             state.busy = true; locks();
+            let loaded = false;
             try {
                 const detail = (await api.revision(folio, integer(query.get('transition_revision') || query.get('revision'), 2147483647))).data;
-                loadDetail(detail);
+                loadDetail(detail); loaded = true;
                 if (query.get('revisar') === 'precios') setTimeout(() => { $('priceAge').scrollIntoView({ block: 'center' }); $('reviewPricesBtn').focus(); }, 0);
                 if (query.has('transition_folio')) {
                     if (detail.schema_version !== 1) fail('Esta preparación es solo para un histórico v1.');
@@ -1615,6 +1616,24 @@
                 }
             } catch (err) { showError(err); }
             finally { state.busy = false; locks(); renderLines(); }
+            if (loaded && query.get('bandeja') === 'traer' && !query.has('transition_folio')) await trayFromComparator();
+        }
+        // 6A: «Agregar a COT-…» en la bandeja del comparador abre aquí ese borrador y trae la bandeja
+        // (misma consulta al proveedor que «Traer»). No guarda: el asesor revisa y pulsa «Actualizar borrador».
+        async function trayFromComparator() {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('bandeja');
+            history.replaceState(null, '', url);
+            if (!editable()) {
+                error('Esta cotización ya no es un borrador editable; la bandeja del comparador sigue intacta.', { title: 'No se trajo la bandeja' });
+                return;
+            }
+            await loadTray();
+            if (!trayItems.length) { notice('La bandeja del comparador está vacía; no se agregó nada.'); return; }
+            const before = state.lines.length;
+            await bringTray();
+            if (state.lines.length > before) notice('Se trajo la bandeja a este borrador. Revisa las partidas nuevas y pulsa «Actualizar borrador» para guardarlas.');
+            $('trayResults').scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
         $('quoteConditions').value = defaultConditions;  // Una revisión abierta después trae las suyas.
         fxSession = window.cconorTipoCambio?.ultimo() ?? null;
