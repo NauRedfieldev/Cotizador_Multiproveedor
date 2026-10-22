@@ -1787,3 +1787,210 @@ body.line-drag-active {
 @media (prefers-reduced-motion: reduce) {
     .bandeja-pastilla.is-aviso { animation: none; }
 }
+
+/* 5A (lienzo fila 9): «Cotizar como». Logo en hueco fijo para que los nombres empiecen alineados; RFC
+   debajo; el color de la marca elegida (--empresa-color/texto/tinte, los pone cotizador.js) en franja,
+   bordes, etiqueta, pasos y folio. Sin dos empresas configuradas nada de esto aparece. */
+.company-strip {
+    height: 6px;
+    margin: -1rem 0 1rem;
+    border-radius: 0 0 6px 6px;
+    background: var(--empresa-color, var(--cconor-eleccion));
+    transition: background-color 0.2s ease;
+}
+
+.company-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 30px;
+    padding: 0 0.75rem;
+    border-radius: 999px;
+    background: var(--empresa-tinte, #E6F2F0);
+    color: var(--empresa-texto, var(--cconor-eleccion));
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.company-chip-dot,
+.company-hint-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--empresa-color, var(--cconor-eleccion));
+}
+
+#commercialQuoteApp.has-company .step-badge {
+    background: var(--empresa-color, var(--cconor-eleccion));
+}
+
+.company-switch {
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.company-switch-title {
+    float: none;
+    width: auto;
+    margin: 0 0 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.company-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1rem;
+    max-width: 1040px;
+}
+
+.company-option {
+    position: relative;
+    display: grid;
+    grid-template-columns: 160px 1px minmax(0, 1fr);
+    align-items: center;
+    gap: 1.1rem;
+    min-height: 84px;
+    margin: 0;
+    padding: 0 3.5rem 0 1.1rem;
+    border: 1px solid var(--cconor-gris-violeta);
+    border-radius: 14px;
+    background: #FFFFFF;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.company-logo-slot {
+    display: flex;
+    align-items: center;
+    height: 48px;
+}
+
+.company-logo {
+    max-width: 150px;
+    max-height: 44px;
+    object-fit: contain;
+    transition: filter 0.15s ease, opacity 0.15s ease;
+}
+
+.company-initials {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: var(--empresa-color, var(--cconor-azul-marino));
+    color: #FFFFFF;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+.company-divider {
+    width: 1px;
+    height: 44px;
+    background: #E2DFEC;
+}
+
+.company-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+    line-height: 1.25;
+}
+
+.company-name {
+    overflow: hidden;
+    font-size: 1.05rem;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.company-rfc {
+    color: #5B5F7A;
+    font-size: 0.8rem;
+}
+
+.company-badge {
+    position: absolute;
+    top: 50%;
+    right: 0.9rem;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    min-width: 26px;
+    height: 26px;
+    padding: 0 0.45rem;
+    border-radius: 999px;
+    background: var(--empresa-color);
+    color: #FFFFFF;
+    font-size: 0.75rem;
+    font-weight: 600;
+    transform: translateY(-50%);
+}
+
+/* Elegida: borde y fondo de su marca, con palomita (o candado «Fija» al guardar). */
+.btn-check:checked + .company-option {
+    border-color: var(--empresa-color);
+    box-shadow: inset 0 0 0 1px var(--empresa-color);   /* 2 px sin mover el contenido: nombres alineados */
+    background: var(--empresa-tinte);
+}
+
+.btn-check:checked + .company-option .company-badge {
+    display: inline-flex;
+}
+
+/* No elegida: gris, logo sin color. */
+.btn-check:not(:checked) + .company-option .company-logo {
+    filter: grayscale(1);
+    opacity: 0.55;
+}
+
+.btn-check:not(:checked) + .company-option .company-name {
+    color: #5B5F7A;
+}
+
+.btn-check:focus-visible + .company-option {
+    outline: 3px solid var(--empresa-color);
+    outline-offset: 2px;
+}
+
+.btn-check:disabled + .company-option {
+    cursor: default;
+}
+
+.company-switch.is-locked .btn-check:not(:checked) + .company-option {
+    border-style: dashed;
+    background: #FAFAFC;
+    opacity: 0.6;
+}
+
+.company-hint-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    max-width: 1040px;
+    margin-top: 0.6rem;
+    color: #3D4160;
+}
+
+.company-folio {
+    margin-left: auto;
+    padding: 0.25rem 0.7rem;
+    border-radius: 8px;
+    background: var(--empresa-tinte);
+    color: var(--empresa-texto);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+@media (max-width: 575.98px) {
+    .company-option { grid-template-columns: 110px 1px minmax(0, 1fr); padding-right: 3rem; }
+    .company-logo { max-width: 104px; }
+}

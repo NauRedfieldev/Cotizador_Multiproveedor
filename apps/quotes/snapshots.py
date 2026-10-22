@@ -7,6 +7,7 @@ proveedores, ni se copian originales desde los campos legacy de dos decimales.
 import hashlib
 import json
 import logging
+import re
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta, timezone as dt_timezone
@@ -115,11 +116,16 @@ def _header(quote, company, conditions, client):
         raise ValidationError("Cabecera estructurada requerida.")
     company_keys = ("name", "rfc", "tagline", "phone", "email")
     client_keys = ("business_name", "rfc", "contact", "email", "phone", "project")
-    if set(company) - set(company_keys) - {"advisor"} or set(client) - set(client_keys):
+    if set(company) - set(company_keys) - {"advisor", "key"} or set(client) - set(client_keys):
         raise ValidationError("Campos desconocidos en la cabecera.")
     if len(conditions) > 50:
         raise ValidationError("Máximo 50 condiciones.")
     c = {key: _text(company.get(key, ""), required=key == "name", limit=500) for key in company_keys}
+    # 5A: de qué empresa es la revisión (cconor | torva); sin clave (revisiones anteriores) se lee como CCONOR.
+    if "key" in company:
+        if not isinstance(company["key"], str) or not re.fullmatch(r"[a-z]{2,20}", company["key"]):
+            raise ValidationError("Clave de empresa inválida.")
+        c["key"] = company["key"]
     c["advisor"] = quote.advisor.get_full_name() or quote.advisor.get_username()
     return {
         "folio": quote.folio,
@@ -752,7 +758,8 @@ def _commercial_client_context(revision, result=None, *, snapshots=None):
     return {
         "commercial_client": True, "archived_only": revision.status == QuoteRevision.Status.ISSUED,
         "folio": header["folio"], "revision": revision.number,
-        "company": {k: header["company"][k] for k in ("name", "rfc", "tagline", "phone", "email", "advisor")},
+        "company": {**{k: header["company"][k] for k in ("name", "rfc", "tagline", "phone", "email", "advisor")},
+                    "key": header["company"].get("key", "cconor")},
         "client": {k: header["client"][k] for k in ("business_name", "rfc", "contact", "email", "phone", "project")},
         "conditions": list(header["conditions"]), "items": items,
         "issue_date": revision.issue_date.strftime("%d/%m/%Y"),

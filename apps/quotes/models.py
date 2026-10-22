@@ -3,6 +3,7 @@
 DER completo y diccionario de datos en docs/DER.md.
 """
 
+import re
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID, uuid4
@@ -107,12 +108,16 @@ class Quote(models.Model):
         super().save(*args, **kwargs)
 
     def _generate_folio(self):
-        """Genera folio correlativo COT-YYYY-XXXX (el consecutivo reinicia cada año).
+        """Genera folio correlativo PREFIJO-YYYY-XXXX (el consecutivo reinicia cada año y es propio de cada prefijo).
 
+        5A: `folio_prefix` (atributo, no columna) lo pone el alta según la empresa; por defecto COT (CCONOR).
         La unicidad la garantiza el constraint `unique` en BD; ante una
         colisión por concurrencia basta reintentar el guardado.
         """
-        prefix = f"COT-{timezone.localdate().year}-"
+        base = getattr(self, "folio_prefix", "") or "COT"
+        if not re.fullmatch(r"[A-Z]{2,6}", base):
+            raise ValidationError("Prefijo de folio inválido: 2 a 6 letras mayúsculas.")
+        prefix = f"{base}-{timezone.localdate().year}-"
         last_folio = (
             Quote.objects.filter(folio__startswith=prefix)
             .order_by("-folio")

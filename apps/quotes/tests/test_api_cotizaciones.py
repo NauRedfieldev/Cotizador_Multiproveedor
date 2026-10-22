@@ -471,6 +471,8 @@ class CommercialAPITests(CommercialFixtures, TestCase):
         super().setUp()
         self.client.force_login(self.actor)
         self.enterContext(override_settings(MAILERS={"default": {"BACKEND": "django.core.mail.backends.locmem.EmailBackend"}}))
+        # 5A: sin Torva salvo que la prueba la configure; no depender del .env de quien corre las pruebas.
+        self.enterContext(override_settings(TORVA_EMPRESA={}))
 
     def send(self, name, data=None, *, method="post", args=(), status=200):
         url = reverse(name, args=args)
@@ -592,6 +594,107 @@ class CommercialAPITests(CommercialFixtures, TestCase):
         saved = self.send("api_guardar_revision", edit, method="put", args=(created["folio"], 1))
         self.assertEqual(saved["state_fingerprint"], preview["state_fingerprint"])
         self.send("api_guardar_revision", edit, method="put", args=(created["folio"], 1), status=409)
+
+    TORVA_QA = {"name": "Torva QA", "rfc": "", "tagline": "Calle QA 1", "phone": "", "email": "",
+                  "folio_prefix": "TQA", "logo": ""}
+
+    def listar(self, **params):
+        response = self.client.get(reverse("api_crear_cotizacion"), params)
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        return response.json()
+
+    def test_empresa_torva_lleva_su_prefijo_y_queda_en_la_revision(self):
+        # 5A: la empresa se elige al crear; su clave se guarda en la revisión y su prefijo en el folio.
+        with override_settings(TORVA_EMPRESA=self.TORVA_QA):
+            principal = self.create()
+            torva = self.create(alta_comercial(company_key="torva"))
+            otra = self.create(alta_comercial(company_key="torva"))
+        self.assertTrue(principal["folio"].startswith("COT-"))
+        self.assertRegex(torva["folio"], r"^TQA-\d{4}-0001$")
+        self.assertRegex(otra["folio"], r"^TQA-\d{4}-0002$")    # consecutivo propio del prefijo
+        detail = self.detail(torva)
+        self.assertEqual(detail["company"], {"key": "torva", "name": "Torva QA"})
+        self.assertEqual(self.detail(principal)["company"]["key"], "cconor")
+        stored = QuoteRevision.objects.get(quote__folio=torva["folio"]).header["company"]
+        self.assertEqual((stored["key"], stored["name"], stored["tagline"]), ("torva", "Torva QA", "Calle QA 1"))
+
+    def test_empresa_torva_sin_configurar_o_desconocida_se_rechaza(self):
+        before = Quote.objects.count()
+        self.send("api_crear_cotizacion", alta_comercial(company_key="torva"), status=400)
+        self.send("api_crear_cotizacion", alta_comercial(company_key="otra"), status=400)
+        for prefix in ("COT", "h1", ""):
+            with self.subTest(prefix=prefix), override_settings(TORVA_EMPRESA={**self.TORVA_QA, "folio_prefix": prefix}):
+                self.send("api_crear_cotizacion", alta_comercial(company_key="torva"), status=503)
+        self.assertEqual(Quote.objects.count(), before)
+
+    def test_prefijo_nuevo_de_cconor_solo_para_folios_nuevos(self):
+        # 5A: CCONOR_EMPRESA_FOLIO_PREFIX cambia los folios NUEVOS; los ya creados conservan COT-.
+        anterior = self.create()
+        self.assertTrue(anterior["folio"].startswith("COT-"))
+        with override_settings(CCONOR_EMPRESA={**EMPRESA_QA, "folio_prefix": "CCO"}):
+            nueva = self.create()
+            segunda = self.create()
+        self.assertRegex(nueva["folio"], r"^CCO-\d{4}-0001$")
+        self.assertRegex(segunda["folio"], r"^CCO-\d{4}-0002$")
+        self.assertTrue(Quote.objects.filter(folio=anterior["folio"]).exists())
+        self.assertEqual(self.detail(nueva)["company"]["key"], "cconor")
+        # Prefijo inválido, o Torva con el mismo prefijo que CCONOR: no se crea nada (503).
+        before = Quote.objects.count()
+        with override_settings(CCONOR_EMPRESA={**EMPRESA_QA, "folio_prefix": "c1"}):
+            self.send("api_crear_cotizacion", alta_comercial(), status=503)
+        with override_settings(CCONOR_EMPRESA={**EMPRESA_QA, "folio_prefix": "CCO"}, TORVA_EMPRESA={**self.TORVA_QA, "folio_prefix": "CCO"}):
+            self.send("api_crear_cotizacion", alta_comercial(), status=503)
+            self.send("api_crear_cotizacion", alta_comercial(company_key="torva"), status=503)
+        self.assertEqual(Quote.objects.count(), before)
+
+    def test_la_empresa_no_cambia_al_editar(self):
+        with override_settings(TORVA_EMPRESA=self.TORVA_QA):
+            data = alta_comercial(company_key="torva")
+            created = self.create(data)
+            edit = {k: v for k, v in data.items() if k not in ("schema_version", "request_id", "notes", "company_key")}
+            edit["items"][0]["source"] = {"type": "EXISTING"}
+            edit.update(edit_version=1, client_name="Cliente editado")
+            self.send("api_guardar_revision", {**edit, "company_key": "cconor"}, method="put", args=(created["folio"], 1), status=400)
+            self.send("api_guardar_revision", edit, method="put", args=(created["folio"], 1))
+        self.assertEqual(self.detail(created)["company"]["key"], "torva")
+
+    def test_listado_por_empresa_y_anteriores_cuentan_como_cconor(self):
+        with override_settings(TORVA_EMPRESA=self.TORVA_QA):
+            principal, torva, anterior = self.create(), self.create(alta_comercial(company_key="torva")), self.create()
+            # Como una revisión anterior a 5A (sin clave). SQL directo: el modelo prohíbe update().
+            from django.db import connection
+            with connection.cursor() as cursor:
+                cursor.execute(f"UPDATE {QuoteRevision._meta.db_table} SET header = header #- '{{company,key}}' WHERE id = %s",
+                               [QuoteRevision.objects.get(quote__folio=anterior["folio"]).pk])
+            self.assertNotIn("key", QuoteRevision.objects.get(quote__folio=anterior["folio"]).header["company"])
+            folios = lambda **p: sorted(r["folio"] for r in self.listar(**p)["data"])
+            self.assertEqual(folios(empresa="torva"), [torva["folio"]])
+            self.assertEqual(folios(empresa="cconor"), sorted([principal["folio"], anterior["folio"]]))
+            self.assertEqual(len(folios()), 3)
+            listado = self.listar()
+            self.assertEqual([c["key"] for c in listado["companies"]], ["cconor", "torva"])
+            torva_publica = listado["companies"][1]
+            self.assertEqual((torva_publica["rfc"], torva_publica["folio_prefix"], torva_publica["color"]), ("", "TQA", "#0F8F95"))
+            self.assertNotIn("tagline", torva_publica)   # en pantalla va el RFC, no la dirección
+            self.assertEqual(torva_publica["short_name"], "Torva")   # primera palabra de «Torva QA»
+            self.assertEqual({r["folio"]: r["company_key"] for r in listado["data"]}[anterior["folio"]], "cconor")
+            self.assertEqual(listado["company_counts"], {"": 3, "cconor": 2, "torva": 1})
+            self.assertEqual(self.listar(empresa="torva", q=principal["folio"])["company_counts"], {"": 1, "cconor": 1, "torva": 0})
+        self.assertEqual([c["key"] for c in self.listar()["companies"]], ["cconor"])   # sin Torva configurada
+        response = self.client.get(reverse("api_crear_cotizacion"), {"empresa": "otra"})
+        self.assertEqual(response.status_code, 400)
+
+    def test_logo_del_pdf_segun_la_empresa(self):
+        from apps.quotes import pdf
+        self.assertTrue(str(pdf._logo_path("cconor")).endswith("static/img/logo.png"))
+        self.assertTrue(str(pdf._logo_path(None)).endswith("static/img/logo.png"))
+        with override_settings(TORVA_EMPRESA=self.TORVA_QA):
+            self.assertIsNone(pdf._logo_path("torva"))        # sin logo todavía
+        for logo in ("../settings.py", "/etc/passwd"):
+            with self.subTest(logo=logo), override_settings(TORVA_EMPRESA={**self.TORVA_QA, "logo": logo}):
+                self.assertIsNone(pdf._logo_path("torva"))
+        with override_settings(TORVA_EMPRESA={**self.TORVA_QA, "logo": "img/torva.png"}):
+            self.assertTrue(str(pdf._logo_path("torva")).endswith("static/img/torva.png"))
 
     def test_reordenar_partidas_guarda_el_nuevo_orden(self):
         # 7A: arrastrar partidas en el cotizador solo cambia el orden de items al guardar.

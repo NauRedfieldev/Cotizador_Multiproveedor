@@ -4,6 +4,8 @@
 {% block content %}
 <div class="container py-3" id="commercialQuoteApp" data-login-url="{% url 'login' %}?next={% url 'cotizador' %}">
     {{ condiciones_predeterminadas|json_script:"defaultConditions" }}
+    {# 5A (lienzo fila 9): franja del color de la empresa elegida; solo con dos empresas configuradas. #}
+    <div id="companyStrip" class="company-strip d-none" aria-hidden="true"></div>
     {# Encabezado compacto (5A): identidad, estado con color y «Nueva cotización». #}
     <div id="quoteTopHeader" class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
         <div class="d-flex flex-column gap-2">
@@ -11,6 +13,7 @@
             <div class="d-flex flex-wrap align-items-center gap-2">
                 <span id="quoteIdentity" class="fw-semibold">Cotización nueva</span>
                 <span id="quoteStatus" class="quote-status quote-status--neutral" role="status" aria-live="polite"><span class="quote-status-dot" aria-hidden="true"></span><span id="quoteStatusText">Conectando…</span></span>
+                <span id="companyChip" class="company-chip d-none"><span class="company-chip-dot" aria-hidden="true"></span><span id="companyChipText"></span></span>
             </div>
             <details class="quote-info small text-muted">
                 <summary><i class="bi bi-info-circle me-1" aria-hidden="true"></i>Proveedor, costos, tipo de cambio y utilidad son internos: el cliente no los ve. <span class="quote-info-more">Más información</span></summary>
@@ -22,6 +25,17 @@
             <button type="button" id="topSaveBtn" class="btn btn-cconor-primary" disabled>Guardar borrador</button>
         </div>
     </div>
+    {# 5A: «Cotizar como»: empresa de la cotización (logo, datos y prefijo del folio). Solo con 2 empresas configuradas; fija al guardar. #}
+    {{ empresas|json_script:"companiesData" }}
+    <fieldset id="companySwitch" class="company-switch mb-3 d-none">
+        <legend class="company-switch-title">Cotizar como</legend>
+        <div id="companyOptions" class="company-options"></div>
+        <div class="company-hint-row">
+            <span class="company-hint-dot" aria-hidden="true"></span>
+            <span id="companyHint" class="small" aria-live="polite"></span>
+            <span id="companyFolio" class="company-folio"></span>
+        </div>
+    </fieldset>
     {# Barra fija (5B): aparece al bajar; el menú del sitio deja de ser fijo en esta página. #}
     <div id="quoteStickyBar" class="quote-sticky-bar" aria-hidden="true">
         <div class="container d-flex flex-wrap align-items-center justify-content-between gap-2">
@@ -207,4 +221,4 @@
     </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=29"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=31"></script>{% endblock %}

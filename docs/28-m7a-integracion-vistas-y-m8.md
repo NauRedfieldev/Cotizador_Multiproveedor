@@ -874,6 +874,42 @@ Solo navegador (`static/js/main.js`, `static/js/cotizador.js`, `templates/compar
   bandeja da un error. Sin animación con «reducir movimiento».
 - Pruebas: recorrido en navegador (QA aislado, también a 390 px); la lógica de «Traer» y el listado ya tenían pruebas.
 
+### 14.16 Dos empresas hermanas: CCONOR y Torva Telecom (diseño 5A, 2026-10-22)
+
+- **Configuración:** CCONOR sigue en `CCONOR_EMPRESA_*` (clave `cconor`, logo `static/img/logo.png`) y suma
+  `CCONOR_EMPRESA_FOLIO_PREFIX`: prefijo de los folios **nuevos** (2 a 6 letras mayúsculas; vacío = `COT`). Los folios ya
+  creados nunca cambian (`COT-…` se quedan así) y el prefijo nuevo empieza su propio consecutivo (`CCO-2026-0001`).
+  Torva Telecom es opcional: `TORVA_EMPRESA_NAME`, `_RFC`, `_TAGLINE` (dirección), `_PHONE`, `_EMAIL`, `_FOLIO_PREFIX`
+  (2 a 6 letras mayúsculas, distinto del de CCONOR y de `COT`) y `_LOGO` (`img/logo_torva.png`; vacío = sin logo en
+  el PDF e iniciales en pantalla). Sin `TORVA_EMPRESA_NAME` todo funciona como antes y no aparece ninguna opción de
+  empresa. Prefijo inválido o repetido → alta 503. El logo de Torva está en `static/img/logo_torva.png`, recortado del
+  original sin el margen transparente para que se vea al tamaño del de CCONOR.
+- **Dato guardado (sin migración):** la revisión guarda la clave en `header.company.key` (`cconor` | `torva`),
+  junto al nombre, RFC, etc. que ya copiaba. Las revisiones anteriores no tienen clave y se leen como CCONOR.
+- **Se elige al crear y queda fija:** `POST /api/v1/quotes/` (y su preview) acepta `company_key`; el folio usa el
+  prefijo de esa empresa con su propio consecutivo (`TOR-2026-0001`). Editar no la acepta (400) y conserva la de la
+  revisión; una revisión nueva copia la del origen.
+- **Cotizador:** «Cotizar como» con las empresas configuradas (logo si lo tiene; si no, iniciales). Activo solo en
+  una cotización nueva; al guardar queda bloqueado («el folio ya lleva su prefijo»). «Nueva cotización» recuerda la
+  última empresa elegida.
+- **Diseño (lienzo fila 9):** tarjetas con el logo en un hueco de ancho fijo, para que los nombres empiecen
+  alineados, y el **RFC** debajo del nombre (no la dirección). Color de cada marca, tomado de su logo
+  (`COLORES_EMPRESA` en `api.py`: CCONOR `#0B4A93`, Torva `#0F8F95`): franja superior, borde y fondo de la tarjeta
+  elegida (con palomita, o candado «Fija» al guardar), etiqueta «Cotizando como…», número de los pasos y aviso
+  «Folio: PREFIJO-año-…». La no elegida va en gris (al guardar, punteada). Solo en pantalla: el PDF no cambia de
+  colores. `empresas_publicas()` entrega `rfc`, `folio_prefix`, `color`, `text` y `tint`.
+- **Mis cotizaciones (lienzo fila 10):** pestañas por empresa (con un punto de su color) y «Todas», con conteo
+  (`company_counts` del listado, con la búsqueda y el estado actuales), siempre en **una sola línea** con el nombre
+  corto automático (`short_name` = primera palabra del nombre, tal como está en el `.env`; el completo al pasar el
+  cursor). La activa lleva línea y conteo rellenos del color de su empresa («Todas», azul marino). Cada cotización
+  lleva una barra del color de su empresa y, en «Todas», una etiqueta con el nombre corto. El listado acepta `empresa=cconor|torva` y
+  devuelve `company_key`, `company_name` y `companies`.
+- **PDF:** nombre, RFC, dirección y contacto de la revisión (como antes) y el logo de su empresa; el título del PDF
+  ya no dice «CCONOR» fijo. Los PDF emitidos archivados no cambian.
+- Pruebas: Django `test_empresa_torva_*`, `test_prefijo_nuevo_de_cconor_solo_para_folios_nuevos`, `test_la_empresa_no_cambia_al_editar`,
+  `test_listado_por_empresa_y_anteriores_cuentan_como_cconor` y `test_logo_del_pdf_segun_la_empresa`; recorrido en
+  navegador con Torva sintética (variables de entorno solo del QA).
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 > **Rediseño 12A (2026-10-20, rama `feature/ui-interfaz-general`).** La pantalla pasó a lista y

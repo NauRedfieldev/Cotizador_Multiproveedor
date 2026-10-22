@@ -247,13 +247,26 @@ def _styles():
     }
 
 
-def _logo_image():
-    """Logo CCONOR preservando proporción; None si el archivo falta."""
-    try:
-        from django.conf import settings as dj_settings
+def _logo_path(company_key):
+    """5A: logo de la empresa de la revisión, dentro de static/; None si no tiene (Torva sin logo)."""
+    from django.conf import settings as dj_settings
 
-        logo_path = dj_settings.BASE_DIR / "static" / "img" / "logo.png"
-        if not logo_path.exists():
+    if company_key in (None, "", "cconor"):
+        relative = "img/logo.png"
+    elif company_key == "torva":
+        relative = (getattr(dj_settings, "TORVA_EMPRESA", {}) or {}).get("logo", "").strip()
+    else:
+        relative = ""
+    if not relative or ".." in relative.replace("\\", "/").split("/") or relative.startswith("/"):
+        return None
+    return dj_settings.BASE_DIR / "static" / relative
+
+
+def _logo_image(company_key=None):
+    """Logo de la empresa preservando proporción; None si el archivo falta."""
+    try:
+        logo_path = _logo_path(company_key)
+        if logo_path is None or not logo_path.exists():
             return None
         try:
             from PIL import Image as PilImage
@@ -299,7 +312,7 @@ def generate_quote_pdf(quote):
         rightMargin=1.5 * cm,
         topMargin=1.4 * cm,
         bottomMargin=1.8 * cm,
-        title=f"Cotización {original_folio} - CCONOR",
+        title=f"Cotización {original_folio} - {original_company}",
         author=original_company,
     )
     story = []
@@ -312,7 +325,7 @@ def generate_quote_pdf(quote):
 
     # ---- Encabezado membretado ----
     left_header = []
-    logo = _logo_image()
+    logo = _logo_image(c.get("key"))
     if logo:
         left_header.append(logo)
         left_header.append(Spacer(1, 0.15 * cm))

@@ -14,6 +14,22 @@
     .mis-filtro { height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid #D9D6E8; background: #FFFFFF;
         color: var(--cconor-azul-marino); font-size: 13px; font-weight: 600; }
     .mis-filtro.is-active { background: var(--cconor-boton); border-color: var(--cconor-boton); color: #FFFFFF; }
+    /* 5A: pestañas por empresa (con conteo) y etiqueta de empresa en cada cotización. */
+    /* Lienzo fila 10: una sola línea (nombre corto); si aun así no cabe (teléfono), se desliza de lado. */
+    .mis-empresas { display: flex; flex-wrap: nowrap; gap: 4px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid #D9D6E8; }
+    .mis-empresas::-webkit-scrollbar { display: none; }
+    .mis-empresa { --tab-color: var(--cconor-azul-marino); display: inline-flex; align-items: center; gap: 8px; flex: none;
+        height: 42px; padding: 0 10px; border: 0; border-bottom: 3px solid transparent; background: none; color: #3D4160;
+        font-size: 14px; font-weight: 600; white-space: nowrap; }
+    .mis-empresa:hover:not(:disabled) { color: var(--cconor-azul-marino); }
+    .mis-empresa.is-active { color: var(--cconor-azul-marino); border-bottom-color: var(--tab-color); }
+    .mis-empresa-conteo { min-width: 22px; padding: 1px 8px; border-radius: 999px; background: #EAE7F3; color: #3D4160;
+        font-size: 12px; font-weight: 700; text-align: center; }
+    .mis-empresa.is-active .mis-empresa-conteo { background: var(--tab-color); color: #FFFFFF; }
+    .mis-empresa-punto { width: 8px; height: 8px; border-radius: 999px; flex: none; }
+    .mis-item-empresa { align-self: flex-start; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .mis-item.mis-item-con-empresa { box-shadow: inset 4px 0 0 var(--empresa-color); }
+    .mis-item.mis-item-con-empresa.is-selected { border-left-color: transparent; }
     .mis-items { max-height: 640px; overflow-y: auto; }
     .mis-item { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; padding: 12px 14px; border: 0;
         border-bottom: 1px solid #EAE7F3; border-left: 4px solid transparent; background: #FFFFFF; color: var(--cconor-azul-marino); }
@@ -60,6 +76,8 @@
         <div class="col-lg-4 d-print-none" id="historialSection">
             <section class="mis-lista" aria-label="Lista de cotizaciones">
                 <div class="mis-lista-cabecera">
+                    {# 5A: pestañas por empresa; solo aparecen si hay dos empresas configuradas. #}
+                    <div class="mis-empresas d-none" id="historyCompanyFilter" role="group" aria-label="Filtrar por empresa"></div>
                     <label for="historySearchInput" class="visually-hidden">Buscar por folio o cliente</label>
                     <input id="historySearchInput" type="search" class="form-control" maxlength="200" placeholder="Buscar por folio o cliente">
                     <div class="mis-filtros" id="historyStatusFilter" role="group" aria-label="Filtrar por estado">
@@ -149,4 +167,4 @@
     </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizacion_actions.js' %}?v=9"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizacion_actions.js' %}?v=12"></script>{% endblock %}

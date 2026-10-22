@@ -67,7 +67,7 @@ Cabecera JSON versión 1; valores textuales excepto la lista:
 
 ```text
 folio
-company: name, rfc, tagline, phone, email, advisor
+company: name, rfc, tagline, phone, email, advisor (+ key desde 5A: cconor | torva; sin key = cconor, docs/28 §14.16)
 client: business_name, rfc, contact, email, phone, project
 conditions: lista de textos
 ```

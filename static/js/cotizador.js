@@ -174,10 +174,13 @@
         const hace = iso => window.cconorFechas?.hace(iso) ?? String(iso ?? '');
         const exacta = iso => window.cconorFechas?.exacta(iso) ?? String(iso ?? '');
         let fxSession = null; // 16A: tipo de cambio de la sesión y de SYSCOM (main.js)
+        // 5A: empresas configuradas (servidor). La cotización nueva elige una; al guardarse queda fija.
+        const companies = (() => { try { const list = JSON.parse($('companiesData')?.textContent || '[]'); return Array.isArray(list) ? list : []; } catch { return []; } })();
         const initialIssueDate = $('issueDate').value;
         const defaultConditions = defaultConditionsText($('defaultConditions')?.textContent);
         const state = { caps: null, lines: [], products: [], saved: null, fx: null, dirty: false, busy: false,
-            readonly: false, preview: null, epoch: 0, pending: null, fxPending: null, conflict: false };
+            readonly: false, preview: null, epoch: 0, pending: null, fxPending: null, conflict: false,
+            company: companies[0]?.key || 'cconor', companyName: '' };
         let previewTimer, previewAbort, searchTimer, searchAbort, searchVersion = 0, searchError = '';
         const has = code => !!state.caps?.[code];
         const canEdit = () => !!state.caps && !state.readonly;
@@ -308,7 +311,63 @@
             const dialog = $('quoteIssuesDialog');
             if (typeof dialog.close === 'function' && dialog.open) dialog.close(); else dialog.removeAttribute('open');
         }
+        // 5A: «Cotizar como». Se dibuja una vez; syncCompanies (en locks) marca selección, bloqueo y ayuda.
+        const companyLocked = () => !!state.saved || !!state.transition || state.readonly;
+        // Lienzo fila 9: logo en un hueco de ancho fijo (los nombres empiezan alineados), RFC bajo el nombre y
+        // el color de la marca elegida en franja, bordes, etiqueta «Cotizando como», pasos y folio.
+        function buildCompanies() {
+            const multiple = companies.length > 1;
+            $('companySwitch').classList.toggle('d-none', !multiple);
+            $('companyStrip').classList.toggle('d-none', !multiple);
+            $('companyChip').classList.toggle('d-none', !multiple);
+            $('commercialQuoteApp').classList.toggle('has-company', multiple);
+            if (!multiple) return;
+            $('companyOptions').replaceChildren(...companies.flatMap(company => {
+                const input = document.createElement('input');
+                Object.assign(input, { type: 'radio', name: 'quoteCompany', id: `company-${company.key}`, value: company.key, className: 'btn-check', autocomplete: 'off' });
+                input.addEventListener('change', () => { if (!input.checked) return; state.company = company.key; syncCompanies(); changed(); });
+                const label = element('label', '', 'company-option'); label.htmlFor = input.id;
+                label.style.setProperty('--empresa-color', company.color);
+                label.style.setProperty('--empresa-tinte', company.tint);
+                const slot = element('span', '', 'company-logo-slot');
+                slot.append(company.logo_url ? Object.assign(document.createElement('img'), { src: company.logo_url, alt: '', className: 'company-logo' })
+                    : element('span', company.initials, 'company-initials'));
+                const info = element('span', '', 'company-text');
+                info.append(element('strong', company.name, 'company-name'), element('span', company.rfc ? `RFC: ${company.rfc}` : 'RFC sin capturar', 'company-rfc'));
+                const badge = element('span', '', 'company-badge');
+                badge.setAttribute('aria-hidden', 'true');
+                label.append(slot, element('span', '', 'company-divider'), info, badge);
+                return [input, label];
+            }));
+        }
+        function syncCompanies() {
+            if (companies.length < 2) return;
+            const locked = companyLocked();
+            for (const input of $('companyOptions').querySelectorAll('input')) {
+                input.checked = input.value === state.company;
+                input.disabled = locked || !editable();
+                const badge = input.nextElementSibling.querySelector('.company-badge');
+                badge.replaceChildren(element('i', '', locked ? 'bi bi-lock-fill' : 'bi bi-check-lg'));
+                if (locked) badge.append(' Fija');
+            }
+            $('companySwitch').classList.toggle('is-locked', locked);
+            const current = companies.find(c => c.key === state.company);
+            const name = current?.name || state.companyName || 'esta empresa';
+            // Colores de la marca en toda la página (variables CSS); sin datos de la empresa, los de CCONOR.
+            const colors = current || companies[0];
+            const app = $('commercialQuoteApp');
+            app.style.setProperty('--empresa-color', colors.color);
+            app.style.setProperty('--empresa-texto', colors.text);
+            app.style.setProperty('--empresa-tinte', colors.tint);
+            text('companyChipText', `Cotizando como ${name}`);
+            text('companyHint', locked ? `Cotización de ${name}: la empresa queda fija porque el folio ya lleva su prefijo. Para otra empresa, crea una cotización nueva.`
+                : `El PDF usará el logo, la razón social y el RFC de ${name}. Al guardar, la empresa queda fija.`);
+            const prefix = current?.folio_prefix;
+            text('companyFolio', locked || !prefix ? '' : `Folio: ${prefix}-${new Date().getFullYear()}-…`);
+            $('companyFolio').classList.toggle('d-none', locked || !prefix);
+        }
         function locks() {
+            syncCompanies();
             const allowed = editable();
             if (!allowed) for (const control of $('quoteItemsBody').querySelectorAll('input, select, button')) control.disabled = true;
             if (state.busy || state.pending) for (const control of $('quoteWarnings').querySelectorAll('button')) control.disabled = true;
@@ -438,7 +497,10 @@
                 try { return item(line); } catch (err) { fail(`Partida ${state.lines.indexOf(line) + 1}: ${err.message}`); }
             }) };
             if (state.saved) body.edit_version = state.saved.edit_version;
-            else body.schema_version = 2;
+            else {
+                body.schema_version = 2;
+                if (!state.transition) body.company_key = state.company;   // 5A: solo al crear; al editar no cambia
+            }
             return body;
         }
         function warnings(entries, persisted) {
@@ -1397,6 +1459,8 @@
                 value: detail.tipo_cambio.valor, source: detail.tipo_cambio.origen, date: detail.tipo_cambio.fecha } : null;
             fxDisplay();
             state.lines = detail.schema_version === 2 ? detail.items.map(loadLine) : [];
+            // 5A: la empresa de una cotización guardada viene de su revisión (anteriores sin clave = CCONOR).
+            state.company = detail.company?.key || 'cconor'; state.companyName = detail.company?.name || '';
             renderLines(); clearSummary(); locks();
             if (detail.schema_version !== 2) {
                 $('quoteItemsBody').replaceChildren();
@@ -1637,6 +1701,7 @@
         }
         $('quoteConditions').value = defaultConditions;  // Una revisión abierta después trae las suyas.
         fxSession = window.cconorTipoCambio?.ultimo() ?? null;
+        buildCompanies();
         fxDisplay(); locks(); initialize();
     });
 }());

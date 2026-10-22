@@ -276,7 +276,7 @@ async def crear_cotizacion(request):
     if request.method == "GET":
         output = await sync_to_async(_listado_propio, thread_sensitive=True)(await request.auser(), request.GET)
         return JsonResponse({"success": True, **output}, headers={"Cache-Control": "private, no-store"})
-    datos = _leer_json(request, _CAMPOS_ALTA | _COMMERCIAL_HEADER | {"schema_version"})
+    datos = _leer_json(request, _CAMPOS_ALTA | _COMMERCIAL_HEADER | {"schema_version", "company_key"})
     if "schema_version" in datos:
         _schema_v2(datos)
         output = await sync_to_async(_commercial_create, thread_sensitive=True)(await request.auser(), datos)
@@ -418,12 +418,78 @@ def _cliente(datos):
     }
 
 
-def _empresa():
-    """Datos de la empresa validados por CCONOR, del servidor; sin nombre no se crea nada."""
-    empresa = dict(settings.CCONOR_EMPRESA)
-    if not empresa.get("name", "").strip():
+EMPRESA_PRINCIPAL, EMPRESA_TORVA = "cconor", "torva"
+_CAMPOS_EMPRESA = ("name", "rfc", "tagline", "phone", "email")
+
+
+def _config_empresa(clave):
+    """5A: configuración de una empresa (settings), o None si no está configurada.
+
+    CCONOR: prefijo de folios nuevos en CCONOR_EMPRESA_FOLIO_PREFIX (vacío = COT, el de siempre).
+    """
+    if clave == EMPRESA_PRINCIPAL:
+        config = dict(settings.CCONOR_EMPRESA)
+        return {**config, "folio_prefix": config.get("folio_prefix", "").strip() or "COT", "logo": "img/logo.png"}
+    if clave == EMPRESA_TORVA:
+        config = dict(getattr(settings, "TORVA_EMPRESA", {}) or {})
+        return config if config.get("name", "").strip() else None
+    return None
+
+
+def _empresa(clave=EMPRESA_PRINCIPAL):
+    """Datos de la empresa validados por CCONOR, del servidor; sin nombre no se crea nada.
+
+    5A: incluye su clave, que se guarda en la revisión y decide logo, filtros y prefijo de folio.
+    """
+    if not isinstance(clave, str) or clave not in (EMPRESA_PRINCIPAL, EMPRESA_TORVA):
+        raise _EntradaInvalida("Empresa desconocida.")
+    config = _config_empresa(clave)
+    if config is None:
+        raise _EntradaInvalida("Esa empresa no está configurada en el servidor.")
+    if not config.get("name", "").strip():
         raise _EmpresaSinConfigurar()
-    return empresa
+    return {**{campo: config.get(campo, "") for campo in _CAMPOS_EMPRESA}, "key": clave}
+
+
+def _prefijo_folio(clave):
+    """Prefijo de los folios nuevos; cada empresa lleva su propio consecutivo, así que no pueden coincidir.
+
+    Torva tampoco puede usar COT: es el de los folios anteriores de CCONOR.
+    """
+    prefijo = (_config_empresa(clave) or {}).get("folio_prefix", "").strip()
+    otra = _config_empresa(EMPRESA_TORVA if clave == EMPRESA_PRINCIPAL else EMPRESA_PRINCIPAL)
+    if not re.fullmatch(r"[A-Z]{2,6}", prefijo) or (otra and prefijo == otra.get("folio_prefix", "").strip()) \
+            or (clave == EMPRESA_TORVA and prefijo == "COT"):
+        raise _EmpresaSinConfigurar()
+    return prefijo
+
+
+# 5A (lienzo fila 9): color de cada marca, tomado de su logo. color = franja/bordes; text = texto sobre
+# blanco (contraste ≥ 4.5:1); tint = fondo suave. Solo pantalla: el PDF no cambia de colores.
+COLORES_EMPRESA = {
+    EMPRESA_PRINCIPAL: {"color": "#0B4A93", "text": "#0B4A93", "tint": "#EAF1FA"},
+    EMPRESA_TORVA: {"color": "#0F8F95", "text": "#0B6E73", "tint": "#E6F5F5"},
+}
+
+
+def empresas_publicas():
+    """Empresas configuradas para la interfaz: clave, nombre, RFC, iniciales, logo (URL o None), prefijo y colores."""
+    from django.templatetags.static import static
+
+    salida = []
+    for clave in (EMPRESA_PRINCIPAL, EMPRESA_TORVA):
+        config = _config_empresa(clave)
+        if not config or not config.get("name", "").strip():
+            continue
+        palabras = [p for p in re.split(r"\s+", config["name"].strip()) if p[:1].isalnum()]
+        iniciales = "".join(p[0] for p in palabras[:2]).upper() or config["name"].strip()[:2].upper()
+        logo = config.get("logo", "").strip()
+        # Lienzo fila 10: nombre corto automático (primera palabra, tal como está en el .env) para pestañas y etiquetas.
+        salida.append({"key": clave, "name": config["name"].strip(), "short_name": config["name"].split()[0],
+                       "rfc": config.get("rfc", "").strip(),
+                       "initials": iniciales, "logo_url": static(logo) if logo else None,
+                       "folio_prefix": config.get("folio_prefix", "").strip(), **COLORES_EMPRESA[clave]})
+    return salida
 
 
 def _partidas(items, ofertas):
@@ -501,6 +567,7 @@ def _alta(usuario, empresa, cliente, partidas, tipo_cambio, request_id):
                 client_email=cliente["client_email"], advisor=usuario,
                 valid_days=cliente["valid_days"], notes=cliente["notes"],
             )
+            quote.folio_prefix = _prefijo_folio(empresa.get("key", EMPRESA_PRINCIPAL))   # 5A: prefijo vigente de CCONOR
             quote.full_clean(exclude=["folio"])
             quote.save()
             quote_id = quote.pk
@@ -577,19 +644,29 @@ def _resumen(revision, folio):
 def _listado_propio(actor, params):
     """Una fila por folio propio, sobre su última revisión, nunca QuoteItem.total."""
     actor = require_commercial_permission(actor)
-    if set(params) - {"q", "status", "page"} or any(len(params.getlist(k)) != 1 for k in params):
+    if set(params) - {"q", "status", "page", "empresa"} or any(len(params.getlist(k)) != 1 for k in params):
         raise _EntradaInvalida("Filtros de listado inválidos.")
     query = params.get("q", "").strip()
     status = params.get("status", "")
     page = params.get("page", "1")
-    if len(query) > 200 or status not in ("", "DRAFT", "ISSUED") or not re.fullmatch(r"[1-9][0-9]{0,8}", page):
-        raise _EntradaInvalida("Búsqueda, estado o página inválidos.")
+    empresa = params.get("empresa", "")
+    if len(query) > 200 or status not in ("", "DRAFT", "ISSUED") or not re.fullmatch(r"[1-9][0-9]{0,8}", page) \
+            or empresa not in ("", EMPRESA_PRINCIPAL, EMPRESA_TORVA):
+        raise _EntradaInvalida("Búsqueda, estado, empresa o página inválidos.")
     latest = QuoteRevision.objects.filter(quote_id=OuterRef("quote_id")).order_by("-number").values("pk")[:1]
     rows = QuoteRevision.objects.filter(quote__advisor_id=actor.pk).annotate(latest_id=Subquery(latest)).filter(pk=F("latest_id"))
     if query:
         rows = rows.filter(Q(quote__folio__icontains=query) | Q(header__client__business_name__icontains=query))
     if status:
         rows = rows.filter(status=status)
+    # 5A: conteo por empresa con la búsqueda y el estado actuales (pestañas de «Mis cotizaciones»).
+    # Las revisiones sin clave de empresa (anteriores a 5A) son de CCONOR.
+    conteo = rows.aggregate(total=Count("pk"), torva=Count("pk", filter=Q(header__company__key=EMPRESA_TORVA)))
+    company_counts = {"": conteo["total"], EMPRESA_PRINCIPAL: conteo["total"] - conteo["torva"], EMPRESA_TORVA: conteo["torva"]}
+    if empresa == EMPRESA_TORVA:
+        rows = rows.filter(header__company__key=EMPRESA_TORVA)
+    elif empresa == EMPRESA_PRINCIPAL:
+        rows = rows.filter(Q(header__company__key=EMPRESA_PRINCIPAL) | ~Q(header__company__has_key="key"))
     rows = rows.select_related("quote").annotate(item_count=Count("snapshots")).order_by("-created_at", "-pk")
     paginator = Paginator(rows, 20)
     if int(page) > paginator.num_pages:
@@ -597,8 +674,10 @@ def _listado_propio(actor, params):
     selected = paginator.page(int(page))
     return {"actor_id": actor.pk, "data": [{**_resumen(r, r.quote.folio), "schema_version": r.schema_version,
         "client_name": r.header["client"]["business_name"], "issue_date": r.issue_date.isoformat(),
-        "items_count": r.item_count} for r in selected],
-        "pagination": {"page": selected.number, "pages": paginator.num_pages, "count": paginator.count}}
+        "items_count": r.item_count, "company_key": r.header.get("company", {}).get("key", EMPRESA_PRINCIPAL),
+        "company_name": r.header.get("company", {}).get("name", "")} for r in selected],
+        "pagination": {"page": selected.number, "pages": paginator.num_pages, "count": paginator.count},
+        "companies": empresas_publicas(), "company_counts": company_counts}
 
 
 # 19A: bandeja del comparador. Vive en la sesión; solo guarda referencias de lo que el comparador
@@ -1008,10 +1087,14 @@ def _commercial_create(actor, data):
     def create(current, request_id):
         kwargs = _header_inputs(data, current)
         parts = _commercial_items(data.get("items"), current)
+        # 5A: la empresa se elige al crear y queda fija: su prefijo va en el folio.
+        clave = data.get("company_key", EMPRESA_PRINCIPAL)
+        empresa = _empresa(clave)
         quote = Quote(advisor=current, client_name=kwargs["client"]["business_name"],
             client_rfc=kwargs["client"]["rfc"], client_email=kwargs["client"]["email"],
             issue_date=kwargs["issue_date"], valid_days=kwargs["valid_days"],
             notes=_texto_requerido(data.get("notes", ""), "notes", 6000))
+        quote.folio_prefix = _prefijo_folio(clave)
         quote.full_clean(exclude=["folio"])
         # Reintentar únicamente el choque de folio en un savepoint propio.
         for attempt in range(_INTENTOS_FOLIO):
@@ -1024,7 +1107,7 @@ def _commercial_create(actor, data):
                     raise
                 quote.pk, quote.folio = None, ""
         return commercial_services.crear_borrador_comercial(quote.pk, parts, actor=current,
-            company=_empresa(), request_id=request_id, **kwargs)
+            company=empresa, request_id=request_id, **kwargs)
     return _request_once(actor, data, "CREATE", None, create)
 
 
@@ -1063,6 +1146,7 @@ def _exact_detail(folio, number, actor):
         output = {**_resumen(revision, folio), "schema_version": revision.schema_version,
             "calculation_version": revision.calculation_version, "state_fingerprint": revision.state_fingerprint,
             "client": revision.header["client"], "conditions": revision.header["conditions"],
+            "company": {"key": revision.header["company"].get("key", EMPRESA_PRINCIPAL), "name": revision.header["company"]["name"]},
             "issue_date": revision.issue_date.isoformat(), "valid_days": revision.valid_days,
             "tax_rate": revision.tax_rate, "discount_percent": revision.discount_percent,
             "fx_context_id": revision.exchange_context_id,
@@ -1137,13 +1221,13 @@ def _commercial_clone(folio, number, actor, data):
 
 @_api("POST")
 async def preview_nueva(request):
-    data = _leer_json(request, (_CAMPOS_ALTA | _COMMERCIAL_HEADER | {"schema_version"}) - {"request_id", "notes"})
+    data = _leer_json(request, (_CAMPOS_ALTA | _COMMERCIAL_HEADER | {"schema_version", "company_key"}) - {"request_id", "notes"})
     _schema_v2(data)
     def preview(actor):
         actor = require_commercial_permission(actor)
         kwargs = _header_inputs(data, actor)
         result = commercial_services.previsualizar_nueva_cotizacion(_commercial_items(data.get("items"), actor),
-            actor=actor, company=_empresa(), **kwargs)
+            actor=actor, company=_empresa(data.get("company_key", EMPRESA_PRINCIPAL)), **kwargs)
         result["warnings"] = _warning_states(result["resultado"], QuoteRevision(discount_percent=kwargs["discount_percent"]))
         return _wire(result)
     output = await sync_to_async(preview, thread_sensitive=True)(await request.auser())
