@@ -854,6 +854,26 @@ Solo navegador (`static/js/cotizador.js`); el servidor y el formato guardado no 
 - Pruebas: JS «servicio propio…», «unidades del menú…», «flechas de cantidad…», «estado de la partida…» y
   «7A reordenar…»; Django `test_reordenar_partidas_guarda_el_nuevo_orden`.
 
+### 14.15 Bandeja del comparador → un borrador existente (diseño 6A, 2026-10-22)
+
+Solo navegador (`static/js/main.js`, `static/js/cotizador.js`, `templates/comparador.html`); el servidor no cambia.
+
+- **Comparador:** la bandeja pregunta «¿A dónde los mando?»: «A una cotización nueva» (como antes, «Abrir el
+  cotizador →») o «A un borrador que ya tengo». Esta lista los borradores propios v2 más recientes con la API de
+  listado existente (`GET /api/v1/quotes/?status=DRAFT&q=…`: folio, cliente, fecha relativa de la cotización y
+  número de partidas), con buscador por folio o cliente; el más reciente queda elegido. El botón cambia a
+  «Agregar a COT-… →» y lleva a `/cotizador/?folio=…&revision=…&bandeja=traer`.
+- **Cotizador:** con `bandeja=traer` abre ese borrador y hace lo mismo que «Traer» (vuelve a consultar al
+  proveedor y agrega cada producto como partida nueva al final, con el precio de hoy); quita el parámetro de la
+  dirección y avisa «Revisa las partidas nuevas y pulsa «Actualizar borrador»». **No guarda solo.** Si la
+  bandeja está vacía lo dice; si la cotización ya no es un borrador editable, no trae nada y la bandeja queda
+  intacta.
+- **«Agregar» no abre la bandeja (diseño 8C):** si está cerrada, sigue cerrada; un punto «vuela» del botón a la
+  pastilla y esta se estira 3.5 s con «✓ nombre del producto · agregado · ahora hay N productos» (también se
+  anuncia a lectores de pantalla). Si ya está abierta, solo se actualiza. Se abre al pulsar la pastilla o si la
+  bandeja da un error. Sin animación con «reducir movimiento».
+- Pruebas: recorrido en navegador (QA aislado, también a 390 px); la lógica de «Traer» y el listado ya tenían pruebas.
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 > **Rediseño 12A (2026-10-20, rama `feature/ui-interfaz-general`).** La pantalla pasó a lista y

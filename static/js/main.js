@@ -151,12 +151,49 @@ document.addEventListener('DOMContentLoaded', function () {
         $('bandejaError').textContent = '';
         try {
             pintar((await peticion).data);
+            return true;
         } catch (err) {
             abrir(true);
             $('bandejaError').textContent = err.message;
+            return false;
         }
     }
+    // 8C: con la bandeja cerrada, «Agregar» no la abre: un punto «vuela» del botón a la pastilla y esta
+    // se estira unos segundos con el producto agregado. La bandeja solo se abre si el asesor la pide.
+    let avisoTemporizador = null;
+    function avisar(item) {
+        if (!item) return;
+        const pastilla = $('bandejaPastilla');
+        const total = `${items.length} ${items.length === 1 ? 'producto' : 'productos'}`;
+        $('bandejaAvisoNombre').textContent = item.name;
+        $('bandejaAvisoDetalle').textContent = `agregado · ahora hay ${total}`;
+        $('bandejaPastillaConteo').textContent = String(items.length);
+        $('bandejaAnuncio').textContent = `${item.name} agregado a la bandeja. Ahora hay ${total}.`;
+        pastilla.classList.remove('is-aviso');
+        void pastilla.offsetWidth;  // reinicia la animación si se agregan varios seguidos
+        pastilla.classList.add('is-aviso');
+        clearTimeout(avisoTemporizador);
+        avisoTemporizador = setTimeout(() => pastilla.classList.remove('is-aviso'), 3500);
+    }
+    function volar(origen) {
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || !document.body.animate) return;
+        const desde = origen.getBoundingClientRect();
+        const pastilla = caja.hidden ? null : $('bandejaPastilla').getBoundingClientRect();
+        const x0 = desde.left + desde.width / 2, y0 = desde.top + desde.height / 2;
+        const dx = (pastilla ? pastilla.left + pastilla.width / 2 : window.innerWidth - 90) - x0;
+        const dy = (pastilla ? pastilla.top + pastilla.height / 2 : window.innerHeight - 48) - y0;
+        const punto = nodo('span', undefined, 'bandeja-vuelo');
+        Object.assign(punto.style, { left: `${x0}px`, top: `${y0}px` });
+        document.body.append(punto);
+        const vuelo = punto.animate([
+            { transform: 'translate(-50%, -50%) scale(1)', opacity: 1 },
+            { transform: `translate(calc(-50% + ${dx * 0.55}px), calc(-50% + ${dy * 0.35 - 40}px)) scale(0.9)`, opacity: 1, offset: 0.5 },
+            { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.45)`, opacity: 0.25 }
+        ], { duration: 650, easing: 'cubic-bezier(.4, 0, .2, 1)' });
+        vuelo.onfinish = vuelo.oncancel = () => punto.remove();
+    }
     function abrir(valor) {
+        if (valor) { clearTimeout(avisoTemporizador); $('bandejaPastilla').classList.remove('is-aviso'); }
         abierta = valor;
         $('bandejaPanel').hidden = !abierta;
         $('bandejaPastilla').hidden = abierta;
@@ -193,12 +230,75 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         if (!items.length) abrir(false);
     }
-    document.addEventListener('click', event => {
+    document.addEventListener('click', async event => {
         const b = event.target.closest('[data-bandeja-clave]');
         if (!b) return;
-        abrir(true);
-        cambiar(api.trayAdd(b.dataset.bandejaClave));
+        const clave = b.dataset.bandejaClave;
+        if (!abierta) volar(b);
+        if (await cambiar(api.trayAdd(clave)) && !abierta) avisar(items.find(i => i.key === clave));
     });
+    // 6A: destino de la bandeja. «Borrador» lista los borradores propios (v2) y lleva al cotizador con
+    // ?folio=…&revision=…&bandeja=traer: allí se vuelve a consultar al proveedor y se agrega; no se guarda solo.
+    const ir = $('bandejaIr');
+    const hace = iso => window.cconorFechas?.hace(iso) ?? String(iso ?? '');
+    let destino = 'nueva', borradores = [], elegido = null, turno = 0, temporizador = null, cargados = false;
+    function pintarIr() {
+        const base = ir.dataset.cotizadorUrl;
+        const listo = destino === 'nueva' || !!elegido;
+        ir.classList.toggle('disabled', !listo);
+        ir.setAttribute('aria-disabled', String(!listo));
+        if (destino === 'nueva') { ir.textContent = 'Abrir el cotizador →'; ir.href = base; }
+        else if (elegido) {
+            ir.textContent = `Agregar a ${elegido.folio} →`;
+            ir.href = `${base}?${new URLSearchParams({ folio: elegido.folio, revision: String(elegido.revision), bandeja: 'traer' })}`;
+        } else { ir.textContent = 'Elige un borrador'; ir.href = base; }
+    }
+    function pintarBorradores(hayMas) {
+        $('bandejaBorradoresLista').replaceChildren(...borradores.map(borrador => {
+            const fila = nodo('label', undefined, 'bandeja-borrador');
+            const radio = nodo('input');
+            Object.assign(radio, { type: 'radio', name: 'bandejaBorrador', value: borrador.folio, checked: elegido?.folio === borrador.folio });
+            radio.addEventListener('change', () => { elegido = borrador; pintarIr(); });
+            const info = nodo('span', undefined, 'bandeja-borrador-info');
+            info.append(nodo('strong', borrador.folio), nodo('span', borrador.client_name || 'Sin cliente', 'bandeja-borrador-cliente'));
+            const partidas = borrador.items_count === 1 ? '1 partida' : `${borrador.items_count} partidas`;
+            const fecha = nodo('span', `${hace(borrador.issue_date)} · ${partidas}`, 'bandeja-borrador-fecha');
+            fecha.title = window.cconorFechas?.exacta(borrador.issue_date) ?? '';
+            fila.append(radio, info, fecha);
+            return fila;
+        }));
+        $('bandejaBorradoresEstado').textContent = !borradores.length ? 'No hay borradores con esa búsqueda.'
+            : hayMas ? 'Se muestran los más recientes; busca por folio o cliente.' : '';
+    }
+    async function cargarBorradores() {
+        const propio = ++turno;
+        const q = $('bandejaBuscar').value.trim();
+        $('bandejaBorradoresEstado').textContent = 'Buscando…';
+        try {
+            const respuesta = await api.list({ status: 'DRAFT', page: '1', ...(q ? { q } : {}) });
+            if (propio !== turno) return;
+            borradores = respuesta.data.filter(b => b.schema_version === 2);  // los históricos v1 no se editan
+            if (!borradores.some(b => b.folio === elegido?.folio)) elegido = borradores[0] ?? null;
+            pintarBorradores((respuesta.pagination?.pages ?? 1) > 1);
+        } catch (err) {
+            if (propio !== turno) return;
+            borradores = []; elegido = null;
+            $('bandejaBorradoresLista').replaceChildren();
+            $('bandejaBorradoresEstado').textContent = err.message;
+        }
+        pintarIr();
+    }
+    for (const radio of document.querySelectorAll('input[name="bandejaDestino"]')) {
+        radio.addEventListener('change', () => {
+            destino = radio.value;
+            $('bandejaBorradores').hidden = destino !== 'borrador';
+            if (destino === 'borrador' && !cargados) { cargados = true; cargarBorradores(); }
+            pintarIr();
+        });
+    }
+    $('bandejaBuscar').addEventListener('input', () => { clearTimeout(temporizador); temporizador = setTimeout(cargarBorradores, 300); });
+    ir.addEventListener('click', event => { if (ir.getAttribute('aria-disabled') === 'true') event.preventDefault(); });
+    pintarIr();
     $('bandejaPastilla').addEventListener('click', () => abrir(true));
     $('bandejaMinimizar').addEventListener('click', () => abrir(false));
     $('bandejaVaciar').addEventListener('click', () => {

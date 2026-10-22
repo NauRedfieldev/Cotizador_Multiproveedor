@@ -252,8 +252,16 @@
 
 <!-- 19A: bandeja para cotizar (static/js/main.js). Vive en la sesión; oculta hasta cargarla. -->
 <section id="bandeja" class="bandeja" aria-label="Bandeja para cotizar" hidden>
+    <!-- 8C: con la bandeja cerrada, «Agregar» no la abre; la pastilla se estira un momento con el producto. -->
     <button type="button" id="bandejaPastilla" class="bandeja-pastilla" aria-expanded="false" aria-controls="bandejaPanel">
-        <i class="bi bi-basket2" aria-hidden="true"></i><span id="bandejaPastillaTexto">Bandeja</span><i class="bi bi-chevron-up" aria-hidden="true"></i>
+        <span class="bandeja-pastilla-aviso" aria-hidden="true">
+            <span class="bandeja-aviso-check"><i class="bi bi-check-lg"></i></span>
+            <span class="bandeja-aviso-texto"><strong id="bandejaAvisoNombre"></strong><span id="bandejaAvisoDetalle"></span></span>
+        </span>
+        <span class="bandeja-pastilla-base"><i class="bi bi-basket2" aria-hidden="true"></i><span id="bandejaPastillaTexto">Bandeja</span><i class="bi bi-chevron-up" aria-hidden="true"></i></span>
+        <span class="bandeja-pastilla-conteo" aria-hidden="true"><i class="bi bi-basket2"></i><span id="bandejaPastillaConteo"></span></span>
+    </button>
+    <span id="bandejaAnuncio" class="visually-hidden" aria-live="polite"></span>
     </button>
     <div id="bandejaPanel" class="bandeja-panel" hidden>
         <div class="d-flex align-items-center gap-2">
@@ -262,10 +270,23 @@
             <button type="button" id="bandejaMinimizar" class="btn btn-sm btn-link ms-auto p-0" aria-label="Minimizar la bandeja"><i class="bi bi-chevron-down" aria-hidden="true"></i></button>
         </div>
         <ul id="bandejaLista" class="bandeja-lista list-unstyled mb-0"></ul>
+        <!-- 6A: destino de la bandeja; un borrador propio se abre en el cotizador y la trae sola (nada se guarda solo). -->
+        <fieldset class="bandeja-destino">
+            <legend class="bandeja-destino-titulo">¿A dónde los mando?</legend>
+            <label class="bandeja-opcion"><input type="radio" name="bandejaDestino" value="nueva" checked> A una cotización nueva</label>
+            <div id="bandejaOpcionBorrador" class="bandeja-opcion-borrador">
+                <label class="bandeja-opcion"><input type="radio" name="bandejaDestino" value="borrador"> A un borrador que ya tengo</label>
+                <div id="bandejaBorradores" class="bandeja-borradores" hidden>
+                    <input id="bandejaBuscar" type="search" class="form-control form-control-sm" placeholder="Buscar por folio o cliente" aria-label="Buscar borrador por folio o cliente" autocomplete="off" maxlength="200">
+                    <div id="bandejaBorradoresLista" class="bandeja-borradores-lista" role="radiogroup" aria-label="Mis borradores"></div>
+                    <div id="bandejaBorradoresEstado" class="small text-muted" aria-live="polite"></div>
+                </div>
+            </div>
+        </fieldset>
         <div class="small text-muted">Precios de referencia: el cotizador los vuelve a consultar al traerlos.</div>
         <div id="bandejaError" class="small text-danger" role="alert"></div>
         <div class="d-flex align-items-center gap-2">
-            <a class="btn btn-sm btn-cconor-primary" href="{% url 'cotizador' %}">Abrir el cotizador →</a>
+            <a id="bandejaIr" class="btn btn-sm btn-cconor-primary" href="{% url 'cotizador' %}" data-cotizador-url="{% url 'cotizador' %}">Abrir el cotizador →</a>
             <button type="button" id="bandejaVaciar" class="btn btn-sm btn-link ms-auto">Vaciar</button>
         </div>
     </div>
