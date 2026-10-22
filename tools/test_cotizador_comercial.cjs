@@ -15,7 +15,7 @@ function runtime(fetch = async () => { throw Error('No red'); }) {
 const plain = value => JSON.parse(JSON.stringify(value));
 function line(changes = {}) {
     return { key: 'uuid-estable', persisted: false, kind: 'MANUAL', name: 'QA', description: '', quantity: '2',
-        units: { source_label: 'Servicio', sale_label: 'Servicio', conversion_factor: '1', confirmed: true },
+        units: { source_label: 'Pieza', sale_label: 'Pieza', conversion_factor: '1', confirmed: true },
         mode: 'MANUAL', margin: '35', knownCost: false,
         cost: { amount: '', currency: 'MXN', vat_basis: 'NET' },
         sale: { amount: '123456789012.123456', currency: 'MXN', vat_basis: 'NET' }, ...changes };
@@ -52,6 +52,67 @@ test('manual desconocido y costo cero son entradas distintas', () => {
     assert.equal(known.cost.amount, '0');
     assert.equal(known.pricing.sale.amount, '123456789012.123456');
     assert.throws(() => tools.item(line({ mode: 'MARGIN' })));
+});
+test('servicio propio: costo $0 sin IVA y precio fijo, aunque antes tuviera margen o costo', () => {
+    const { tools } = runtime();
+    const service = changes => line({ units: { source_label: 'servicio', sale_label: 'servicio', conversion_factor: '1', confirmed: true }, ...changes });
+    for (const changes of [{}, { mode: 'MARGIN' }, { knownCost: true, cost: { amount: '1000', currency: 'USD', vat_basis: 'NET' } }]) {
+        const data = tools.item(service(changes));
+        assert.deepEqual(plain(data.cost), { amount: '0', currency: 'MXN', vat_basis: 'NET' });
+        assert.equal(data.pricing.mode, 'MANUAL');
+        assert.equal(data.pricing.sale.amount, '123456789012.123456');
+        assert.equal(data.pricing.margin_percent, undefined);
+    }
+    assert.equal(tools.isService(service({ units: { source_label: 'Servicios', sale_label: 'Servicios', conversion_factor: '1', confirmed: true } })), true);
+    // No es servicio: proveedor (API), forma de venta «por partes» u otra unidad.
+    assert.equal(tools.isService(service({ kind: 'API' })), false);
+    assert.equal(tools.isService(service({ unitMode: 'SPLIT' })), false);
+    assert.equal(tools.isService(line()), false);
+    assert.equal(tools.item(line()).cost, null);
+    // Sin precio sigue faltando el precio, no el costo.
+    assert.throws(() => tools.item(service({ sale: { amount: '', currency: 'MXN', vat_basis: 'NET' } })), err => err.field === 'sale');
+});
+test('unidades del menú: comunes sin importar mayúsculas; las demás se escriben', () => {
+    const { tools } = runtime();
+    assert.deepEqual([...tools.COMMON_UNITS], ['pieza', 'metro', 'unidad', 'caja', 'rollo', 'juego', 'kit', 'servicio', 'hora']);
+    assert.equal(tools.commonUnit(' Metro '), 'metro');
+    assert.equal(tools.commonUnit('SERVICIO'), 'servicio');
+    for (const other of ['piezas', 'tramo', '', null, undefined]) assert.equal(tools.commonUnit(other), null);
+});
+test('flechas de cantidad: enteros de 1 a 99,999,999; lo inválido cuenta como 0', () => {
+    const { tools } = runtime();
+    assert.equal(tools.stepQuantity('5', 1), '6');
+    assert.equal(tools.stepQuantity('5', -1), '4');
+    assert.equal(tools.stepQuantity('1', -1), '1');
+    assert.equal(tools.stepQuantity('99999999', 1), '99999999');
+    for (const bad of ['', 'abc', '1.5', '-3', null]) {
+        assert.equal(tools.stepQuantity(bad, 1), '1');
+        assert.equal(tools.stepQuantity(bad, -1), '1');
+    }
+});
+test('7A reordenar: posición al soltar y mover sin tocar la lista original', () => {
+    const { tools } = runtime();
+    const mids = [100, 200, 300, 400];                  // centro de 4 filas
+    assert.equal(tools.dropTarget(mids, 50, 3), 0);     // la 4.ª arriba de todo → posición 1
+    assert.equal(tools.dropTarget(mids, 150, 3), 1);    // entre la 1.ª y la 2.ª
+    assert.equal(tools.dropTarget(mids, 450, 0), 3);    // la 1.ª al final
+    assert.equal(tools.dropTarget(mids, 250, 1), 1);    // cerca de su lugar: no se mueve
+    assert.equal(tools.dropTarget(mids, 180, 1), 1);
+    assert.equal(tools.dropTarget(mids, 350, 1), 2);    // la 2.ª pasa después de la 3.ª
+    const list = ['a', 'b', 'c', 'd'];
+    assert.deepEqual([...tools.moveItem(list, 3, 1)], ['a', 'd', 'b', 'c']);
+    assert.deepEqual([...tools.moveItem(list, 0, 3)], ['b', 'c', 'd', 'a']);
+    assert.deepEqual([...tools.moveItem(list, 2, 2)], list);
+    assert.deepEqual(list, ['a', 'b', 'c', 'd']);
+});
+test('estado de la partida: falta algo, editando o lista', () => {
+    const { tools } = runtime();
+    assert.deepEqual(plain(tools.lineStatus(line({ expanded: false }))), { kind: 'ready', label: 'Lista' });
+    assert.deepEqual(plain(tools.lineStatus(line({ expanded: true }))), { kind: 'editing', label: 'Editando' });
+    assert.deepEqual(plain(tools.lineStatus(line({ sale: { amount: '', currency: 'MXN', vat_basis: 'NET' } }))), { kind: 'missing', label: 'Falta el precio' });
+    assert.deepEqual(plain(tools.lineStatus(line({ name: ' ' }))), { kind: 'missing', label: 'Falta el nombre' });
+    assert.deepEqual(plain(tools.lineStatus(line({ units: { source_label: 'Pieza', sale_label: 'Pieza', conversion_factor: '1', confirmed: false } }))),
+        { kind: 'missing', label: 'Falta confirmar la unidad' });
 });
 test('precio manual incluido conserva su tasa propia', () => {
     const { tools } = runtime();

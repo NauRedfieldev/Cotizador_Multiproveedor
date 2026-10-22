@@ -102,10 +102,16 @@
         <div id="resultsList" class="list-group mt-2"></div>
         <button type="button" id="addManualBtn" class="btn btn-outline-primary mt-3" disabled>+ Añadir producto o servicio manual</button>
         <div id="manualPermissionHint" class="small text-muted mt-1"></div>
+        <!-- 4A: cuántas partidas están completas y cerradas («Listo»); no guarda nada. -->
+        <div id="linesProgress" class="lines-progress mt-3 d-none" aria-live="polite">
+            <div class="lines-progress-bar" aria-hidden="true"><div id="linesProgressFill"></div></div><span id="linesProgressText"></span>
+            <!-- 7A: el orden de la tabla es el del PDF; se cambia con la agarradera. -->
+            <span class="lines-order-hint ms-auto"><i class="bi bi-grip-vertical" aria-hidden="true"></i> Arrastra para cambiar el orden; el PDF sigue este orden.</span></div>
+        <div id="linesOrderStatus" class="visually-hidden" aria-live="assertive"></div>
         <div class="cconor-table-container mt-3">
             <div class="table-responsive"><table class="table cconor-table align-middle mb-0" id="quoteItemsTable">
-                <thead><tr><th>#</th><th>Concepto / proveedor interno</th><th>Unidad vendida</th><th>Cantidad</th><th>Venta por unidad MXN</th><th>Importe antes de descuento</th><th>Acciones</th></tr></thead>
-                <tbody id="quoteItemsBody"><tr><td colspan="7" class="text-center text-muted py-4">Tu cotización está vacía. Busca productos o añade un concepto manual.</td></tr></tbody>
+                <thead><tr><th>#</th><th>Concepto / proveedor interno</th><th>Unidad vendida</th><th>Cantidad</th><th>Venta por unidad MXN</th><th>Importe antes de descuento</th><th>Estado</th><th>Acciones</th></tr></thead>
+                <tbody id="quoteItemsBody"><tr><td colspan="8" class="text-center text-muted py-4">Tu cotización está vacía. Busca productos o añade un concepto manual.</td></tr></tbody>
             </table></div>
         </div>
     </section>
@@ -201,4 +207,4 @@
     </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=26"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=28"></script>{% endblock %}

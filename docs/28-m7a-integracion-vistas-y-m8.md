@@ -826,6 +826,34 @@ solo crean su contenedor cuando hay mensajes. Caché: `custom.css?v=10`, `home.c
 - Límite de búsquedas: ahora 20 por minuto **por usuario** (docs/26 §6).
 - Pruebas: JS «24C: fechas relativas…» y `test_v33`.
 
+### 14.14 Partidas del cotizador: sin IVA, unidad en lista, servicio, cantidad, «Listo» y orden (2026-10-21/22)
+
+Solo navegador (`static/js/cotizador.js`); el servidor y el formato guardado no cambian.
+
+- **Sin pregunta de IVA:** el costo manual y el precio fijo se capturan siempre sin IVA (etiqueta «Sin IVA»),
+  igual que los precios de proveedor; se envía `vat_basis: "NET"`. Una captura anterior guardada con
+  «incluye IVA» conserva la pregunta («Esta captura anterior incluye IVA. ¿Corregir?») hasta pasarla a sin IVA.
+- **Unidad en lista:** menú con pieza, metro, unidad, caja, rollo, juego, kit, servicio y hora, y «Otra…» para
+  escribirla (`COMMON_UNITS`, `commonUnit`). También en «por partes» (proveedor y venta).
+- **Servicio propio** (`isService`: concepto manual, unidad «servicio», sin «por partes»): la izquierda solo pide
+  nombre y descripción; no se pregunta forma de venta ni cómo calcular; el precio fijo va solo en «Precio al
+  cliente». Se envía **costo $0 MXN sin IVA** (decisión del usuario: sin aviso de costo desconocido; la utilidad
+  incluye el servicio completo) y `mode: "MANUAL"`. En la tabla: «· Servicio propio». Un borrador anterior con
+  unidad «Servicio» y costo capturado pasa a costo $0 al volver a guardarlo.
+- **Cantidad con − / +** en la tabla y en el detalle (`stepQuantity`: enteros de 1 a 99,999,999); las dos copias
+  se sincronizan.
+- **Estado y «Listo» (diseño 4A):** columna «Estado» (✓ Lista, ● Editando, ○ lo que falta; `lineStatus`) y
+  avance «N de M partidas listas». «✓ Listo» revisa la partida y la cierra o lleva al campo que falta;
+  «Editar»/«Completar» la abre; «Descartar cambios» vuelve a como estaba al abrirla. Nada se guarda por partida:
+  sigue un solo «Guardar borrador».
+- **Cambiar el orden (diseño 7A, 2026-10-22):** agarradera ⋮⋮ junto al número. Al arrastrar (mouse o dedo) la
+  partida flota, una línea verde marca dónde caerá y las demás muestran su número nuevo («2 → 3»); Escape
+  cancela. Con teclado: Espacio la toma, ↑/↓ la mueven y Espacio la suelta (Escape la regresa). Solo cambia el
+  orden de `items`; el servidor ya asigna `position` en ese orden al guardar, así que el PDF numera igual
+  (`dropTarget`, `moveItem`).
+- Pruebas: JS «servicio propio…», «unidades del menú…», «flechas de cantidad…», «estado de la partida…» y
+  «7A reordenar…»; Django `test_reordenar_partidas_guarda_el_nuevo_orden`.
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 > **Rediseño 12A (2026-10-20, rama `feature/ui-interfaz-general`).** La pantalla pasó a lista y
