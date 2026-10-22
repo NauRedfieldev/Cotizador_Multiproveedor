@@ -593,6 +593,21 @@ class CommercialAPITests(CommercialFixtures, TestCase):
         self.assertEqual(saved["state_fingerprint"], preview["state_fingerprint"])
         self.send("api_guardar_revision", edit, method="put", args=(created["folio"], 1), status=409)
 
+    def test_reordenar_partidas_guarda_el_nuevo_orden(self):
+        # 7A: arrastrar partidas en el cotizador solo cambia el orden de items al guardar.
+        first, second = partida_api_manual(source={"type": "MANUAL", "name": "Primera"}), partida_api_manual(source={"type": "MANUAL", "name": "Segunda"})
+        data = alta_comercial(items=[first, second])
+        created = self.create(data)
+        self.assertEqual([i["name"] for i in self.detail(created)["items"]], ["Primera", "Segunda"])
+        edit = {k: v for k, v in data.items() if k not in ("schema_version", "request_id", "notes")}
+        edit["items"] = [{**line, "source": {"type": "EXISTING"}} for line in (second, first)]
+        edit.update(edit_version=1)
+        saved = self.send("api_guardar_revision", edit, method="put", args=(created["folio"], 1))
+        self.assertNotEqual(saved["state_fingerprint"], created["state_fingerprint"])
+        detail = self.detail(created)
+        self.assertEqual([i["name"] for i in detail["items"]], ["Segunda", "Primera"])
+        self.assertEqual([i["line_key"] for i in detail["items"]], [second["line_key"], first["line_key"]])
+
     def test_otro_asesor_y_staff_no_financiero_no_acceden(self):
         created = self.create()
         self.client.force_login(self.other)

@@ -42,6 +42,36 @@
         else if (data.vat_basis !== 'NET') fail('Indica si el importe incluye IVA o es sin IVA.');
         return data;
     }
+    // Unidades del menú desplegable; cualquier otra se escribe con «Otra…».
+    const COMMON_UNITS = Object.freeze(['pieza', 'metro', 'unidad', 'caja', 'rollo', 'juego', 'kit', 'servicio', 'hora']);
+    function commonUnit(value) {
+        const text = String(value ?? '').trim().toLowerCase();
+        return COMMON_UNITS.includes(text) ? text : null;
+    }
+    // Servicio propio: concepto manual vendido por «servicio». No tiene costo de proveedor:
+    // se calcula con costo $0 (decisión del usuario 2026-10-21) y siempre con precio fijo.
+    function isService(line) {
+        return line.kind === 'MANUAL' && line.unitMode !== 'SPLIT' && !splitUnits(line.units) && /^servicios?$/i.test(line.units.sale_label.trim());
+    }
+    // Flechas − / + de la cantidad: entero de 1 a 99,999,999; lo que no sea entero cuenta como 0.
+    function stepQuantity(value, delta) {
+        const text = String(value ?? '').trim();
+        const current = /^\d{1,8}$/.test(text) ? Number(text) : 0;
+        return String(Math.min(99999999, Math.max(1, current + delta)));
+    }
+    // 7A: reordenar partidas arrastrando. mids = centro vertical de cada fila; devuelve la posición
+    // final de la partida «from» si se suelta a la altura y (cae antes de la primera fila cuyo centro supera y).
+    function dropTarget(mids, y, from) {
+        let slot = mids.findIndex(mid => y < mid);
+        if (slot < 0) slot = mids.length;
+        return slot > from ? slot - 1 : slot;
+    }
+    function moveItem(list, from, to) {
+        const copy = list.slice();
+        const [moved] = copy.splice(from, 1);
+        copy.splice(to, 0, moved);
+        return copy;
+    }
     function item(line) {
         if (line.kind === 'MANUAL' && !line.name.trim()) fail('Escribe el nombre del concepto.', 'name');
         if (!line.units.source_label.trim() || !line.units.sale_label.trim()) fail('Indica la unidad del proveedor y la unidad en que lo vendes.', 'units');
@@ -53,14 +83,22 @@
             { type: 'MANUAL', name: line.name.trim() }, quantity,
             units: { source_label: line.units.source_label.trim(), sale_label: line.units.sale_label.trim(),
                 conversion_factor: conversion, confirmed: true },
-            description: line.description, pricing: { mode: line.mode } };
-        if (line.kind === 'MANUAL') data.cost = line.knownCost ? within('cost', () => price(line.cost)) : null;
-        if (line.mode === 'MARGIN') {
+            description: line.description, pricing: { mode: isService(line) ? 'MANUAL' : line.mode } };
+        if (line.kind === 'MANUAL') data.cost = isService(line) ? { amount: '0', currency: 'MXN', vat_basis: 'NET' } :
+            line.knownCost ? within('cost', () => price(line.cost)) : null;
+        if (data.pricing.mode === 'MARGIN') {
             if (line.kind === 'MANUAL' && !line.knownCost) fail('Sin costo conocido, elige «Precio fijo» y captura el precio.', 'mode');
             data.pricing.margin_percent = within('margin', () => decimal(line.margin, 4, 2, { max: '9999' }));
-        } else if (line.mode === 'MANUAL') data.pricing.sale = within('sale', () => price(line.sale));
+        } else if (data.pricing.mode === 'MANUAL') data.pricing.sale = within('sale', () => price(line.sale));
         else fail('Elige cómo calcular el precio.', 'mode');
         return data;
+    }
+    // Estado de la partida en la tabla: completa y cerrada = «Lista».
+    const MISSING = { name: 'Falta el nombre', units: 'Falta la unidad', factor: 'Falta la equivalencia', quantity: 'Revisa la cantidad',
+        confirm: 'Falta confirmar la unidad', cost: 'Falta el costo', margin: 'Revisa el margen', sale: 'Falta el precio', mode: 'Elige cómo calcular' };
+    function lineStatus(line) {
+        try { item(line); } catch (err) { return { kind: 'missing', label: MISSING[err.field] || 'Incompleta' }; }
+        return line.expanded ? { kind: 'editing', label: 'Editando' } : { kind: 'ready', label: 'Lista' };
     }
     // IVA en pantalla como porcentaje (16); el servidor recibe la fracción exacta (0.1600).
     function percentToFraction(value) {
@@ -125,7 +163,8 @@
         return units.source_label.trim() !== units.sale_label.trim() || !/^0*1(\.0*)?$/.test(String(units.conversion_factor).trim());
     }
     window.CCONORQuoteTools = Object.freeze({ decimal, integer, storedInteger, money, price, item, editOutcome, retainIntent,
-        defaultConditionsText, fxSearchHint, percentToFraction, fractionToPercent, roundText, splitUnits, trimZeros, discountText });
+        defaultConditionsText, fxSearchHint, percentToFraction, fractionToPercent, roundText, splitUnits, trimZeros, discountText,
+        COMMON_UNITS, commonUnit, isService, stepQuantity, lineStatus, dropTarget, moveItem });
     if (typeof document === 'undefined') return;
     document.addEventListener('DOMContentLoaded', function () {
         const $ = id => document.getElementById(id);
@@ -194,8 +233,8 @@
             try { decimal($('discountPercent').value, 5, 2, { max: '10000' }); } catch { totals('discountPercent', 'El descuento debe ser un porcentaje de 0 a 100, con hasta 2 decimales.'); }
             return issues;
         }
-        const usesUsd = line => line.originalCurrency === 'USD' || (line.kind === 'MANUAL' &&
-            ((line.knownCost && line.cost.currency === 'USD') || (line.mode === 'MANUAL' && line.sale.currency === 'USD')));
+        const usesUsd = line => line.originalCurrency === 'USD' || (line.kind === 'MANUAL' && (isService(line) ? line.sale.currency === 'USD' :
+            ((line.knownCost && line.cost.currency === 'USD') || (line.mode === 'MANUAL' && line.sale.currency === 'USD'))));
         function quoteIssues() {
             const issues = headerIssues(!!state.transition);
             if (!state.fx && state.lines.some(usesUsd)) issues.push({ field: 'newExchangeRate', message: 'Aplica el tipo de cambio del día: hay precios en dólares.', place: 'Tipo de cambio' });
@@ -339,6 +378,34 @@
                 box.replaceChildren(element('div', 'Se calcula al completar los datos.', 'text-muted'));
             }
         }
+        // Fila de la tabla: nombre, unidad, cantidad, estado y botón «Editar»/«Completar».
+        const rowLabel = line => `${line.name || 'Concepto manual sin nombre'} · ${isService(line) ? 'Servicio propio' : line.provider || 'Manual'}`;
+        function syncQuantity(line) {
+            for (const input of $('quoteItemsBody').querySelectorAll('[data-qty-for]')) {
+                if (input.dataset.qtyFor === line.key && input !== document.activeElement) input.value = line.quantity;
+            }
+        }
+        function statusChip(line) {
+            const status = lineStatus(line);
+            const mark = { ready: '✓', editing: '●', missing: '○' }[status.kind];
+            return element('span', `${mark} ${status.label}`, `line-status-chip line-status-chip--${status.kind}`);
+        }
+        function syncRow(line, row) {
+            row.querySelector('.line-name').textContent = rowLabel(line);
+            row.querySelector('.line-unit').textContent = line.units.sale_label || 'Pendiente';
+            syncQuantity(line);
+            row.querySelector('.line-status').replaceChildren(statusChip(line));
+            const edit = row.querySelector('.line-edit');
+            edit.hidden = !!line.expanded || !canEdit();
+            edit.textContent = lineStatus(line).kind === 'ready' ? 'Editar' : 'Completar';
+            syncProgress();
+        }
+        function syncProgress() {
+            const total = state.lines.length, ready = state.lines.filter(l => lineStatus(l).kind === 'ready').length;
+            $('linesProgress').classList.toggle('d-none', !total || state.readonly);
+            $('linesProgressFill').style.width = total ? `${Math.round(ready / total * 100)}%` : '0%';
+            text('linesProgressText', `${ready} de ${total} ${total === 1 ? 'partida lista' : 'partidas listas'}`);
+        }
         function changed() {
             state.epoch += 1;
             state.dirty = true;
@@ -347,11 +414,7 @@
             clearSummary();
             for (const row of $('quoteItemsBody').querySelectorAll('[data-line-key]')) {
                 const line = state.lines.find(l => l.key === row.dataset.lineKey);
-                if (line) {
-                    row.children[1].textContent = `${line.name || 'Concepto manual sin nombre'} · ${line.provider || 'Manual'}`;
-                    row.children[2].textContent = line.units.sale_label || 'Pendiente';
-                    row.children[3].textContent = line.quantity;
-                }
+                if (line) syncRow(line, row);
             }
             locks();
             if (state.lines.length) previewTimer = setTimeout(() => calculate().catch(() => {}), 350);
@@ -444,13 +507,15 @@
                 node.append(element('span', label, 'text-muted'), element(strong ? 'strong' : 'span', value, 'text-end'));
                 return node;
             };
-            box.replaceChildren(
-                row(`Costo por ${unit}`, partida.costo_unitario_mxn === null ? 'Desconocido' : shown(partida.costo_unitario_mxn)),
+            // Servicio propio: sin costo de proveedor, así que no se muestran costo ni utilidad.
+            const service = isService(line);
+            box.replaceChildren(...[
+                service ? null : row(`Costo por ${unit}`, partida.costo_unitario_mxn === null ? 'Desconocido' : shown(partida.costo_unitario_mxn)),
                 row(`Precio por ${unit}`, client.unit_price_label || '—', true),
                 element('hr', '', 'my-2'),
                 row(`${line.quantity} × ${unit}`, money(client.amount) + ' MXN', true),
-                row('Utilidad estimada', partida.utilidad_antes_descuento === null ? 'No calculable' : shown(partida.utilidad_antes_descuento)),
-                element('div', 'Sin IVA y antes del descuento global.', 'small text-muted mt-1'));
+                service ? null : row('Utilidad estimada', partida.utilidad_antes_descuento === null ? 'No calculable' : shown(partida.utilidad_antes_descuento)),
+                element('div', 'Sin IVA y antes del descuento global.', 'small text-muted mt-1')].filter(Boolean));
         }
         async function calculate() {
             clearTimeout(previewTimer);
@@ -530,8 +595,13 @@
             return { input, caption };
         }
         const safePercent = value => { try { return fractionToPercent(value); } catch { return String(value ?? ''); } };
+        // Importes manuales: siempre sin IVA (igual que los precios de los proveedores). Solo una
+        // captura anterior que ya decía «incluye IVA» conserva la pregunta, para poder corregirla.
         function priceEditor(parent, label, data, enabled, update, name) {
+            const legacyIncluded = data.vat_basis === 'INCLUDED';
+            if (!legacyIncluded) data.vat_basis = 'NET';
             const box = fieldBox(parent, label);
+            if (!legacyIncluded) box.caption.append(' ', element('span', 'Sin IVA', 'vat-net-chip'));
             const group = element('div', '', 'input-group input-group-sm');
             const amount = document.createElement('input');
             Object.assign(amount, { id: box.id, className: 'form-control', value: data.amount ?? '', inputMode: 'decimal', maxLength: 80 });
@@ -544,7 +614,8 @@
             currency.value = data.currency; currency.disabled = !enabled || !editable();
             currency.addEventListener('change', () => { data.currency = currency.value; update(); });
             group.append(amount, currency); box.wrapper.append(group);
-            choice(parent, '¿Ese importe incluye IVA?', data.vat_basis, [['NET', 'No, es sin IVA'], ['INCLUDED', 'Sí, incluye IVA']],
+            if (!legacyIncluded) { box.wrapper.append(element('div', 'Se captura sin IVA; el IVA se suma en el total.', 'form-text')); return; }
+            choice(parent, 'Esta captura anterior incluye IVA. ¿Corregir?', data.vat_basis, [['NET', 'No, es sin IVA'], ['INCLUDED', 'Sí, incluye IVA']],
                 value => { data.vat_basis = value; update(true); }, { disabled: !enabled, name });
             if (data.vat_basis === 'INCLUDED') {
                 textField(parent, 'IVA que incluye', data.vatRateInput ?? safePercent(data.vat_rate), value => {
@@ -554,41 +625,256 @@
                 }, { disabled: !enabled || !has('change_commercial_tax'), name, suffix: '%' });
             }
         }
+        // Unidad: menú con las más comunes; «Otra…» abre un campo para escribirla.
+        const OTHER_UNIT = '__otra';
+        function unitField(parent, label, value, onChange, { disabled = false, name = '' } = {}) {
+            const box = fieldBox(parent, label);
+            const select = document.createElement('select');
+            Object.assign(select, { id: box.id, className: 'form-select form-select-sm' });
+            const option = (key, caption) => { const node = element('option', caption); node.value = key; select.append(node); };
+            option('', 'Elige una unidad…');
+            for (const unit of COMMON_UNITS) option(unit, unit[0].toUpperCase() + unit.slice(1));
+            option(OTHER_UNIT, 'Otra… (escribir)');
+            const other = document.createElement('input');
+            Object.assign(other, { className: 'form-control form-control-sm mt-2', maxLength: 6000, placeholder: 'Escribe la unidad' });
+            other.setAttribute('aria-label', `${label}: otra unidad`);
+            if (name) { select.dataset.field = name; other.dataset.field = name; }
+            const known = commonUnit(value), current = String(value ?? '').trim();
+            select.value = known ?? (current ? OTHER_UNIT : '');
+            other.value = known ? '' : String(value ?? '');
+            other.hidden = select.value !== OTHER_UNIT;
+            select.disabled = other.disabled = disabled || !editable();
+            select.addEventListener('change', () => {
+                other.hidden = select.value !== OTHER_UNIT;
+                if (select.value === OTHER_UNIT) { onChange(other.value); other.focus(); } else onChange(select.value);
+            });
+            other.addEventListener('input', () => onChange(other.value));
+            box.wrapper.append(select, other);
+            return { select, other, caption: box.caption };
+        }
+        // Cantidad: se escribe o se cambia con − / +. Todas las copias (tabla y detalle) se sincronizan en changed().
+        function stepper(line, update, { id = '', label = '', suffix = '' } = {}) {
+            const group = element('div', '', 'input-group input-group-sm qty-stepper');
+            const input = document.createElement('input');
+            Object.assign(input, { className: 'form-control text-center', value: line.quantity, inputMode: 'numeric', maxLength: 10, autocomplete: 'off' });
+            if (id) input.id = id; else input.setAttribute('aria-label', label);
+            input.dataset.qtyFor = line.key; input.dataset.field = 'quantity';
+            const set = value => { line.quantity = value; update(); };
+            const step = (sign, caption, delta) => {
+                const button = element('button', sign, 'btn btn-outline-secondary qty-step');
+                button.type = 'button'; button.setAttribute('aria-label', caption);
+                button.addEventListener('click', () => set(stepQuantity(line.quantity, delta)));
+                return button;
+            };
+            const minus = step('−', 'Quitar uno', -1), plus = step('+', 'Sumar uno', 1);
+            input.addEventListener('input', () => set(input.value));
+            for (const control of [minus, input, plus]) control.disabled = !editable();
+            group.append(minus, input, plus);
+            const suffixNode = suffix ? element('span', suffix, 'input-group-text') : null;
+            if (suffixNode) group.append(suffixNode);
+            return { group, input, suffix: suffixNode };
+        }
+        // 4A: «Listo» revisa la partida y la cierra; el guardado sigue siendo uno solo («Guardar borrador»).
+        const snapshot = line => structuredClone({ name: line.name, description: line.description, quantity: line.quantity, units: line.units,
+            unitMode: line.unitMode, mode: line.mode, margin: line.margin, knownCost: line.knownCost, cost: line.cost, sale: line.sale });
+        function openDetail(line) {
+            if (!line.expanded) {
+                if (lineStatus(line).kind !== 'missing') line.backup = snapshot(line);
+                line.expanded = true;
+            }
+            renderLines(); locks();
+            [...$('quoteItemsBody').querySelectorAll('[data-line-detail]')].find(d => d.dataset.lineDetail === line.key)
+                ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        function markReady(line) {
+            try { item(line); } catch (err) {
+                const issue = { lineKey: line.key, lineField: err.field, message: err.message };
+                line.issue = issue; goTo(issue);
+                return;
+            }
+            Object.assign(line, { issue: null, expanded: false, backup: null });
+            renderLines(); locks();
+        }
+        function discardLine(line) {
+            Object.assign(line, structuredClone(line.backup), { issue: null, expanded: false, backup: null });
+            renderLines(); changed();
+        }
+        function detailFooter(line) {
+            const footer = element('div', '', 'line-detail-footer');
+            footer.append(element('span', 'Al marcarla como lista se revisa y se cierra.', 'small text-muted me-auto'));
+            if (line.backup) {
+                const discard = element('button', 'Descartar cambios', 'btn btn-sm btn-outline-secondary'); discard.type = 'button';
+                discard.disabled = !editable(); discard.addEventListener('click', () => discardLine(line));
+                footer.append(discard);
+            }
+            const done = element('button', '✓ Listo', 'btn btn-sm btn-cconor-done'); done.type = 'button';
+            done.disabled = !editable(); done.addEventListener('click', () => markReady(line));
+            footer.append(done);
+            return footer;
+        }
+        // 7A: cambiar el orden con la agarradera (mouse/dedo) o con el teclado (Espacio, ↑/↓, Espacio o Escape).
+        // Solo cambia el orden de state.lines; se guarda con «Guardar borrador» y el PDF numera igual.
+        let drag = null, keyGrab = null, refocusing = false;
+        const dataRows = () => [...$('quoteItemsBody').querySelectorAll('tr[data-line-key]')];
+        const blockOf = row => row.nextElementSibling && !row.nextElementSibling.dataset.lineKey ? [row, row.nextElementSibling] : [row];
+        const announceOrder = message => text('linesOrderStatus', message);
+        function reorder(from, to) {
+            state.lines.splice(0, state.lines.length, ...moveItem(state.lines, from, to));
+        }
+        function paintDrop(rows) {
+            for (const node of $('quoteItemsBody').querySelectorAll('.drop-before, .drop-after')) node.classList.remove('drop-before', 'drop-after');
+            const order = moveItem(rows.map((_, i) => i), drag.from, drag.to);
+            rows.forEach((row, i) => {
+                const now = order.indexOf(i);
+                row.querySelector('.line-num-text').textContent = now === i ? String(i + 1) : `${i + 1} → ${now + 1}`;
+            });
+            if (drag.to < drag.from) rows[drag.to].classList.add('drop-before');
+            else if (drag.to > drag.from) blockOf(rows[drag.to]).at(-1).classList.add('drop-after');
+        }
+        function dragMove(event) {
+            if (!drag) return;
+            Object.assign(drag.ghost.style, { top: `${event.clientY}px`, left: `${event.clientX + 14}px` });
+            if (event.clientY < 80) window.scrollBy(0, -16);
+            else if (event.clientY > window.innerHeight - 80) window.scrollBy(0, 16);
+            const rows = dataRows();
+            const mids = rows.map(row => { const box = row.getBoundingClientRect(); return box.top + box.height / 2; });
+            const to = dropTarget(mids, event.clientY, drag.from);
+            if (to !== drag.to) { drag.to = to; paintDrop(rows); }
+        }
+        const dragEnd = () => finishDrag(true), dragCancel = () => finishDrag(false);
+        const dragEscape = event => { if (event.key === 'Escape') finishDrag(false); };
+        function startDrag(event, line) {
+            if (drag || keyGrab || !editable() || state.lines.length < 2 || event.button !== 0) return;
+            event.preventDefault();
+            const from = state.lines.indexOf(line);
+            drag = { line, from, to: from, ghost: element('div', rowLabel(line), 'line-drag-ghost') };
+            document.body.append(drag.ghost); document.body.classList.add('line-drag-active');
+            for (const node of blockOf(dataRows()[from])) node.classList.add('line-dragging');
+            document.addEventListener('pointermove', dragMove);
+            document.addEventListener('pointerup', dragEnd);
+            document.addEventListener('pointercancel', dragCancel);
+            document.addEventListener('keydown', dragEscape);
+            dragMove(event);
+        }
+        function finishDrag(apply) {
+            if (!drag) return;
+            const { line, from, to, ghost } = drag;
+            drag = null;
+            ghost.remove(); document.body.classList.remove('line-drag-active');
+            document.removeEventListener('pointermove', dragMove);
+            document.removeEventListener('pointerup', dragEnd);
+            document.removeEventListener('pointercancel', dragCancel);
+            document.removeEventListener('keydown', dragEscape);
+            if (apply && to !== from) {
+                reorder(from, to); line.justMoved = true;
+                renderLines(); changed();
+                announceOrder(`Partida movida a la posición ${to + 1}.`);
+            } else { renderLines(); locks(); }
+        }
+        function refocusGrip(line) {
+            refocusing = true;
+            renderLines(); locks();
+            dataRows().find(row => row.dataset.lineKey === line.key)?.querySelector('.line-grip')?.focus();
+            refocusing = false;
+        }
+        function dropKeyGrab(focus = true) {
+            const grab = keyGrab;
+            keyGrab = null;
+            const line = state.lines.find(l => l.key === grab.key);
+            const now = state.lines.indexOf(line);
+            if (now !== grab.from) line.justMoved = true;
+            if (focus) refocusGrip(line); else { renderLines(); locks(); }
+            if (now !== grab.from) { changed(); announceOrder(`Partida movida a la posición ${now + 1}.`); }
+            else announceOrder('Partida soltada en su lugar.');
+        }
+        function gripKey(event, line) {
+            const index = state.lines.indexOf(line);
+            if (event.key === ' ' || event.key === 'Enter') {
+                event.preventDefault();
+                if (keyGrab) { dropKeyGrab(); return; }
+                if (!editable() || state.lines.length < 2) return;
+                keyGrab = { key: line.key, from: index };
+                refocusGrip(line);
+                announceOrder(`Partida ${index + 1} tomada. Usa las flechas arriba y abajo para moverla; Espacio para soltarla o Escape para cancelar.`);
+            } else if (keyGrab?.key === line.key && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+                event.preventDefault();
+                const to = index + (event.key === 'ArrowUp' ? -1 : 1);
+                if (to < 0 || to >= state.lines.length) return;
+                reorder(index, to); refocusGrip(line);
+                announceOrder(`Posición ${to + 1} de ${state.lines.length}.`);
+            } else if (keyGrab?.key === line.key && event.key === 'Escape') {
+                event.preventDefault();
+                const back = keyGrab.from;
+                keyGrab = null;
+                reorder(index, back); refocusGrip(line);
+                announceOrder('Movimiento cancelado; la partida volvió a su lugar.');
+            }
+        }
+        function gripCell(line, index, row) {
+            const cell = element('td', '', 'line-num');
+            const grip = element('button', '', 'line-grip'); grip.type = 'button';
+            grip.setAttribute('aria-label', `Mover la partida ${index + 1}`);
+            grip.title = 'Arrastra para cambiar el orden (o Espacio y flechas)';
+            const icon = element('i', '', 'bi bi-grip-vertical'); icon.setAttribute('aria-hidden', 'true');
+            grip.append(icon);
+            grip.disabled = !editable() || state.lines.length < 2;
+            grip.addEventListener('pointerdown', event => startDrag(event, line));
+            grip.addEventListener('keydown', event => gripKey(event, line));
+            grip.addEventListener('blur', () => { if (keyGrab?.key === line.key && !refocusing) dropKeyGrab(false); });
+            if (keyGrab?.key === line.key) { grip.classList.add('is-grabbed'); row.classList.add('line-grabbed'); }
+            cell.append(grip, element('span', String(index + 1), 'line-num-text'));
+            return cell;
+        }
         function renderLines() {
             $('quoteItemsBody').replaceChildren();
+            syncProgress();
             if (state.readonly && state.loadedDetail?.schema_version === 1) {
                 for (const entry of state.loadedDetail.items) {
                     const row = document.createElement('tr'), cell = element('td', `${entry.name} · Cantidad histórica: ${entry.quantity} · Original: ${money(entry.source_unit_price)} ${entry.source_currency}`);
-                    cell.colSpan = 7; row.append(cell); $('quoteItemsBody').append(row);
+                    cell.colSpan = 8; row.append(cell); $('quoteItemsBody').append(row);
                 }
                 return;
             }
             if (!state.lines.length) {
                 const row = document.createElement('tr'), cell = element('td', 'Tu cotización está vacía. Busca productos o añade un concepto manual.', 'text-center text-muted py-4');
-                cell.colSpan = 7; row.append(cell); $('quoteItemsBody').append(row); return;
+                cell.colSpan = 8; row.append(cell); $('quoteItemsBody').append(row); return;
             }
             state.lines.forEach((line, index) => {
                 const row = document.createElement('tr'); row.dataset.lineKey = line.key;
                 if (line.issue) row.classList.add('line-has-issue');
-                row.append(element('td', String(index + 1)), element('td', `${line.name || 'Concepto manual sin nombre'} · ${line.provider || 'Manual'}`),
-                    element('td', line.units.sale_label || 'Pendiente'), element('td', line.quantity),
-                    element('td', '—', 'sale-unit'), element('td', '—', 'sale-amount'));
-                const actions = document.createElement('td');
-                const remove = element('button', 'Quitar', 'btn btn-sm btn-outline-danger'); remove.type = 'button'; remove.disabled = !editable();
-                remove.addEventListener('click', () => { state.lines.splice(index, 1); renderLines(); changed(); });
-                actions.append(remove); row.append(actions); $('quoteItemsBody').append(row);
-                const detailRow = document.createElement('tr'), detailCell = document.createElement('td'); detailCell.colSpan = 7;
-                const details = element('details', '', 'line-detail'); details.open = !!line.expanded; details.dataset.lineDetail = line.key;
-                details.addEventListener('toggle', () => { line.expanded = details.open; });
-                details.append(element('summary', `Detalle de la partida ${index + 1}`, 'small text-primary fw-semibold mb-2'));
-                const issueAlert = line.issue ? element('div', line.issue.message, 'alert alert-danger py-2 small mb-3') : null;
-                if (issueAlert) details.append(issueAlert);
-                const grid = element('div', '', 'row g-4 px-1 pb-2');
-                const source = element('div', '', 'col-lg-4'), units = element('div', '', 'col-lg-4'), pricing = element('div', '', 'col-lg-4');
+                let issueAlert = null;
                 const update = rerender => {
                     if (line.issue) { line.issue = null; row.classList.remove('line-has-issue'); issueAlert?.remove(); }
                     changed(); if (rerender) renderLines();
                 };
+                const service = isService(line);
+                const qtyCell = element('td', '', 'line-qty');
+                qtyCell.append(stepper(line, update, { label: `Cantidad de la partida ${index + 1}` }).group);
+                if (line.justMoved) { row.classList.add('line-moved'); delete line.justMoved; }
+                row.append(gripCell(line, index, row), element('td', rowLabel(line), 'line-name'),
+                    element('td', line.units.sale_label || 'Pendiente', 'line-unit'), qtyCell,
+                    element('td', '—', 'sale-unit'), element('td', '—', 'sale-amount'), element('td', '', 'line-status'));
+                const actions = element('td', '', 'text-nowrap');
+                const edit = element('button', '', 'btn btn-sm btn-outline-secondary me-1 line-edit'); edit.type = 'button'; edit.disabled = !editable();
+                edit.addEventListener('click', () => openDetail(line));
+                const remove = element('button', 'Quitar', 'btn btn-sm btn-outline-danger'); remove.type = 'button'; remove.disabled = !editable();
+                remove.addEventListener('click', () => { state.lines.splice(index, 1); renderLines(); changed(); });
+                actions.append(edit, remove); row.append(actions); $('quoteItemsBody').append(row);
+                const detailRow = document.createElement('tr'), detailCell = document.createElement('td'); detailCell.colSpan = 8;
+                const details = element('details', '', 'line-detail'); details.open = !!line.expanded; details.dataset.lineDetail = line.key;
+                // Abrir a mano guarda una copia para «Descartar cambios»; cerrar la olvida.
+                details.addEventListener('toggle', () => {
+                    if (details.open === !!line.expanded) return;
+                    if (details.open && lineStatus(line).kind !== 'missing') line.backup = snapshot(line);
+                    if (!details.open) line.backup = null;
+                    line.expanded = details.open;
+                    syncRow(line, row);
+                });
+                details.append(element('summary', `Detalle de la partida ${index + 1}`, 'small text-primary fw-semibold mb-2'));
+                issueAlert = line.issue ? element('div', line.issue.message, 'alert alert-danger py-2 small mb-3') : null;
+                if (issueAlert) details.append(issueAlert);
+                const grid = element('div', '', 'row g-4 px-1 pb-2');
+                const source = element('div', '', 'col-lg-4'), units = element('div', '', 'col-lg-4'), pricing = element('div', '', 'col-lg-4');
                 const canSell = has('set_commercial_sale');
 
                 if (line.kind === 'API') {
@@ -600,6 +886,9 @@
                     fact('Precio', `${money(trimZeros(line.originalPrice))} ${line.originalCurrency} · ${line.originalVat === null ? 'sin IVA' : 'incluye IVA ' + safePercent(line.originalVat) + '%'}`);
                     box.append(element('div', 'Estos datos vienen del proveedor y no se pueden editar.', 'text-muted mt-2'));
                     source.append(box);
+                } else if (service) {
+                    source.append(element('h6', 'Servicio', 'fw-bold'), element('div', 'Lo realiza la empresa; no viene de un proveedor.', 'form-text mb-3'));
+                    textField(source, 'Nombre del servicio', line.name, value => { line.name = value; update(); }, { disabled: line.persisted || !canSell, name: 'name' });
                 } else {
                     source.append(element('h6', 'Concepto y costo', 'fw-bold'));
                     textField(source, 'Nombre del concepto', line.name, value => { line.name = value; update(); }, { disabled: line.persisted || !canSell, name: 'name' });
@@ -613,7 +902,9 @@
                 units.append(element('h6', '¿Cómo lo vendes?', 'fw-bold'));
                 const split = line.unitMode ? line.unitMode === 'SPLIT' : splitUnits(line.units);
                 const lockSource = line.persisted && line.kind === 'API';
-                choice(units, 'Forma de venta', split ? 'SPLIT' : 'SAME', [['SAME', 'Igual que el proveedor'], ['SPLIT', 'Por partes (metros, etc.)']], value => {
+                // Un servicio se cobra completo: no se pregunta la forma de venta.
+                if (service) units.append(element('div', 'Con «servicio» se cobra el servicio completo.', 'form-text mb-3'));
+                else choice(units, 'Forma de venta', split ? 'SPLIT' : 'SAME', [['SAME', 'Igual que el proveedor'], ['SPLIT', 'Por partes (metros, etc.)']], value => {
                     line.unitMode = value;
                     if (value === 'SAME') { line.units.sale_label = line.units.source_label; line.units.conversion_factor = '1'; }
                     line.units.confirmed = false; update(true);
@@ -628,28 +919,33 @@
                 };
                 const unitsChanged = () => { line.units.confirmed = false; refs.confirm.input.checked = false; refresh(); update(); };
                 if (!split) {
-                    textField(units, 'Unidad (pieza, servicio, metro…)', line.units.source_label, value => {
-                        line.units.source_label = value; line.units.sale_label = value; line.units.conversion_factor = '1'; unitsChanged();
+                    unitField(units, 'Unidad', line.units.source_label, value => {
+                        line.units.source_label = value; line.units.sale_label = value; line.units.conversion_factor = '1';
+                        // Entrar o salir de «servicio» cambia las columnas: se vuelve a dibujar.
+                        if (isService(line) !== service) { line.units.confirmed = false; update(true); } else unitsChanged();
                     }, { disabled: lockSource, name: 'units' });
                 } else {
-                    textField(units, 'El proveedor lo vende por', line.units.source_label, value => { line.units.source_label = value; unitsChanged(); },
-                        { disabled: lockSource, name: 'units', placeholder: 'Ej. Bobina' });
-                    textField(units, 'Tú lo vendes por', line.units.sale_label, value => { line.units.sale_label = value; unitsChanged(); },
-                        { name: 'units', placeholder: 'Ej. Metro' });
+                    unitField(units, 'El proveedor lo vende por', line.units.source_label, value => { line.units.source_label = value; unitsChanged(); },
+                        { disabled: lockSource, name: 'units' });
+                    unitField(units, 'Tú lo vendes por', line.units.sale_label, value => { line.units.sale_label = value; unitsChanged(); },
+                        { name: 'units' });
                     refs.factor = textField(units, '¿Cuántas trae?', line.units.conversion_factor, value => { line.units.conversion_factor = value; unitsChanged(); },
                         { name: 'factor', help: 'Ejemplo: una bobina de 100 m → 100.' });
                     refs.chip = element('div', '', 'equivalence-chip mb-3');
                     units.append(refs.chip);
                 }
-                refs.quantity = textField(units, 'Cantidad', line.quantity, value => { line.quantity = value; update(); },
-                    { name: 'quantity', suffix: line.units.sale_label.trim() || 'unidades', help: 'Solo números enteros (1, 3, 10…).' });
+                const quantityBox = fieldBox(units, 'Cantidad', 'Escribe el número o usa − / +. Solo enteros, mínimo 1.');
+                refs.quantity = stepper(line, update, { id: quantityBox.id, suffix: line.units.sale_label.trim() || 'unidades' });
+                quantityBox.wrapper.append(refs.quantity.group); quantityBox.help();
                 refs.confirm = checkField(units, '', line.units.confirmed, value => { line.units.confirmed = value; update(); }, { name: 'confirm' });
                 refresh();
 
                 pricing.append(element('h6', 'Precio al cliente', 'fw-bold'));
-                choice(pricing, 'Cómo calcular el precio', line.mode, [['MARGIN', 'Con margen'], ['MANUAL', 'Precio fijo']],
+                // Servicio: sin costo no hay margen; el precio fijo se captura solo aquí.
+                if (service) pricing.append(element('div', 'El precio del servicio se captura solo aquí.', 'form-text mb-3'));
+                else choice(pricing, 'Cómo calcular el precio', line.mode, [['MARGIN', 'Con margen'], ['MANUAL', 'Precio fijo']],
                     value => { line.mode = value; update(true); }, { disabled: !canSell, name: 'mode' });
-                if (line.mode === 'MARGIN') {
+                if (line.mode === 'MARGIN' && !service) {
                     textField(pricing, 'Margen sobre la venta', line.margin, value => { line.margin = value; update(); },
                         { disabled: !has('change_commercial_margin'), name: 'margin', suffix: '%' });
                 } else priceEditor(pricing, `Precio por ${line.units.sale_label.trim() || 'unidad'}`, line.sale, canSell, update, 'sale');
@@ -658,7 +954,10 @@
                 pricing.append(result);
                 if (!canSell || !has('change_commercial_margin')) pricing.append(element('p', 'Los campos bloqueados requieren permiso.', 'small text-muted mt-2 mb-0'));
 
-                grid.append(source, units, pricing); details.append(grid); detailCell.append(details); detailRow.append(detailCell); $('quoteItemsBody').append(detailRow);
+                grid.append(source, units, pricing); details.append(grid);
+                if (canEdit()) details.append(detailFooter(line));
+                detailCell.append(details); detailRow.append(detailCell); $('quoteItemsBody').append(detailRow);
+                syncRow(line, row);
                 if (line.issue?.lineField) for (const input of details.querySelectorAll(`[data-field="${line.issue.lineField}"]`)) input.classList.add('is-invalid');
             });
             if (state.preview) summary(state.preview, !state.dirty && !!state.saved);
@@ -667,8 +966,8 @@
         function blankLine() {
             return { key: crypto.randomUUID(), kind: 'MANUAL', persisted: false, name: '', provider: '', description: '', quantity: '1',
                 units: { source_label: '', sale_label: '', conversion_factor: '1', confirmed: false }, mode: 'MANUAL', margin: '35',
-                knownCost: false, cost: { amount: '', currency: 'MXN', vat_basis: '', vat_rate: '0.16' },
-                sale: { amount: '', currency: 'MXN', vat_basis: '', vat_rate: '0.16' }, expanded: true };
+                knownCost: false, cost: { amount: '', currency: 'MXN', vat_basis: 'NET', vat_rate: '0.16' },
+                sale: { amount: '', currency: 'MXN', vat_basis: 'NET', vat_rate: '0.16' }, expanded: true };
         }
         function lineFromOffer(offer, quantity = '1') {
             const line = blankLine();
@@ -1072,9 +1371,9 @@
                 units: { source_label: snapshot.source_unit_label, sale_label: snapshot.sale_unit_label,
                     conversion_factor: trimZeros(snapshot.conversion_factor), confirmed: true },
                 cost: { amount: snapshot.source_unit_price ?? '', currency: snapshot.source_currency || 'MXN',
-                    vat_basis: snapshot.source_unit_price === null ? '' : snapshot.cost_tax_rate_included === null ? 'NET' : 'INCLUDED', vat_rate: snapshot.cost_tax_rate_included ?? '0.16' },
+                    vat_basis: snapshot.cost_tax_rate_included === null ? 'NET' : 'INCLUDED', vat_rate: snapshot.cost_tax_rate_included ?? '0.16' },
                 sale: { amount: snapshot.manual_unit_price ?? '', currency: snapshot.manual_currency || 'MXN',
-                    vat_basis: snapshot.manual_unit_price === null ? '' : snapshot.manual_tax_rate_included === null ? 'NET' : 'INCLUDED', vat_rate: snapshot.manual_tax_rate_included ?? '0.16' } });
+                    vat_basis: snapshot.manual_tax_rate_included === null ? 'NET' : 'INCLUDED', vat_rate: snapshot.manual_tax_rate_included ?? '0.16' } });
             return line;
         }
         function loadDetail(detail) {
@@ -1103,7 +1402,7 @@
                 $('quoteItemsBody').replaceChildren();
                 for (const entry of detail.items) {
                     const row = document.createElement('tr'), cell = element('td', `${entry.name} · Cantidad histórica: ${entry.quantity} · Original: ${money(entry.source_unit_price)} ${entry.source_currency}`);
-                    cell.colSpan = 7; row.append(cell); $('quoteItemsBody').append(row);
+                    cell.colSpan = 8; row.append(cell); $('quoteItemsBody').append(row);
                 }
                 error(); notice('Revisión histórica v1 en solo lectura. Requiere una transición comercial revisada; no se truncan cantidades ni se inventa margen.');
             } else if (detail.preview) { summary(detail.preview, true); error(); }
