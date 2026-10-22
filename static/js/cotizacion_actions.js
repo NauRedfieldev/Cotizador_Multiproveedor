@@ -59,7 +59,28 @@
         const $ = id => document.getElementById(id);
         if (!$('commercialSummaryApp')) return;
         const api = window.apiClient.commercial;
-        const state = { detail: null, actor: undefined, authorized: false, busy: false, pending: null, page: 1, pages: 1, objectURL: null, filter: '', checkedAt: 0 };
+        const state = { detail: null, actor: undefined, authorized: false, busy: false, pending: null, page: 1, pages: 1, objectURL: null, filter: '', checkedAt: 0,
+            company: '', companies: [] };
+        // 5A: pestañas por empresa (las da el listado). '' = todas. Solo con dos empresas configuradas.
+        function companyTabs(companies, counts = {}) {
+            state.companies = companies;
+            const box = $('historyCompanyFilter');
+            show('historyCompanyFilter', companies.length > 1);
+            if (companies.length < 2) { box.replaceChildren(); return; }
+            // Lienzo fila 10: una sola línea con el nombre corto (el completo al pasar el cursor); la activa lleva
+            // línea y conteo del color de su empresa («Todas», azul marino).
+            const tabs = [...companies.map(c => [c.key, c.short_name || c.name, c.name, c.color]), ['', 'Todas', 'Todas las empresas', '']];
+            box.replaceChildren(...tabs.map(([key, label, full, color]) => {
+                const tab = node('button', '', 'mis-empresa' + (state.company === key ? ' is-active' : ''));
+                tab.type = 'button'; tab.dataset.company = key; tab.title = full; tab.setAttribute('aria-pressed', String(state.company === key));
+                tab.setAttribute('aria-label', `${full}: ${counts[key] ?? 0}`);
+                if (color) { tab.style.setProperty('--tab-color', color); const dot = node('span', '', 'mis-empresa-punto'); dot.style.background = color; dot.setAttribute('aria-hidden', 'true'); tab.append(dot); }
+                tab.append(node('span', label), node('span', String(counts[key] ?? 0), 'mis-empresa-conteo'));
+                tab.disabled = state.busy || !!state.pending || state.actor === undefined;
+                tab.addEventListener('click', () => { state.company = key; list(1); });
+                return tab;
+            }));
+        }
         let readEpoch = 0, listEpoch = 0, listAbort, listTimer;
         function text(id, value) { $(id).textContent = value; }
         function node(tag, value, classes = '') { const el = document.createElement(tag); el.textContent = value; el.className = classes; return el; }
@@ -76,6 +97,7 @@
             const draft = d?.schema_version === 2 && d.status === 'DRAFT', issued = d?.schema_version === 2 && d.status === 'ISSUED', legacy = d?.schema_version === 1;
             $('historySearchInput').disabled = blocked || state.actor === undefined;
             for (const button of $('historyStatusFilter').querySelectorAll('button')) button.disabled = blocked || state.actor === undefined;
+            for (const button of $('historyCompanyFilter').querySelectorAll('button')) button.disabled = blocked || state.actor === undefined;
             for (const button of $('historyList').querySelectorAll('button')) {
                 button.disabled = blocked;
                 button.classList.toggle('is-selected', !!d && button.dataset.folio === d.folio);
@@ -214,9 +236,12 @@
             clearTimeout(listTimer); listAbort?.abort(); const epoch = ++listEpoch;
             listAbort = new AbortController(); $('historyList').replaceChildren(); text('historyStatus', 'Consultando tus cotizaciones…');
             try {
-                const response = await api.list({ q: $('historySearchInput').value.trim(), status: state.filter, page: String(page) }, listAbort.signal);
+                const filters = { q: $('historySearchInput').value.trim(), status: state.filter, page: String(page) };
+                if (state.company) filters.empresa = state.company;
+                const response = await api.list(filters, listAbort.signal);
                 if (epoch !== listEpoch) return;
                 if (response.actor_id !== state.actor) throw Error('La sesión cambió. Recarga la página antes de consultar.');
+                companyTabs(response.companies || [], response.company_counts || {});
                 state.page = response.pagination.page; state.pages = response.pagination.pages;
                 const count = response.pagination.count;
                 text('historyStatus', response.data.length ? `${count} cotizaci${count === 1 ? 'ón' : 'ones'}` : 'No hay cotizaciones con estos filtros.');
@@ -228,6 +253,18 @@
                     middle.append(node('span', d.client_name), node('strong', d.status === 'ISSUED' ? money(d.total) : ''));
                     const when = node('span', dateLabel(d.issue_date), 'small text-secondary'); when.title = exactDate(d.issue_date);
                     item.append(top, middle, when);
+                    // 5A: barra del color de su empresa y, en «Todas», la etiqueta con su nombre.
+                    const company = state.companies.length > 1 ? state.companies.find(c => c.key === d.company_key) : null;
+                    if (company) {
+                        item.classList.add('mis-item-con-empresa');
+                        item.style.setProperty('--empresa-color', company.color);
+                        if (!state.company) {
+                            const tag = node('span', company.short_name || company.name, 'mis-item-empresa');
+                            tag.title = company.name;
+                            tag.style.background = company.tint; tag.style.color = company.text;
+                            item.append(tag);
+                        }
+                    }
                     item.addEventListener('click', () => open(d.folio, d.revision));
                     $('historyList').append(item);
                 }

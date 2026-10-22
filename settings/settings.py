@@ -160,9 +160,18 @@ QUOTE_PDF_ROOT = Path(env('QUOTE_PDF_ROOT', default=str(BASE_DIR / 'private_quot
 
 # M7a: datos de la empresa en las cotizaciones (docs/28 §12). Los valores los valida CCONOR;
 # sin CCONOR_EMPRESA_NAME no se crean cotizaciones (503) y nunca se usan datos de ejemplo.
+# 5A: FOLIO_PREFIX = prefijo de los folios NUEVOS (2 a 6 letras mayúsculas); vacío = COT. Los folios ya
+# creados nunca cambian.
 CCONOR_EMPRESA = {
     campo: env(f'CCONOR_EMPRESA_{campo.upper()}', default='')
-    for campo in ('name', 'rfc', 'tagline', 'phone', 'email')
+    for campo in ('name', 'rfc', 'tagline', 'phone', 'email', 'folio_prefix')
+}
+# 5A: Torva Telecom, empresa hermana (opcional). Sin TORVA_EMPRESA_NAME el cotizador solo cotiza como CCONOR.
+# FOLIO_PREFIX: 2 a 6 letras mayúsculas, distinto del de CCONOR y de COT. LOGO: ruta dentro de static/
+# (img/logo_torva.png); vacío = sin logo en el PDF y con iniciales en pantalla.
+TORVA_EMPRESA = {
+    campo: env(f'TORVA_EMPRESA_{campo.upper()}', default='')
+    for campo in ('name', 'rfc', 'tagline', 'phone', 'email', 'folio_prefix', 'logo')
 }
 # P4: el motor comercial existe; activar HTTP requiere validación y aceptación
 # operativa explícita. No activar esta bandera al desplegar una migración.

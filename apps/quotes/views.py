@@ -92,7 +92,9 @@ def _document_guard(data):
 def cotizador_comercial(request):
     """Página del cotizador; entrega las condiciones activas que se precargan (M2)."""
     condiciones = list(DefaultCommercialCondition.objects.filter(active=True).values_list("text", flat=True))
-    return render(request, "cotizador.html", {"condiciones_predeterminadas": condiciones})
+    # 5A: empresas configuradas para «Cotizar como» (solo aparece si hay más de una).
+    from .api import empresas_publicas
+    return render(request, "cotizador.html", {"condiciones_predeterminadas": condiciones, "empresas": empresas_publicas()})
 
 
 @login_required
