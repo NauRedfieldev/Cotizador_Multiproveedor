@@ -929,6 +929,25 @@ Solo navegador (`static/js/main.js`, `static/js/cotizador.js`, `templates/compar
 - Pruebas: `test_correo_exacto_envia_original…` (remitente y CCO), `test_correo_asunto_con_el_nombre_de_su_empresa`,
   `test_servidor_y_remitente_de_correo_por_empresa`. Las pruebas fijan `CCONOR_SMTP_FROM`/`TORVA_SMTP_FROM` y usan
   correo en memoria: nunca envían.
+- **Prueba real (2026-10-23):** emitida `PRU-2026-0001` (prefijo temporal) y enviada; llegaron el correo y su copia.
+  Primer intento falló por el Python de python.org en macOS sin certificados raíz (`ssl` sin `cafile`): se resuelve
+  con «Install Certificates.command» de esa instalación (docs/30, A4c). El servidor del correo era válido
+  (Let's Encrypt `*.cconorsoluciones.mx`).
+
+### 14.18 PDF y correo: salto de página y color de la marca (lienzo fila 11, 2026-10-23)
+
+- **Tabla de partidas:** `repeatRows=1` con `splitInRow=0`: una partida no se parte entre páginas; si no cabe
+  completa pasa entera a la siguiente y el encabezado aparece solo arriba de esa página (antes, con `splitInRow=1`,
+  salía un encabezado de más al final de la página y la partida quedaba cortada). Si una sola partida es más alta
+  que una página (`LayoutError`), solo entonces se regenera permitiendo partirla.
+- **Color de la marca** (`pdf.COLORES_MARCA` / `colores_marca()`; `api.COLORES_EMPRESA` es el mismo objeto): folio,
+  línea bajo el encabezado y «Total estimado» del PDF en el color de la empresa (CCONOR `#0B4A93`; Torva línea
+  `#0F8F95` y texto `#0B6E73`), antes morado `#7311F5`. Sin clave de empresa = CCONOR.
+- **Correo:** la franja superior y el folio en el color de la empresa; el encabezado muestra su nombre (primera
+  palabra grande y el resto debajo), ya no «CCONOR / SOLUCIONES TECNOLÓGICAS» fijo.
+- Los PDF ya emitidos no cambian (se archivan tal cual); aplica a borradores y emisiones nuevas.
+- Pruebas: `test_pdf_no_parte_partidas_salvo_que_una_no_quepa_en_una_pagina`,
+  `test_colores_de_marca_compartidos_por_pantalla_pdf_y_correo`, `test_correo_con_nombre_y_color_de_su_empresa`.
 
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 

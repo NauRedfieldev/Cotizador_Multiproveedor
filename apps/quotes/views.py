@@ -38,7 +38,7 @@ from apps.providers.service import search_all
 
 from .comparison import NIVEL_SIN_COINCIDENCIA, TipoCambio, comparar_configurado, tipo_cambio_manual
 from .models import DefaultCommercialCondition, Quote, QuoteRevision
-from .pdf import build_demo_quote, generate_quote_pdf, money, safe_filename
+from .pdf import build_demo_quote, colores_marca, generate_quote_pdf, money, safe_filename
 from .snapshots import ArchivedPDFError, RevisionConflict, obtener_documento
 
 logger = logging.getLogger(__name__)
@@ -202,9 +202,14 @@ def enviar_cotizacion_correo(request, folio):
     plain_body = message_text or (
         f"Adjuntamos la cotización {quote['folio']} de {nombre_empresa}."
     )
+    # Lienzo fila 11: encabezado con el nombre de la empresa (primera palabra grande, el resto debajo) y su color.
+    colores = colores_marca(empresa.get("key"))
+    palabras = nombre_empresa.split()
+    marca = {"barra": colores["text"], "subtitulo": colores["tint"], "folio": colores["text"],
+             "nombre": palabras[0] if palabras else nombre_empresa, "resto": " ".join(palabras[1:])}
     html_body = render_to_string(
         "pdf/email_cotizacion.html", {"quote": quote, "message": message_text or plain_body,
-                                     "attach_pdf": payload.get("attach_pdf", True)}
+                                     "attach_pdf": payload.get("attach_pdf", True), "marca": marca}
     )
 
     # B3: copia oculta (CCO) completa, con el PDF, a la cuenta remitente: el cliente no la ve y el buzón de la

@@ -32,6 +32,7 @@ from apps.providers.contracts import ProviderOffer
 
 from .comparison import TipoCambio
 from .models import Quote, QuoteAPIRequest, QuoteRevision, QuoteSelectionContext, rfc_validator
+from .pdf import COLORES_MARCA
 from . import snapshots as commercial_services
 from .permissions import ADJUSTMENTS, FX, MANAGE, VIEW_COSTS, require_commercial_permission, set_commercial_permission
 from .snapshot_values import MAX_ITEMS, decimal_limit
@@ -464,12 +465,8 @@ def _prefijo_folio(clave):
     return prefijo
 
 
-# 5A (lienzo fila 9): color de cada marca, tomado de su logo. color = franja/bordes; text = texto sobre
-# blanco (contraste ≥ 4.5:1); tint = fondo suave. Solo pantalla: el PDF no cambia de colores.
-COLORES_EMPRESA = {
-    EMPRESA_PRINCIPAL: {"color": "#0B4A93", "text": "#0B4A93", "tint": "#EAF1FA"},
-    EMPRESA_TORVA: {"color": "#0F8F95", "text": "#0B6E73", "tint": "#E6F5F5"},
-}
+# 5A (lienzo filas 9 y 11): color de cada marca, el mismo en pantalla, PDF y correo (definido en pdf.py).
+COLORES_EMPRESA = COLORES_MARCA
 
 
 def empresas_publicas():
