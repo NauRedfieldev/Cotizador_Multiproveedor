@@ -43,7 +43,27 @@ from .snapshots import ArchivedPDFError, RevisionConflict, obtener_documento
 
 logger = logging.getLogger(__name__)
 
-FROM_EMAIL = "ventas@cconor.com"
+class _RemitenteSinConfigurar(Exception):
+    """503: hay servidor de correo pero no remitente; no se inventa una dirección."""
+
+
+def _correo_empresa(company_key, company_email=""):
+    """B3 (docs/30): servidor («mailer») y remitente de la empresa de la cotización.
+
+    CCONOR usa «default» (CCONOR_SMTP_*) y Torva «torva» (TORVA_SMTP_*): nunca la cuenta de la otra empresa.
+    Remitente: <PREFIJO>_SMTP_FROM, si no la cuenta SMTP y si no el correo de la empresa. Con el servidor en
+    consola (sin SMTP_HOST) el correo no sale a internet y basta un remitente local.
+    """
+    torva = company_key == "torva"
+    alias = "torva" if torva and "torva" in settings.MAILERS else "default"
+    config = settings.MAILERS.get(alias, {})
+    remitente = ((settings.TORVA_SMTP_FROM if torva else settings.CCONOR_SMTP_FROM)
+                 or config.get("OPTIONS", {}).get("username", "") or company_email).strip()
+    if not remitente:
+        if config.get("BACKEND", "").endswith("smtp.EmailBackend"):
+            raise _RemitenteSinConfigurar()
+        remitente = "cotizaciones@localhost"
+    return alias, remitente
 
 
 def _document_error(exc):
@@ -169,27 +189,36 @@ def enviar_cotizacion_correo(request, folio):
         return _document_error(exc)
     quote["total_fmt"] = money(quote["total"])
     quote["total_currency_label"] = "moneda no registrada" if quote.get("legacy_unknown_currency") else "MXN"
+    empresa = quote.get("company", {})
+    try:
+        mailer, remitente = _correo_empresa(empresa.get("key", "cconor"), empresa.get("email", ""))
+    except _RemitenteSinConfigurar:
+        return JsonResponse({"success": False, "error": "Correo de la empresa sin remitente configurado; avisa al administrador."}, status=503)
+    nombre_empresa = empresa.get("name") or "CCONOR"
     subject = (payload.get("subject") or "").strip() or (
-        f"Cotización {quote['folio']} - CCONOR Soluciones Tecnológicas"
+        f"Cotización {quote['folio']} - {nombre_empresa}"
     )
     message_text = (payload.get("message") or "").strip()
     plain_body = message_text or (
-        f"Adjuntamos la cotización {quote['folio']} de CCONOR Soluciones Tecnológicas."
+        f"Adjuntamos la cotización {quote['folio']} de {nombre_empresa}."
     )
     html_body = render_to_string(
         "pdf/email_cotizacion.html", {"quote": quote, "message": message_text or plain_body,
                                      "attach_pdf": payload.get("attach_pdf", True)}
     )
 
+    # B3: copia oculta (CCO) completa, con el PDF, a la cuenta remitente: el cliente no la ve y el buzón de la
+    # empresa conserva el registro de lo enviado (el correo del hosting no lo guarda en «Enviados»).
     msg = EmailMultiAlternatives(
-        subject=subject, body=plain_body, from_email=FROM_EMAIL, to=[email]
+        subject=subject, body=plain_body, from_email=remitente, to=[email],
+        bcc=[remitente] if remitente.lower() != email.lower() else [],
     )
     msg.attach_alternative(html_body, "text/html")
     if payload.get("attach_pdf", True):
         msg.attach(filename, pdf_bytes, "application/pdf")
 
     try:
-        if msg.send() != 1:
+        if msg.send(using=mailer) != 1:
             raise RuntimeError("El backend de correo no confirmó aceptación.")
     except Exception:
         logger.error("M8: no se pudo enviar el correo.", exc_info=True)

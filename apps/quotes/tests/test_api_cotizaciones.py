@@ -906,6 +906,8 @@ class DocumentalAPITests(CommercialFixtures, TestCase):
     def setUp(self):
         super().setUp()
         self.client.force_login(self.actor)
+        # B3: remitentes fijos de prueba (no depender del .env de quien corre las pruebas).
+        self.enterContext(override_settings(CCONOR_SMTP_FROM="ventas@qa.example.invalid", TORVA_SMTP_FROM=""))
 
     def summary(self, created):
         return self.send("api_resumen_documental", method="get", args=(created["folio"], created["revision"]))
@@ -1036,6 +1038,35 @@ class DocumentalAPITests(CommercialFixtures, TestCase):
         self.assertEqual(mail.outbox[0].attachments[0][1], original)
         self.assertEqual(mail.outbox[0].to, [body["email"]])
         self.assertNotEqual(r.header["client"]["email"], body["email"])
+        # B3: sale del remitente de la empresa y su buzón recibe copia oculta completa (el cliente no la ve).
+        self.assertEqual(mail.outbox[0].from_email, "ventas@qa.example.invalid")
+        self.assertEqual(mail.outbox[0].bcc, ["ventas@qa.example.invalid"])
+        self.assertNotIn("ventas@qa.example.invalid", mail.outbox[0].to + mail.outbox[0].cc)
+
+    def test_correo_asunto_con_el_nombre_de_su_empresa(self):
+        from django.core import mail
+        created = self.create()
+        self.confirm_and_issue(created)
+        body = {**self.document_params({**created, "status": "ISSUED"}), "exact": True, "email": "qa@example.invalid"}
+        result = self.client.post(reverse("enviar_cotizacion_correo", args=[created["folio"]]), json.dumps(body), content_type="application/json")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(mail.outbox[0].subject, f"Cotización {created['folio']} - {EMPRESA_QA['name']}")
+
+    def test_servidor_y_remitente_de_correo_por_empresa(self):
+        from apps.quotes.views import _RemitenteSinConfigurar, _correo_empresa
+        smtp = {"BACKEND": "django.core.mail.backends.smtp.EmailBackend", "OPTIONS": {"host": "smtp.qa.invalid", "username": "cuenta@qa.invalid"}}
+        consola = {"BACKEND": "django.core.mail.backends.console.EmailBackend"}
+        with override_settings(MAILERS={"default": smtp, "torva": consola}, CCONOR_SMTP_FROM="ventas1@qa.invalid", TORVA_SMTP_FROM="ventas@torva.qa.invalid"):
+            self.assertEqual(_correo_empresa("cconor"), ("default", "ventas1@qa.invalid"))
+            self.assertEqual(_correo_empresa(None), ("default", "ventas1@qa.invalid"))       # anteriores = CCONOR
+            self.assertEqual(_correo_empresa("torva"), ("torva", "ventas@torva.qa.invalid"))  # nunca la cuenta de CCONOR
+        with override_settings(MAILERS={"default": smtp, "torva": consola}, CCONOR_SMTP_FROM="", TORVA_SMTP_FROM=""):
+            self.assertEqual(_correo_empresa("cconor"), ("default", "cuenta@qa.invalid"))     # sin FROM: la cuenta SMTP
+            self.assertEqual(_correo_empresa("torva", "torva@empresa.invalid"), ("torva", "torva@empresa.invalid"))
+            self.assertEqual(_correo_empresa("torva"), ("torva", "cotizaciones@localhost"))    # consola: no sale a internet
+        with override_settings(MAILERS={"default": {**smtp, "OPTIONS": {"host": "smtp.qa.invalid"}}}, CCONOR_SMTP_FROM=""), \
+                self.assertRaises(_RemitenteSinConfigurar):
+            _correo_empresa("cconor")
 
     def test_correo_sin_revision_sin_adjunto_o_estado_obsoleto_no_envia(self):
         from django.core import mail

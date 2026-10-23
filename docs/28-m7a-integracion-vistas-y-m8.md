@@ -767,7 +767,10 @@ solo crean su contenedor cuando hay mensajes. Caché: `custom.css?v=10`, `home.c
   comercial nueva) y agrega la oferta del mismo proveedor con la cantidad de la bandeja, como «Agregar
   captura». Resultado por producto: agregado; precio cambiado (se agrega con el de hoy y se avisa); ya no
   aparece, base IVA sin verificar, en dólares sin tipo de cambio o límite de búsquedas (sigue en la
-  bandeja). Lo agregado sale de la bandeja. Las unidades se confirman igual que siempre antes de guardar.
+  bandeja). **Lo agregado sale de la bandeja solo cuando el borrador se guarda** (desde 2026-10-22: cada
+  partida traída lleva `trayKey`; el guardado confirmado llama a `DELETE api/v1/tray/` con esas claves). Si el
+  asesor sale sin guardar, los productos siguen en la bandeja; mientras tanto no se vuelven a ofrecer en esa
+  cotización (`trayPending`). Las unidades se confirman igual que siempre antes de guardar.
 - Pruebas: `test_a18`–`test_a23` en `test_api_busqueda.py`.
 
 ### 14.11 Ajustes: contador de la bandeja, «Sigue vigente», última búsqueda y zona horaria (2026-10-21)
@@ -909,6 +912,23 @@ Solo navegador (`static/js/main.js`, `static/js/cotizador.js`, `templates/compar
 - Pruebas: Django `test_empresa_torva_*`, `test_prefijo_nuevo_de_cconor_solo_para_folios_nuevos`, `test_la_empresa_no_cambia_al_editar`,
   `test_listado_por_empresa_y_anteriores_cuentan_como_cconor` y `test_logo_del_pdf_segun_la_empresa`; recorrido en
   navegador con Torva sintética (variables de entorno solo del QA).
+
+### 14.17 Correo real por empresa (B3, 2026-10-23)
+
+- **Servidor por empresa:** `MAILERS["default"]` = CCONOR (`CCONOR_SMTP_HOST`, `_PORT`, `_SECURITY` ssl|tls, `_USER`,
+  `_PASSWORD`) y `MAILERS["torva"]` = Torva (`TORVA_SMTP_*`). Sin `<PREFIJO>_SMTP_HOST` ese servidor queda en consola
+  (no sale a internet). `_SECURITY` distinto de ssl/tls detiene el arranque. El correo de `cconorsoluciones.mx` es
+  del hosting del dominio (MX al propio dominio): servidor `mail.cconorsoluciones.mx`, 465/ssl, según su panel.
+- **Remitente:** `<PREFIJO>_SMTP_FROM`; si falta, la cuenta SMTP y luego el correo de la empresa. Con servidor SMTP y
+  sin ninguno → 503 («sin remitente configurado»); nunca se inventa una dirección. Una cotización de Torva nunca sale
+  por la cuenta de CCONOR (`views._correo_empresa`, según `header.company.key`).
+- **Copia oculta completa (decisión del usuario):** cada envío lleva CCO al remitente con el mismo texto y PDF; el
+  cliente no la ve y el buzón conserva el registro (el correo del hosting no guarda lo enviado por SMTP en
+  «Enviados»). Cada copia ocupa ~110 KB (PDF ~80 KB codificado en el correo).
+- **Asunto y texto por defecto** con el nombre de la empresa de la cotización (antes decía «CCONOR» fijo).
+- Pruebas: `test_correo_exacto_envia_original…` (remitente y CCO), `test_correo_asunto_con_el_nombre_de_su_empresa`,
+  `test_servidor_y_remitente_de_correo_por_empresa`. Las pruebas fijan `CCONOR_SMTP_FROM`/`TORVA_SMTP_FROM` y usan
+  correo en memoria: nunca envían.
 
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 

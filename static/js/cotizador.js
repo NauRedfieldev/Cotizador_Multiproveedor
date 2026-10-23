@@ -66,6 +66,12 @@
         if (slot < 0) slot = mids.length;
         return slot > from ? slot - 1 : slot;
     }
+    // Bandeja: lo traído queda en la bandeja hasta guardar el borrador (line.trayKey); mientras tanto no se
+    // vuelve a ofrecer «Traer» para esos productos, para no duplicar partidas.
+    function trayPending(items, lines) {
+        const brought = new Set(lines.map(line => line.trayKey).filter(Boolean));
+        return items.filter(item => !brought.has(item.key));
+    }
     function moveItem(list, from, to) {
         const copy = list.slice();
         const [moved] = copy.splice(from, 1);
@@ -164,7 +170,7 @@
     }
     window.CCONORQuoteTools = Object.freeze({ decimal, integer, storedInteger, money, price, item, editOutcome, retainIntent,
         defaultConditionsText, fxSearchHint, percentToFraction, fractionToPercent, roundText, splitUnits, trimZeros, discountText,
-        COMMON_UNITS, commonUnit, isService, stepQuantity, lineStatus, dropTarget, moveItem });
+        COMMON_UNITS, commonUnit, isService, stepQuantity, lineStatus, dropTarget, moveItem, trayPending });
     if (typeof document === 'undefined') return;
     document.addEventListener('DOMContentLoaded', function () {
         const $ = id => document.getElementById(id);
@@ -1044,13 +1050,19 @@
         // oferta exacta del mismo proveedor con el precio de ese momento; nada se toma del navegador.
         const sameAmount = (a, b) => String(a).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') === String(b).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
         function trayNotice() {
-            const pieces = trayItems.reduce((total, item) => total + item.quantity, 0);
-            $('trayNotice').classList.toggle('d-none', !trayItems.length || !editable());
-            text('trayNoticeText', `Tienes ${trayItems.length} ${trayItems.length === 1 ? 'producto' : 'productos'} en la bandeja del comparador (${pieces} ${pieces === 1 ? 'pieza' : 'piezas'}).`);
+            const pending = trayPending(trayItems, state.lines);
+            const pieces = pending.reduce((total, item) => total + item.quantity, 0);
+            $('trayNotice').classList.toggle('d-none', !pending.length || !editable());
+            text('trayNoticeText', `Tienes ${pending.length} ${pending.length === 1 ? 'producto' : 'productos'} en la bandeja del comparador (${pieces} ${pieces === 1 ? 'pieza' : 'piezas'}).`);
             $('trayBringBtn').disabled = state.busy || !!state.pending || !editable();
         }
         async function loadTray() {
             try { trayItems = (await api.tray()).data; } catch (_) { trayItems = []; }
+            trayNotice();
+        }
+        // Si falla, los productos se quedan en la bandeja y el asesor los puede quitar desde el comparador.
+        async function settleTray(keys) {
+            try { trayItems = (await api.trayRemove(keys)).data; } catch (_) { /* se conservan */ }
             trayNotice();
         }
         function trayResults(results) {
@@ -1061,15 +1073,18 @@
                 row.append(element('span', mark, `tray-dot tray-dot--${kind}`), element('span', `${r.item.name} · ${r.item.provider_name}: ${r.message}`, 'flex-grow-1'));
                 list.append(row);
             }
-            $('trayResults').replaceChildren(element('div', 'Resultado al traer la bandeja', 'small fw-bold text-muted pt-2'), list);
+            const kept = results.some(r => r.kind !== 'error')
+                ? element('div', 'Lo agregado sale de la bandeja del comparador cuando guardes el borrador; si no lo guardas, se queda en la bandeja.', 'small text-muted mt-1') : null;
+            $('trayResults').replaceChildren(...[element('div', 'Resultado al traer la bandeja', 'small fw-bold text-muted pt-2'), list, kept].filter(Boolean));
             $('trayResults').classList.remove('d-none');
         }
         async function bringTray() {
-            if (!editable() || state.busy || state.pending || !trayItems.length) return;
+            const pending = trayPending(trayItems, state.lines);
+            if (!editable() || state.busy || state.pending || !pending.length) return;
             state.busy = true; locks();
             const results = [], added = [];
             const groups = new Map();
-            for (const item of trayItems) {
+            for (const item of pending) {
                 const query = item.model ? `sku:${item.model}` : `q:${item.name}`;
                 if (!groups.has(query)) groups.set(query, []);
                 groups.get(query).push(item);
@@ -1093,16 +1108,14 @@
                     const offer = offers.find(o => o.provider === item.provider_code && o.external_id === item.external_id);
                     if (!offer) { results.push({ item, kind: 'error', message: 'ya no aparece en el proveedor. Sigue en la bandeja; busca otro.' }); continue; }
                     if (!offer.vat?.vat_basis || offer.vat.vat_basis === 'UNKNOWN') { results.push({ item, kind: 'error', message: 'base IVA de origen no verificada: captura bloqueada. Sigue en la bandeja.' }); continue; }
-                    state.lines.push(lineFromOffer(offer, String(item.quantity)));
+                    // Sigue en la bandeja hasta guardar: si el borrador no se guarda, no se pierde.
+                    state.lines.push(Object.assign(lineFromOffer(offer, String(item.quantity)), { trayKey: item.key }));
                     added.push(item.key);
                     const same = offer.currency === item.currency && sameAmount(offer.price_original, item.price);
                     results.push({ item, kind: same ? 'ok' : 'changed', message: same
                         ? `${item.quantity} ${item.quantity === 1 ? 'pieza agregada' : 'piezas agregadas'} con el precio de hoy.`
                         : `el precio cambió de ${shownPrice(item.price, item.currency)} a ${shownPrice(offer.price_original, offer.currency)}; se agregó con el de hoy.` });
                 }
-            }
-            if (added.length) {
-                try { trayItems = (await api.trayRemove(added)).data; } catch (_) { trayItems = trayItems.filter(i => !added.includes(i.key)); }
             }
             state.busy = false;
             if (added.length) changed();
@@ -1133,7 +1146,7 @@
         function replaceWithOffer(line, offer) {
             const fresh = lineFromOffer(offer, line.quantity);
             Object.assign(fresh, { description: line.description, units: { ...line.units, confirmed: true }, mode: line.mode,
-                margin: line.margin, sale: { ...line.sale }, expanded: false });
+                margin: line.margin, sale: { ...line.sale }, expanded: false, trayKey: line.trayKey });
             const index = state.lines.indexOf(line);
             if (index >= 0) state.lines.splice(index, 1, fresh);
         }
@@ -1511,7 +1524,8 @@
                     }
                     state.pending = { body: JSON.parse(JSON.stringify(body)), saved: state.saved ? { ...state.saved } : null,
                         transition: state.transition ? { ...state.transition } : null,
-                        actor: state.actor, version: state.saved?.edit_version, baseFingerprint: state.saved?.state_fingerprint, fingerprint: preview.state_fingerprint };
+                        actor: state.actor, version: state.saved?.edit_version, baseFingerprint: state.saved?.state_fingerprint, fingerprint: preview.state_fingerprint,
+                        trayKeys: state.lines.map(line => line.trayKey).filter(Boolean) };   // lo traído de la bandeja que va en este guardado
                 }
                 const intent = state.pending;
                 let saved;
@@ -1525,6 +1539,8 @@
                 // El resultado de escritura ya es conocido, aunque falle la lectura posterior.
                 state.saved = { folio: saved.folio, revision: saved.revision, edit_version: saved.edit_version, state_fingerprint: saved.state_fingerprint };
                 state.pending = null;
+                // Guardado confirmado: ahora sí sale de la bandeja lo que se trajo (sin bloquear ni fallar el guardado).
+                if (intent.trayKeys?.length) settleTray(intent.trayKeys);
                 // La copia v2 ya existe: no volver a usar el v1 de origen aunque falle el GET.
                 state.transition = null; $('transitionNotice').classList.add('d-none');
                 $('quoteFolio').value = saved.folio; $('quoteRevision').value = `${saved.revision} / ${saved.edit_version}`;
@@ -1693,10 +1709,10 @@
                 return;
             }
             await loadTray();
-            if (!trayItems.length) { notice('La bandeja del comparador está vacía; no se agregó nada.'); return; }
+            if (!trayPending(trayItems, state.lines).length) { notice('La bandeja del comparador está vacía; no se agregó nada.'); return; }
             const before = state.lines.length;
             await bringTray();
-            if (state.lines.length > before) notice('Se trajo la bandeja a este borrador. Revisa las partidas nuevas y pulsa «Actualizar borrador» para guardarlas.');
+            if (state.lines.length > before) notice('Se trajo la bandeja a este borrador. Revisa las partidas nuevas y pulsa «Actualizar borrador» para guardarlas; al guardar salen de la bandeja.');
             $('trayResults').scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
         $('quoteConditions').value = defaultConditions;  // Una revisión abierta después trae las suyas.
