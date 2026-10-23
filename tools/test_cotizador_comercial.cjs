@@ -105,6 +105,20 @@ test('7A reordenar: posición al soltar y mover sin tocar la lista original', ()
     assert.deepEqual([...tools.moveItem(list, 2, 2)], list);
     assert.deepEqual(list, ['a', 'b', 'c', 'd']);
 });
+test('bandeja: lo traído sigue en la bandeja hasta guardar y no se ofrece dos veces', () => {
+    const { tools } = runtime();
+    const items = [{ key: 'syscom:1' }, { key: 'syscom:2' }, { key: 'syscom:3' }];
+    const lines = [{ trayKey: 'syscom:2' }, { trayKey: undefined }, {}];
+    assert.deepEqual(tools.trayPending(items, lines).map(i => i.key), ['syscom:1', 'syscom:3']);
+    assert.deepEqual(tools.trayPending(items, []).map(i => i.key), ['syscom:1', 'syscom:2', 'syscom:3']);
+    // «Traer» ya no quita de la bandeja; solo el guardado confirmado (settleTray) lo hace.
+    const source = fs.readFileSync(path.join(root, 'static/js/cotizador.js'), 'utf8');
+    const bring = source.slice(source.indexOf('async function bringTray()'), source.indexOf("$('trayBringBtn').addEventListener"));
+    assert.doesNotMatch(bring, /trayRemove/);
+    const save = source.slice(source.indexOf('async function save()'), source.indexOf('async function confirmWarning('));
+    const written = save.indexOf('state.pending = null;\n');
+    assert.ok(written > 0 && save.indexOf('settleTray(intent.trayKeys)') > written);
+});
 test('estado de la partida: falta algo, editando o lista', () => {
     const { tools } = runtime();
     assert.deepEqual(plain(tools.lineStatus(line({ expanded: false }))), { kind: 'ready', label: 'Lista' });

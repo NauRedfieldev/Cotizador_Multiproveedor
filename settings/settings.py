@@ -189,9 +189,26 @@ LOGOUT_REDIRECT_URL = 'login'
 
 
 # Email
+# B3 (docs/30): cada empresa envía desde su propia cuenta. «default» = CCONOR (CCONOR_SMTP_*), «torva» = Torva
+# (TORVA_SMTP_*). Sin <PREFIJO>_SMTP_HOST el correo solo se escribe en la consola (no sale a internet).
+# SECURITY: ssl (puerto 465) o tls (puerto 587). La contraseña solo va en .env.
+def _mailer(prefijo):
+    host = env(f'{prefijo}_SMTP_HOST', default='').strip()
+    if not host:
+        return {'BACKEND': 'django.core.mail.backends.console.EmailBackend'}
+    seguridad = env(f'{prefijo}_SMTP_SECURITY', default='ssl').strip().lower()
+    if seguridad not in ('ssl', 'tls'):
+        raise ImproperlyConfigured(f'{prefijo}_SMTP_SECURITY debe ser «ssl» o «tls».')
+    return {'BACKEND': 'django.core.mail.backends.smtp.EmailBackend', 'OPTIONS': {
+        'host': host,
+        'port': env.int(f'{prefijo}_SMTP_PORT', default=465 if seguridad == 'ssl' else 587),
+        'username': env(f'{prefijo}_SMTP_USER', default=''),
+        'password': env(f'{prefijo}_SMTP_PASSWORD', default=''),
+        'use_ssl': seguridad == 'ssl', 'use_tls': seguridad == 'tls', 'timeout': 20,
+    }}
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
+
+MAILERS = {'default': _mailer('CCONOR'), 'torva': _mailer('TORVA')}
+# Remitente de cada empresa; también recibe la copia oculta de cada cotización enviada (registro en su buzón).
+CCONOR_SMTP_FROM = env('CCONOR_SMTP_FROM', default='').strip()
+TORVA_SMTP_FROM = env('TORVA_SMTP_FROM', default='').strip()

@@ -1,6 +1,6 @@
 # Puesta en marcha · Pendientes antes del uso real
 
-> **Estado del documento: ABIERTO** · Última revisión: 2026-10-19 (B2, B4 y M2 hechos; B1 parcial; B3, B5–B7 pendientes)
+> **Estado del documento: ABIERTO** · Última revisión: 2026-10-23 (B1 hecho; M1 no aplica; B3 casi listo: CCONOR configurado, falta prueba real y Torva; B5–B7 pendientes)
 >
 > Este es el único documento de pendientes; los demás de `docs/` son técnicos y no
 > llevan estados. Reglas:
@@ -25,6 +25,7 @@ No tienen estado global: que estén hechos en un equipo no significa que lo est�
 | A3 | Carpeta privada y persistente de PDFs | `QUOTE_PDF_ROOT` fuera de `static/`, permisos 700 e incluida en A1 | docs/24 §5, docs/29 §1 |
 | A4 | Datos de la empresa: `CCONOR_EMPRESA_NAME` (obligatorio), `_RFC`, `_TAGLINE`, `_PHONE`, `_EMAIL` en `.env`; reiniciar | Crear un borrador no responde 503 | docs/28 §7 y §11 |
 | A4b | Prefijo de folios nuevos de CCONOR: `CCONOR_EMPRESA_FOLIO_PREFIX` (2–6 letras; vacío = `COT`). Torva Telecom (opcional): `TORVA_EMPRESA_NAME`, `_RFC`, `_TAGLINE`, `_PHONE`, `_EMAIL`, `_FOLIO_PREFIX` (2–6 letras, distinto del de CCONOR y de `COT`) y `_LOGO=img/logo_torva.png` en `.env`; reiniciar | Aparece «Cotizar como» en el cotizador y cada folio nuevo sale con el prefijo de su empresa | docs/28 §14.16 |
+| A4c | Correo por empresa: `CCONOR_SMTP_FROM`, `_HOST`, `_PORT`, `_SECURITY` (ssl/tls), `_USER`, `_PASSWORD` (y `TORVA_SMTP_*` cuando Torva tenga correo) en `.env`; reiniciar | Enviar una cotización emitida de prueba a un correo propio: llega al destinatario y su copia oculta al remitente | docs/28 §14.17 |
 | A5 | Crear grupos comerciales con `configure_commercial_groups` (superusuario, una vez tras A2) | Existen «Personal CCONOR» y «Administrador CCONOR» en el admin | docs/24 §8.5, docs/25 §7.3 |
 | A6 | Asignar usuarios a esos grupos según B6 | Admin → usuario → grupos | docs/24 §8.5 |
 | A7 | Base de IVA por proveedor en `CCONOR_PROVIDER_PRICE_BASES` (`settings/settings.py`, versionado): SYSCOM ya en `NET` (B4); Exel solo tras B5. Por instalación: credenciales `PROVIDER_<CODIGO>_*` en `.env` y alta del proveedor en el admin (docs/17 §7) | Agregar una oferta del proveedor al cotizador no responde 409 | docs/28 §13.3 |
@@ -35,9 +36,9 @@ No tienen estado global: que estén hechos en un equipo no significa que lo est�
 
 | # | Tema | Estado | Bloquea |
 | --- | --- | --- | --- |
-| B1 | Datos oficiales, vigencia, condiciones, firma del asesor y quién aprueba el formato del PDF (C15) | PENDIENTE: datos oficiales de la empresa (nombre y dirección provisionales en uso) y teléfono del asesor (requiere desarrollo, M1). Resuelto 2026-10-19: logo `static/img/logo.png` oficial; vigencia 15 días editable por el asesor; firma = nombre completo del perfil + teléfono del asesor; aprueba el formato el admin o un asesor autorizado; dirección de la empresa va en `CCONOR_EMPRESA_TAGLINE` | Emitir a clientes reales |
+| B1 | Datos oficiales, vigencia, condiciones, firma del asesor y quién aprueba el formato del PDF (C15) | HECHO (2026-10-22 · usuario): datos oficiales de CCONOR y de Torva Telecom capturados en el `.env` de la instalación (docs/28 §14.16). Resuelto 2026-10-19: logo `static/img/logo.png` oficial; vigencia 15 días editable por el asesor; firma = nombre completo del perfil del asesor, **sin teléfono** (M1 no aplica); aprueba el formato el admin o un asesor autorizado; dirección de la empresa en `CCONOR_EMPRESA_TAGLINE` | Emitir a clientes reales |
 | B2 | Si el cliente ve una leyenda de disponibilidad (detalle de C16) | HECHO (2026-10-19 · usuario; implementado con M3): leyenda fija en todas las cotizaciones comerciales, solo en el PDF (no en el correo), sin revelar stock por partida: «Precios y disponibilidad sujetos a confirmación al momento del pedido.» Avisos internos de stock HECHOS 2026-10-18 · d3cbedc | Texto del PDF/correo |
-| B3 | Remitente, canal y confirmación del correo (C17) | PENDIENTE: sin definir (2026-10-19). Mientras tanto, «Enviar correo» solo lo escribe en la consola del servidor (no sale a internet); el asesor descarga el PDF y lo envía desde su correo | Correo real |
+| B3 | Remitente, canal y confirmación del correo (C17) | PENDIENTE (parcial, 2026-10-23 · usuario): **CCONOR** — remitente `ventas1@cconorsoluciones.mx`, canal = SMTP del hosting del dominio configurado en `.env` (`CCONOR_SMTP_*`), confirmación = copia oculta completa (con PDF) al remitente. Falta: un envío real de prueba y confirmar que llegan el correo y su copia. **Torva** — correo propio (`TORVA_SMTP_*`) pendiente; mientras tanto sus envíos solo se escriben en la consola. Detalle: docs/28 §14.17 | Correo real |
 | B4 | SYSCOM: confirmar si sus precios vienen con o sin IVA | HECHO (2026-10-19 · usuario + verificación): `NET` activado en `CCONOR_PROVIDER_PRICE_BASES`. Evidencia: documentación ([developers.syscom.mx](https://developers.syscom.mx/docs/productos): `iva=1` → con IVA ×1.16) y cotejo con el portal de la cuenta de CCONOR: `precio_lista` de la API con `iva=0` es idéntico al del portal en «Sin IVA», y en «Con IVA» el portal muestra exactamente ×1.16. Precio de cuenta: con `financiero=true` la API da exactamente el precio del portal (~4% menos, descuento por forma de pago); decisión: costo **sin** descuento financiero (no se envía `financiero`), el seguro si CCONOR paga con tarjeta o a crédito | Ofertas SYSCOM en el cotizador comercial |
 | B5 | Exel del Norte: acceso real a la API y base de IVA | PENDIENTE: acceso a la API pendiente (2026-10-19) | Ofertas Exel en el cotizador comercial |
 | B6 | Quién recibe cada rol (Personal / Administrador CCONOR) | PENDIENTE: sin definir (2026-10-19). Anotar por puesto, no por nombre. Opción intermedia: Personal con ajustes sueltos dados por un administrador («asesor autorizado» de B1) | A6 |
@@ -47,7 +48,7 @@ No tienen estado global: que estén hechos en un equipo no significa que lo est�
 
 | # | Mejora | Estado | Origen |
 | --- | --- | --- | --- |
-| M1 | Teléfono del asesor en el PDF y el correo (hoy el perfil de usuario no tiene teléfono; requiere diseño y migración) | PENDIENTE · bloquea cerrar B1 | B1 |
+| M1 | Teléfono del asesor en el PDF y el correo | NO APLICA (2026-10-22 · CCONOR: no les resulta funcional) | B1 |
 | M2 | Condiciones comerciales precargadas y editables en cada cotización nueva | HECHO (2026-10-19 · admin «Condiciones predeterminadas», migración 0006): un administrador las agrega, ordena o desactiva; el asesor las edita en cada cotización; las cotizaciones guardadas conservan las suyas. Lista inicial vacía: los textos oficiales los captura CCONOR (ver B1). Uso: docs/28 §14.4 | B1 |
 | M3 | Leyenda fija de disponibilidad en el PDF comercial (no en el correo); aplica solo a emisiones nuevas, las emitidas no cambian | HECHO (2026-10-19 · `LEYENDA_DISPONIBILIDAD` en `apps/quotes/pdf.py`) | B2 |
 | M4 | Proponer el tipo de cambio de SYSCOM del día (`GET /tipocambio`, público; valores normal, preferencial y por plazos) con fuente y fecha, para que el asesor lo confirme o lo cambie. Falta decidir qué valor usar (normal si CCONOR paga de contado en pesos; por plazo si paga a crédito) y quién puede confirmarlo: hoy el rol Personal sin permiso de tipo de cambio no puede buscar ofertas en dólares (ver B6) | PENDIENTE · no bloquea | B4 |
