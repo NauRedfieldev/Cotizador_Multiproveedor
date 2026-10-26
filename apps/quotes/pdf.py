@@ -28,11 +28,22 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+from reportlab.platypus.doctemplate import LayoutError
 
 from .snapshot_values import MONEY_CONTEXT, amount
 
 NAVY = colors.HexColor("#111638")
 PURPLE = colors.HexColor("#7311F5")
+# 5A/lienzo fila 11: color de cada marca, tomado de su logo (pantalla, PDF y correo). color = líneas y franjas;
+# text = texto sobre blanco (contraste ≥ 4.5:1); tint = fondo suave. Sin clave de empresa = CCONOR.
+COLORES_MARCA = {
+    "cconor": {"color": "#0B4A93", "text": "#0B4A93", "tint": "#EAF1FA"},
+    "torva": {"color": "#0F8F95", "text": "#0B6E73", "tint": "#E6F5F5"},
+}
+
+
+def colores_marca(company_key):
+    return COLORES_MARCA.get(company_key or "cconor", COLORES_MARCA["cconor"])
 MUTED = colors.HexColor("#5A5F7A")
 LIGHT_BG = colors.HexColor("#F8F7FE")
 LIGHT_BORDER = colors.HexColor("#EAE7F3")
@@ -291,19 +302,24 @@ def _footer(canvas, doc, folio, company_name):
     canvas.restoreState()
 
 
-def generate_quote_pdf(quote):
+def generate_quote_pdf(quote, *, _partir_partidas=False):
     """Genera el PDF oficial de la cotización y devuelve sus bytes.
 
     `quote` es un contexto materializado de snapshots, histórico o demo.
     La emisión archiva este resultado; los borradores pueden regenerarse.
+    Lienzo fila 11: una partida no se parte entre páginas (pasa entera a la siguiente, con el encabezado de la
+    tabla solo arriba). Solo si una partida no cabe ni en una página completa se reintenta permitiendo partirla.
     """
     if quote.get("archived_only"):
         raise ValueError("Una emisión comercial se lee del archivo; no se vuelve a renderizar.")
+    original = quote
     commercial = quote.get("commercial_client", False)
     original_folio, original_company = quote["folio"], quote["company"]["name"]
     quote = _escaped(deepcopy(quote))
     st = _styles()
     c = quote["company"]
+    marca = colores_marca(c.get("key"))
+    st["folio"].textColor = colors.HexColor(marca["text"])
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -373,7 +389,7 @@ def generate_quote_pdf(quote):
     header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (1, 0), (1, 0), "RIGHT")]))
     story.append(header)
     story.append(Spacer(1, 0.2 * cm))
-    story.append(HRFlowable(width="100%", thickness=1.2, color=PURPLE))
+    story.append(HRFlowable(width="100%", thickness=1.2, color=colors.HexColor(marca["color"])))
     story.append(Spacer(1, 0.4 * cm))
 
     # ---- Datos del cliente ----
@@ -462,7 +478,7 @@ def generate_quote_pdf(quote):
         col_widths = [0.9 * cm, 2.0 * cm, usable - 12.3 * cm, 3.0 * cm, 1.2 * cm, 2.1 * cm, 2.1 * cm]
     else:
         col_widths = [0.9 * cm, 2.4 * cm, usable - 11.9 * cm, 2.2 * cm, 1.2 * cm, 2.1 * cm, 2.1 * cm]
-    items_table = Table(rows, colWidths=col_widths, repeatRows=1, splitInRow=1)
+    items_table = Table(rows, colWidths=col_widths, repeatRows=1, splitInRow=1 if _partir_partidas else 0)
     items_table.setStyle(
         TableStyle(
             [
@@ -495,7 +511,7 @@ def generate_quote_pdf(quote):
     total_rows = [
             [Paragraph("Subtotal:", st["cell"]), Paragraph(f"<b>{money(quote['subtotal'])} {currency_label}</b>", st["cell_right"])],
             [Paragraph(f"I.V.A. ({quote['iva_rate_label']}):", st["cell"]), Paragraph(f"<b>{money(quote['iva'])} {currency_label}</b>", st["cell_right"])],
-            [Paragraph("<b>Total estimado:</b>", st["cell_bold"]), Paragraph(f"<b><font color=\"#7311F5\">{money(quote['total'])} {currency_label}</font></b>", st["cell_right"])],
+            [Paragraph("<b>Total estimado:</b>", st["cell_bold"]), Paragraph(f"<b><font color=\"{marca['text']}\">{money(quote['total'])} {currency_label}</font></b>", st["cell_right"])],
         ]
     if commercial:
         discount_sign = "-" if Decimal(quote["discount_amount"]) else ""  # Sin "-$0.00".
@@ -534,9 +550,15 @@ def generate_quote_pdf(quote):
         )
     )
 
-    doc.build(
-        story,
-        onFirstPage=lambda cnv, d: _footer(cnv, d, original_folio, original_company),
-        onLaterPages=lambda cnv, d: _footer(cnv, d, original_folio, original_company),
-    )
+    try:
+        doc.build(
+            story,
+            onFirstPage=lambda cnv, d: _footer(cnv, d, original_folio, original_company),
+            onLaterPages=lambda cnv, d: _footer(cnv, d, original_folio, original_company),
+        )
+    except LayoutError:
+        if _partir_partidas:
+            raise
+        # Una partida más alta que una página: solo entonces se permite partirla.
+        return generate_quote_pdf(original, _partir_partidas=True)
     return buffer.getvalue()

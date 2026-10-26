@@ -1043,6 +1043,20 @@ body.quote-scrolled .quote-error-toast { top: 84px; }
     color: #B42318;
 }
 
+/* B6: «Usuarios y permisos» en el menú de usuario (solo Administrador y Dueño). */
+.cconor-menu-admin {
+    border-radius: 10px;
+    color: var(--cconor-azul-marino);
+    font-weight: 600;
+}
+
+.cconor-menu-admin:hover,
+.cconor-menu-admin:focus,
+.cconor-menu-admin.active {
+    background: #EEF6F5;
+    color: var(--cconor-eleccion);
+}
+
 /* ==========================================================================
    TIPO DE CAMBIO DE LA SESIÓN (15A chip del menú, 14A/16A sugerencias)
    ========================================================================== */

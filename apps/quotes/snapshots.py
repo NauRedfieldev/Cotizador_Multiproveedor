@@ -582,7 +582,10 @@ def _commercial_adjustments(actor, parts, old_parts, *, tipo, context_id, tax, d
         raise ValidationError("No hay identidad de contexto sin FX.")
     old_tipo = _tipo(previous) if previous else None
     if (tipo, context_id) != (old_tipo, previous.exchange_context_id if previous else None):
-        require_commercial_permission(actor, FX)
+        # Lienzo fila 13: el de SYSCOM (contexto creado por el servidor) es para todos; capturarlo a mano o
+        # quitarlo exige el permiso de tipo de cambio.
+        if tipo is None or tipo.origen != "syscom":
+            require_commercial_permission(actor, FX)
         if previous and context_id is not None and context_id == previous.exchange_context_id:
             raise ValidationError("Un cambio de FX requiere una identidad de contexto nueva.")
 

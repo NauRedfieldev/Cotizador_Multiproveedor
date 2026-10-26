@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}CCONOR - Elige tu contraseña{% endblock %}
+
+{% block extra_css %}{% include 'registration/_acceso_estilos.html' %}{% endblock %}
+
+{% block content %}
+<!-- B6 (lienzo fila 12): enlace de invitación o de restablecer. Un solo uso; al guardar entra al portal
+     y se cierran las sesiones abiertas con la contraseña anterior. -->
+<div class="acceso">
+    <div class="acceso-tarjeta">
+        <div class="text-center mb-4">
+            <img src="{% static 'img/logo.png' %}" alt="CCONOR Soluciones Tecnológicas" width="180" height="64" style="height: 64px; width: auto;" class="mb-3">
+            <h1 class="h4 fw-bold mb-1" style="color: var(--cconor-azul-marino);">Elige tu contraseña</h1>
+        </div>
+
+        {% if validlink %}
+        <p class="small mb-3">Usuario: <b>{{ form.user.get_username }}</b></p>
+        {% if form.errors %}
+        <div class="alert alert-danger small" role="alert">
+            {% for campo in form %}{% for error in campo.errors %}<div>{{ error }}</div>{% endfor %}{% endfor %}
+            {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+        </div>
+        {% endif %}
+        <form method="post" id="elegirContrasena" data-usuario="{{ form.user.get_username }}">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label for="nuevaContrasena1" class="form-label fw-semibold small">Nueva contraseña</label>
+                <input type="password" class="form-control" name="new_password1" id="nuevaContrasena1" autocomplete="new-password" autofocus required>
+            </div>
+            <div class="mb-3">
+                <label for="nuevaContrasena2" class="form-label fw-semibold small">Repítela</label>
+                <input type="password" class="form-control" name="new_password2" id="nuevaContrasena2" autocomplete="new-password" required>
+            </div>
+            <ul class="acceso-reglas mb-4" id="reglasContrasena" aria-live="polite">
+                <li data-regla="largo">Al menos 8 caracteres</li>
+                <li data-regla="numeros">No solo números</li>
+                <li data-regla="usuario">No se parece a tu usuario</li>
+                <li data-regla="iguales">Las dos coinciden</li>
+            </ul>
+            <button type="submit" class="btn btn-cconor-primary acceso-entrar w-100">Guardar y entrar</button>
+        </form>
+        <p class="small text-secondary mt-3 mb-0">Al guardar se cierran las sesiones abiertas con la contraseña anterior.</p>
+        {% else %}
+        <div class="alert alert-warning small" role="alert">
+            Este enlace ya no sirve: ya se usó, caducó o la cuenta está desactivada.
+        </div>
+        <p class="small text-secondary">Si ya tenías contraseña, pide otro enlace. Si era una invitación, pide a un administrador que te la reenvíe.</p>
+        <a class="btn btn-cconor-primary acceso-entrar w-100 d-flex align-items-center justify-content-center" href="{% url 'recuperar_contrasena' %}">Pedir otro enlace</a>
+        <div class="text-center mt-3"><a class="acceso-enlace" href="{% url 'login' %}">← Volver a iniciar sesión</a></div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/contrasena.js' %}?v=1"></script>{% endblock %}

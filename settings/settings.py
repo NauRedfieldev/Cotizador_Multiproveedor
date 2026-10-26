@@ -151,9 +151,13 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 # M6: límite por proveedor; comparar_configurado valida que sea positivo.
 OFERTAS_POR_PROVEEDOR = env.int('OFERTAS_POR_PROVEEDOR', default=10)
 
-# 14A: valor de GET /tipocambio de SYSCOM que el comparador sugiere (nunca lo aplica solo).
-# normal = contado; un_dia … un_mes = por plazo de pago (M4 en docs/30: CCONOR debe confirmar).
-SYSCOM_TIPO_CAMBIO_CAMPO = env('SYSCOM_TIPO_CAMBIO_CAMPO', default='normal')
+# Lienzo fila 13: valor de GET /tipocambio de SYSCOM que se usa en automático para todos (solo quien tiene
+# permiso de tipo de cambio lo cambia). normal = contado; un_dia … un_mes = por plazo de pago (M4 en docs/30).
+# Mismos nombres que CAMPOS_TIPO_CAMBIO del adaptador SYSCOM; un valor mal escrito detiene el arranque.
+CAMPOS_TIPO_CAMBIO_SYSCOM = ('normal', 'preferencial', 'un_dia', 'una_semana', 'dos_semanas', 'tres_semanas', 'un_mes')
+SYSCOM_TIPO_CAMBIO_CAMPO = env('SYSCOM_TIPO_CAMBIO_CAMPO', default='normal').strip()
+if SYSCOM_TIPO_CAMBIO_CAMPO not in CAMPOS_TIPO_CAMBIO_SYSCOM:
+    raise ImproperlyConfigured('SYSCOM_TIPO_CAMBIO_CAMPO debe ser uno de: ' + ', '.join(CAMPOS_TIPO_CAMBIO_SYSCOM) + '.')
 
 # M8: volumen privado, NO publicar mediante MEDIA_URL ni static().
 QUOTE_PDF_ROOT = Path(env('QUOTE_PDF_ROOT', default=str(BASE_DIR / 'private_quote_files')))
@@ -208,7 +212,10 @@ def _mailer(prefijo):
     }}
 
 
-MAILERS = {'default': _mailer('CCONOR'), 'torva': _mailer('TORVA')}
+# B6: «sistemas» (SISTEMAS_SMTP_*) envía las invitaciones y los enlaces para elegir o restablecer contraseña;
+# las cotizaciones nunca salen de esta cuenta.
+MAILERS = {'default': _mailer('CCONOR'), 'torva': _mailer('TORVA'), 'sistemas': _mailer('SISTEMAS')}
 # Remitente de cada empresa; también recibe la copia oculta de cada cotización enviada (registro en su buzón).
 CCONOR_SMTP_FROM = env('CCONOR_SMTP_FROM', default='').strip()
 TORVA_SMTP_FROM = env('TORVA_SMTP_FROM', default='').strip()
+SISTEMAS_SMTP_FROM = env('SISTEMAS_SMTP_FROM', default='').strip()

@@ -1,0 +1,15 @@
+<style>
+    /* 13C: acceso sin nada del sistema (sin menú ni pie): tarjeta centrada con el logo.
+       B6: compartido por iniciar sesión, «¿Olvidaste tu contraseña?» y «Elige tu contraseña». */
+    .acceso { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; background: #F8F7FE; }
+    .acceso-tarjeta { width: 100%; max-width: 420px; background: #FFFFFF; border: 1px solid #EAE7F3; border-radius: 20px;
+        box-shadow: 0 16px 40px rgba(17, 22, 56, 0.08); padding: 36px; }
+    .acceso-tarjeta .form-control { height: 46px; }
+    .acceso-entrar { height: 48px; font-weight: 600; }
+    .acceso-aviso { background: #EEF6F5; color: var(--cconor-eleccion); border: 0; border-radius: 10px; font-weight: 600; }
+    .acceso-enlace { color: var(--cconor-azul-marino); font-weight: 600; font-size: 14px; }
+    .acceso-reglas { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #5B5F7A; }
+    .acceso-reglas li::before { content: "•"; display: inline-block; width: 16px; font-weight: 700; }
+    .acceso-reglas li.is-ok { color: var(--cconor-eleccion); }
+    .acceso-reglas li.is-ok::before { content: "✓"; }
+</style>

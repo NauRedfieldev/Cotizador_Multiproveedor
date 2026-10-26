@@ -35,7 +35,6 @@ class ApiBusquedaTests(TestCase):
         crear_proveedor("beta")
         self.url = reverse("api_buscar_productos")
         actor = crear_asesor()
-        actor.user_permissions.add(Permission.objects.get(content_type__app_label="quotes", codename="view_commercial_costs"))
         self.async_client.force_login(actor)
 
     async def buscar(self, adaptadores, **parametros):
@@ -238,7 +237,8 @@ class ApiBusquedaTests(TestCase):
     async def test_a12_sin_tipo_de_cambio_ni_syscom(self):
         respuesta, cuerpo = await self.tc()
         self.assertEqual(respuesta.status_code, 200)
-        self.assertEqual(cuerpo, {"success": True, "data": {"session": None, "syscom": None, "syscom_failed": False}})
+        self.assertEqual(cuerpo, {"success": True, "data": {"session": None, "syscom": None, "syscom_failed": False,
+                                                             "can_change": True}})
 
     async def test_a13_guardar_a_mano_lo_comparte_con_el_comparador(self):
         respuesta, cuerpo = await self.tc("put", {"value": "18.70"})
@@ -256,7 +256,9 @@ class ApiBusquedaTests(TestCase):
         await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
         _, antes = await self.tc()
         self.assertEqual(antes["data"]["syscom"], {"value": "18.54", "label": "contado"})
-        await self.tc("put", {"value": "18.54"})            # el mismo valor a mano; «Usar» lo marca como SYSCOM
+        # Lienzo fila 13: sin uno a mano, el de SYSCOM ya está en la sesión sin pedirlo.
+        self.assertEqual((antes["data"]["session"]["value"], antes["data"]["session"]["source"]), ("18.54", "syscom"))
+        await self.tc("put", {"value": "18.60"})
         respuesta, cuerpo = await self.tc("put", {"use_syscom": True})
         self.assertEqual(respuesta.status_code, 200)
         self.assertEqual((cuerpo["data"]["session"]["value"], cuerpo["data"]["session"]["source"]), ("18.54", "syscom"))
@@ -289,7 +291,7 @@ class ApiBusquedaTests(TestCase):
     async def test_a16b_el_chip_sabe_si_se_confirmo(self):
         """21A: «Sigue vigente» del comparador llega al chip del menú; escribir el mismo valor lo conserva."""
         sesion = await self.async_client.asession()
-        await sesion.aset(CLAVE_TIPO_CAMBIO, {"valor": "18.54", "fecha": "2026-10-19T10:00:00+00:00", "origen": "syscom",
+        await sesion.aset(CLAVE_TIPO_CAMBIO, {"valor": "18.54", "fecha": "2026-10-19T10:00:00+00:00", "origen": "manual",
                                               "confirmado": "2026-10-20T15:00:00+00:00"})
         await sesion.asave()
         _, cuerpo = await self.tc()
@@ -514,3 +516,108 @@ class CommercialSearchTests(CommercialFixtures, TestCase):
         response = self.client.put(reverse("api_guardar_revision", args=[created["folio"], 1]),
                                    json.dumps(edit), content_type="application/json")
         self.assertEqual(response.status_code, 200, response.content.decode())
+
+
+@override_settings(CCONOR_EMPRESA={"name": "QA sintética", "rfc": "", "tagline": "", "phone": "", "email": ""},
+                   CCONOR_PROVIDER_PRICE_BASES={"alfa": {"vat_basis": "NET"}})
+class TipoCambioPorRolTests(CommercialFixtures, TestCase):
+    """Lienzo fila 13: el de SYSCOM es automático para todos; solo quien tiene permiso de tipo de cambio escribe otro.
+
+    self.other = Personal; self.actor = Administrador comercial.
+    """
+
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        crear_proveedor("alfa")
+        Provider.objects.create(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
+        self.consulta = mock.AsyncMock(return_value=Decimal("18.54"))
+        self.enterContext(mock.patch("apps.quotes.views.consultar_tipo_cambio", self.consulta))
+        self.client.force_login(self.other)
+
+    def json(self, metodo, url, datos=None, status=None):
+        respuesta = getattr(self.client, metodo)(url, json.dumps(datos) if datos is not None else None,
+                                                 content_type="application/json")
+        if status is not None:
+            self.assertEqual(respuesta.status_code, status, respuesta.content.decode())
+        return respuesta.json()
+
+    def contexto_fx(self, status=201, **datos):
+        return self.json("post", reverse("api_contexto_fx"), {"request_id": str(uuid4()), **datos}, status)
+
+    def search(self, status=200, moneda="USD", **params):
+        oferta = usd("1", "100") if moneda == "USD" else mxn("1", "100")
+        with adaptadores_registrados(adaptador("alfa", oferta)), sin_red():
+            respuesta = self.client.get(reverse("api_buscar_productos"), {"q": "equipo", "schema_version": "2", **params})
+        self.assertEqual(respuesta.status_code, status, respuesta.content.decode())
+        return respuesta.json()
+
+    def body(self, result, fx_id):
+        return alta_comercial(items=[{"line_key": str(uuid4()), "source": {"type": "API",
+            "context_ref": result["context_ref"], "offer_ref": result["data"][0]["offer_ref"]}, "quantity": 1,
+            "units": {"source_label": "Pieza", "sale_label": "Pieza", "conversion_factor": "1", "confirmed": True},
+            "pricing": {"mode": "MARGIN", "margin_percent": "35"}}], fx_context_id=fx_id)
+
+    def test_personal_tiene_el_de_syscom_en_la_sesion_y_no_escribe_otro(self):
+        sesion = self.client.session
+        sesion[CLAVE_TIPO_CAMBIO] = {"valor": "19.90", "fecha": "2026-10-26T10:00:00+00:00", "origen": "manual"}
+        sesion.save()
+        datos = self.json("get", reverse("api_tipo_cambio_sesion"), status=200)["data"]
+        self.assertEqual((datos["session"]["value"], datos["session"]["source"], datos["can_change"]), ("18.54", "syscom", False))
+        error = self.json("put", reverse("api_tipo_cambio_sesion"), {"value": "19.00"}, 403)
+        self.assertEqual(error["error"], "Solo un Asesor o un Administrador puede cambiar el tipo de cambio.")
+        self.assertEqual(self.client.session[CLAVE_TIPO_CAMBIO]["valor"], "18.54")
+        self.json("put", reverse("api_tipo_cambio_sesion"), {"use_syscom": True}, 200)
+        self.client.force_login(self.actor)
+        self.assertTrue(self.json("get", reverse("api_tipo_cambio_sesion"), status=200)["data"]["can_change"])
+
+    def test_contexto_de_syscom_para_todos_y_a_mano_solo_con_permiso(self):
+        fx = self.contexto_fx(use_syscom=True)["data"]
+        self.assertEqual((fx["value"], fx["source"]), ("18.54000000", "syscom"))
+        self.contexto_fx(403, value="18.60")
+        self.contexto_fx(400, use_syscom=True, value="18.60")
+        cache.clear()
+        self.consulta.side_effect = httpx.ConnectError("sin red")
+        with self.assertLogs("apps.quotes.views", "WARNING"):
+            error = self.contexto_fx(503, use_syscom=True)
+        self.assertIn("SYSCOM", error["error"])
+
+    def test_busqueda_de_personal_usa_syscom_o_el_de_su_cotizacion(self):
+        automatico = self.search()
+        self.assertEqual(automatico["tipo_cambio"]["origen"], "syscom")
+        self.search(403, tipo_cambio="20.00")
+        fx = self.contexto_fx(use_syscom=True)["data"]
+        propio = self.search(fx_context_id=fx["fx_context_id"])
+        self.assertEqual(propio["fx_context_id"], fx["fx_context_id"])   # la captura usa el de la cotización
+        self.client.force_login(self.actor)
+        self.search(409, fx_context_id=fx["fx_context_id"])               # contexto ajeno
+        self.assertEqual(self.search(tipo_cambio="20.00")["tipo_cambio"]["origen"], "manual")
+
+    def test_personal_guarda_con_syscom_pero_no_lo_quita(self):
+        fx = self.contexto_fx(use_syscom=True)["data"]["fx_context_id"]
+        body = self.body(self.search(fx_context_id=fx, moneda="MXN"), fx)
+        creada = self.json("post", reverse("api_crear_cotizacion"), body, 201)["data"]
+        from apps.quotes.models import QuoteRevision
+        revision = QuoteRevision.objects.get(quote__folio=creada["folio"])
+        self.assertEqual((revision.exchange_rate, revision.exchange_rate_source), (Decimal("18.54"), "syscom"))
+        # Lo mismo para Personal en una búsqueda en dólares: el de SYSCOM convierte el costo.
+        self.assertEqual(self.search(fx_context_id=fx)["tipo_cambio"]["origen"], "syscom")
+        edit = {k: v for k, v in body.items() if k not in ("request_id", "schema_version", "notes")}
+        edit["items"][0]["source"] = {"type": "EXISTING"}
+        edit.update(edit_version=1, fx_context_id=None)
+        self.json("put", reverse("api_guardar_revision", args=[creada["folio"], 1]), edit, 403)
+        detalle = self.json("get", reverse("api_detalle_cotizacion", args=[creada["folio"]]), status=200)["data"]["actual"]
+        self.assertNotIn("capturado_por", detalle["tipo_cambio"])
+
+    def test_detalle_dice_quien_lo_capturo_a_mano(self):
+        self.client.force_login(self.actor)
+        fx = self.contexto_fx(value="19.10")["data"]["fx_context_id"]
+        creada = self.json("post", reverse("api_crear_cotizacion"), self.body(self.search(fx_context_id=fx), fx), 201)["data"]
+        detalle = self.json("get", reverse("api_detalle_cotizacion", args=[creada["folio"]]), status=200)["data"]["actual"]
+        self.assertEqual((detalle["tipo_cambio"]["origen"], detalle["tipo_cambio"]["capturado_por"]),
+                         ("manual", self.actor.get_full_name() or self.actor.get_username()))
+
+    def test_campos_validos_de_syscom_iguales_en_settings_y_adaptador(self):
+        from django.conf import settings
+        from apps.providers.adapters.syscom import CAMPOS_TIPO_CAMBIO
+        self.assertEqual(tuple(settings.CAMPOS_TIPO_CAMBIO_SYSCOM), CAMPOS_TIPO_CAMBIO)

@@ -32,6 +32,7 @@ from apps.providers.contracts import ProviderOffer
 
 from .comparison import TipoCambio
 from .models import Quote, QuoteAPIRequest, QuoteRevision, QuoteSelectionContext, rfc_validator
+from .pdf import COLORES_MARCA
 from . import snapshots as commercial_services
 from .permissions import ADJUSTMENTS, FX, MANAGE, VIEW_COSTS, require_commercial_permission, set_commercial_permission
 from .snapshot_values import MAX_ITEMS, decimal_limit
@@ -39,7 +40,10 @@ from .snapshots import (
     ArchivedPDFError, PartidaCapturada, RevisionConflict, acrear_revision, aemitir_revision,
     authorize, crear_borrador,
 )
-from .views import CLAVE_OFERTAS_VISTAS, CLAVE_TIPO_CAMBIO, ETIQUETAS_TIPO_CAMBIO_SYSCOM, buscar, tipo_cambio_sugerido
+from .views import (
+    CLAVE_OFERTAS_VISTAS, CLAVE_TIPO_CAMBIO, ERROR_SIN_TIPO_CAMBIO, ERROR_SIN_TIPO_CAMBIO_SYSCOM, ETIQUETAS_TIPO_CAMBIO_SYSCOM,
+    buscar, puede_cambiar_tipo_cambio, tipo_cambio_automatico, tipo_cambio_sugerido,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,22 +77,40 @@ async def buscar_productos(request):
     schema = request.GET.get("schema_version", "1")
     if schema not in ("1", "2"):
         return _respuesta_de_error(_EntradaInvalida("schema_version inválido."))
+    fijo = fx_existente = None
+    puede = True
     try:
-        await sync_to_async(require_commercial_permission, thread_sensitive=True)(await request.auser())
+        actor = await request.auser()
+        await sync_to_async(require_commercial_permission, thread_sensitive=True)(actor)
         if schema == "2":
-            if request.GET.get("tipo_cambio"):
-                await sync_to_async(require_commercial_permission, thread_sensitive=True)(await request.auser(), FX)
+            # Lienzo fila 13: fx_context_id = el tipo de cambio de la cotización (ya autorizado al crearlo);
+            # tipo_cambio = un valor a mano (permiso de tipo de cambio); sin ninguno, el de SYSCOM de hoy.
+            if request.GET.get("fx_context_id"):
+                if request.GET.get("tipo_cambio"):
+                    raise _EntradaInvalida("Envía fx_context_id o tipo_cambio, no ambos.")
+                fx_existente = await sync_to_async(_owned_context, thread_sensitive=True)(request.GET["fx_context_id"], actor, "FX")
+                datos_fx = fx_existente.payload
+                fijo = TipoCambio(Decimal(datos_fx["value"]), datos_fx["source"], datetime.fromisoformat(datos_fx["date"]))
+            elif request.GET.get("tipo_cambio"):
+                await sync_to_async(require_commercial_permission, thread_sensitive=True)(actor, FX)
+            else:
+                puede = await sync_to_async(puede_cambiar_tipo_cambio, thread_sensitive=True)(actor)
+                valor, _ = await tipo_cambio_sugerido()
+                if valor is not None:
+                    fijo = TipoCambio(valor, "syscom", timezone.now())
     except Exception as exc:
         return _respuesta_de_error(exc)
     if not request.GET.get("q", "").strip() and not request.GET.get("sku", "").strip():
         # El comparador pinta un formulario en blanco; una API sin consulta es un error.
         return JsonResponse(_cuerpo({"error": "Escribe qué buscar o el modelo exacto."}), status=400)
-    status, contexto = await buscar(request)
+    status, contexto = await buscar(request, tipo_cambio_fijo=fijo)
+    if contexto.get("error") == ERROR_SIN_TIPO_CAMBIO and not puede:
+        contexto["error"] = ERROR_SIN_TIPO_CAMBIO_SYSCOM
     if schema == "2":
         try:
             body = _cuerpo(contexto)
             if status == 200 and contexto["ofertas"] and not contexto.get("error"):
-                capture, refs, fx_id = await sync_to_async(_capture_search, thread_sensitive=True)(await request.auser(), contexto)
+                capture, refs, fx_id = await sync_to_async(_capture_search, thread_sensitive=True)(actor, contexto, fx_existente)
                 body.update(context_ref=str(capture.pk), fx_context_id=fx_id)
                 for item, ref in zip(body["data"], refs, strict=True):
                     item.update(offer_ref=ref, context_ref=str(capture.pk), vat=capture.payload["offers"][ref]["vat"])
@@ -218,6 +240,13 @@ class _EmpresaSinConfigurar(Exception):
     """503: faltan los datos de la empresa en el servidor; nunca se sustituyen por ejemplos."""
 
 
+class _SinTipoCambioSyscom(Exception):
+    """503: SYSCOM no respondió y no hay un valor suyo de hoy."""
+
+
+SOLO_QUIEN_CAMBIA_TC = "Solo un Asesor o un Administrador puede cambiar el tipo de cambio."
+
+
 class _EmisionDeshabilitada(Exception):
     """403: el despliegue no tiene autorización operativa de emisión HTTP."""
 
@@ -258,6 +287,8 @@ def _respuesta_de_error(exc):
         status, mensaje = 503, "PDF original no disponible o dañado; requiere recuperación."
     elif isinstance(exc, _EmpresaSinConfigurar):
         status, mensaje = 503, "Datos de la empresa sin configurar en el servidor; avisa al administrador."
+    elif isinstance(exc, _SinTipoCambioSyscom):
+        status, mensaje = 503, "No hay tipo de cambio de SYSCOM en este momento; inténtalo en unos minutos."
     elif isinstance(exc, _EmisionDeshabilitada):
         status, mensaje = 403, (
             "La emisión comercial HTTP está deshabilitada; requiere validación y autorización operativa."
@@ -464,12 +495,8 @@ def _prefijo_folio(clave):
     return prefijo
 
 
-# 5A (lienzo fila 9): color de cada marca, tomado de su logo. color = franja/bordes; text = texto sobre
-# blanco (contraste ≥ 4.5:1); tint = fondo suave. Solo pantalla: el PDF no cambia de colores.
-COLORES_EMPRESA = {
-    EMPRESA_PRINCIPAL: {"color": "#0B4A93", "text": "#0B4A93", "tint": "#EAF1FA"},
-    EMPRESA_TORVA: {"color": "#0F8F95", "text": "#0B6E73", "tint": "#E6F5F5"},
-}
+# 5A (lienzo filas 9 y 11): color de cada marca, el mismo en pantalla, PDF y correo (definido en pdf.py).
+COLORES_EMPRESA = COLORES_MARCA
 
 
 def empresas_publicas():
@@ -881,7 +908,7 @@ def _wire(value):
     return value
 
 
-def _capture_search(actor, context):
+def _capture_search(actor, context, fx_existente=None):
     actor = require_commercial_permission(actor)
     offers = {}
     bases = getattr(settings, "CCONOR_PROVIDER_PRICE_BASES", {})
@@ -906,8 +933,8 @@ def _capture_search(actor, context):
             "brand": offer.brand or "", "model": offer.model or "", "mpn": offer.mpn or "",
             "stock": offer.stock, "es_mejor_precio": entry.es_mejor_precio, "vat": dict(vat)}
     with transaction.atomic():
-        fx = None
-        if context["tipo_cambio"] is not None:
+        fx = fx_existente
+        if fx is None and context["tipo_cambio"] is not None:
             tipo = context["tipo_cambio"]
             if tipo.origen == "manual":
                 require_commercial_permission(actor, FX)
@@ -1076,7 +1103,8 @@ def _request_once(actor, data, operation, target, action):
             output = {**_resumen(result, quote.folio), "schema_version": result.schema_version,
                       "state_fingerprint": result.state_fingerprint}
         else:
-            require_commercial_permission(actor, FX)
+            if result.payload.get("source") != "syscom":
+                require_commercial_permission(actor, FX)
             if result.actor_id != actor.pk:
                 raise PermissionDenied
             output = {"fx_context_id": str(result.pk), **result.payload}
@@ -1139,6 +1167,16 @@ def _commercial_edit(folio, number, actor, data, *, preview=False):
         return _wire(result) if preview else {**_resumen(result, quote.folio), "state_fingerprint": result.state_fingerprint}
 
 
+def _tipo_cambio_con_autor(revision):
+    """Lienzo fila 13: de dónde salió (SYSCOM o a mano) y, si fue a mano, quién lo capturó. Solo interno."""
+    tipo = _tipo_cambio(commercial_services._tipo(revision))
+    if tipo and tipo["origen"] != "syscom" and revision.exchange_context_id:
+        contexto = QuoteSelectionContext.objects.select_related("actor").filter(pk=revision.exchange_context_id).first()
+        if contexto and contexto.actor:
+            tipo["capturado_por"] = contexto.actor.get_full_name().strip() or contexto.actor.get_username()
+    return tipo
+
+
 def _exact_detail(folio, number, actor):
     with transaction.atomic():
         quote, revision = _get_commercial(folio, number, actor)
@@ -1150,7 +1188,7 @@ def _exact_detail(folio, number, actor):
             "issue_date": revision.issue_date.isoformat(), "valid_days": revision.valid_days,
             "tax_rate": revision.tax_rate, "discount_percent": revision.discount_percent,
             "fx_context_id": revision.exchange_context_id,
-            "tipo_cambio": _tipo_cambio(commercial_services._tipo(revision)),
+            "tipo_cambio": _tipo_cambio_con_autor(revision),
             "capabilities": _capabilities(actor),
             "emission_enabled": bool(settings.COTIZACIONES_EMISION_HABILITADA and revision.schema_version == 2),
             "items": [{f: getattr(s, f) for f in commercial_services.PartidaComercialCapturada.__dataclass_fields__}
@@ -1262,10 +1300,22 @@ async def confirmar_comercial(request, folio, numero):
 
 @_api("POST")
 async def crear_contexto_fx(request):
-    data = _leer_json(request, {"request_id", "value"})
+    """{"value"}: capturado a mano (permiso de tipo de cambio). {"use_syscom": true}: el de SYSCOM de hoy,
+    que consulta el servidor; lo puede usar cualquiera con acceso comercial (lienzo fila 13)."""
+    data = _leer_json(request, {"request_id", "value", "use_syscom"})
+    syscom = None
+    if "use_syscom" in data:
+        if data["use_syscom"] is not True or "value" in data:
+            raise _EntradaInvalida("Envía value o use_syscom.")
+        syscom, _ = await tipo_cambio_sugerido()
+        if syscom is None:
+            raise _SinTipoCambioSyscom()
     def operation(actor):
-        require_commercial_permission(actor, FX)
+        require_commercial_permission(actor, VIEW_COSTS if syscom is not None else FX)
         def create(current, request_id):
+            if syscom is not None:
+                return QuoteSelectionContext.objects.create(actor=current, kind="FX", payload={
+                    "value": _texto(decimal_limit(syscom, 18, 8)), "source": "syscom", "date": timezone.now().isoformat()})
             value = _decimal_text(data.get("value"), 18, 8, minimum=Decimal(".00000001"))
             return QuoteSelectionContext.objects.create(actor=current, kind="FX", payload={
                 "value": _texto(value), "source": "manual", "date": timezone.now().isoformat()})
@@ -1289,27 +1339,34 @@ async def capacidades_comerciales(request):
 async def tipo_cambio_sesion(request):
     """15A/16A: el tipo de cambio de la sesión (uno solo para comparador, cotizador y menú) y el de SYSCOM.
 
-    PUT {"value": "18.70"} lo guarda como manual; {"use_syscom": true} toma el de SYSCOM del servidor.
-    Solo vive en la sesión del asesor: no cambia ninguna cotización ni llega al cliente.
+    Lienzo fila 13: el de SYSCOM de hoy se pone solo para todos. PUT {"value": "18.70"} lo guarda como manual
+    (solo con permiso de tipo de cambio); {"use_syscom": true} vuelve al de SYSCOM. Solo vive en la sesión:
+    no cambia ninguna cotización ni llega al cliente.
     """
+    puede = await sync_to_async(puede_cambiar_tipo_cambio, thread_sensitive=True)(await request.auser())
     recordado = await request.session.aget(CLAVE_TIPO_CAMBIO)
     if request.method == "PUT":
         data = _leer_json(request, {"value", "use_syscom"})
         if data == {"use_syscom": True}:
-            valor, _ = await tipo_cambio_sugerido()
-            if valor is None:
-                return JsonResponse({"success": False, "error": "No se pudo consultar el de SYSCOM; escríbelo a mano.",
-                                     "code": "UNAVAILABLE", "details": {}}, status=503)
-            tipo = TipoCambio(valor, "syscom", timezone.now())
+            nuevo = await tipo_cambio_automatico(
+                request.session, recordado if recordado and recordado.get("origen") == "syscom" else None)
+            if nuevo is None:
+                raise _SinTipoCambioSyscom()
+            recordado = nuevo
         elif set(data) == {"value"}:
+            if not puede:
+                return JsonResponse({"success": False, "error": SOLO_QUIEN_CAMBIA_TC,
+                                     "code": "FORBIDDEN", "details": {}}, status=403)
             _decimal_text(data["value"], 18, 8, minimum=Decimal(".00000001"))  # mismos límites que el cotizador
             tipo = TipoCambio(Decimal(data["value"]), "manual", timezone.now())
+            # El mismo valor (18.54 = 18.54000000) conserva su hora y origen, como en el comparador.
+            if not (recordado and Decimal(recordado["valor"]) == tipo.valor):
+                recordado = {"valor": f"{tipo.valor:f}", "fecha": tipo.fecha.isoformat(), "origen": "manual"}
+                await request.session.aset(CLAVE_TIPO_CAMBIO, recordado)
         else:
             raise _EntradaInvalida("Envía value o use_syscom.")
-        # El mismo valor (18.54 = 18.54000000) conserva su hora y origen, como en el comparador.
-        if not (recordado and Decimal(recordado["valor"]) == tipo.valor and tipo.origen == "manual"):
-            recordado = {"valor": f"{tipo.valor:f}", "fecha": tipo.fecha.isoformat(), "origen": tipo.origen}
-            await request.session.aset(CLAVE_TIPO_CAMBIO, recordado)
+    elif not puede or recordado is None or recordado.get("origen") == "syscom":
+        recordado = await tipo_cambio_automatico(request.session, recordado)
     syscom, fallo = await tipo_cambio_sugerido()
     return JsonResponse({"success": True, "data": {
         "session": {"value": recordado["valor"], "date": recordado["fecha"], "source": recordado.get("origen", "manual"),
@@ -1317,7 +1374,7 @@ async def tipo_cambio_sesion(request):
         if recordado else None,
         "syscom": {"value": f"{syscom:f}", "label": ETIQUETAS_TIPO_CAMBIO_SYSCOM.get(settings.SYSCOM_TIPO_CAMBIO_CAMPO, "")}
         if syscom is not None else None,
-        "syscom_failed": fallo}})
+        "syscom_failed": fallo, "can_change": puede}})
 
 
 @_api("GET PATCH")

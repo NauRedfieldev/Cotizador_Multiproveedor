@@ -9,7 +9,9 @@ from decimal import Decimal
 from unittest import mock
 
 import httpx
+from asgiref.sync import sync_to_async
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import TestCase, override_settings, tag
@@ -34,9 +36,16 @@ from apps.quotes.views import (CLAVE_TIPO_CAMBIO, CLAVE_ULTIMA_BUSQUEDA, LIMITE_
 PLANTILLA = "comparador.html"
 
 
-def crear_asesor(username="asesor", password=None, **campos):
-    """Usuario sintético. Sin password no se calcula ningún hash (force_login no lo necesita)."""
-    return get_user_model().objects.create_user(username, password=password, **campos)
+def crear_asesor(username="asesor", password=None, tipo_cambio=True, **campos):
+    """Usuario sintético. Sin password no se calcula ningún hash (force_login no lo necesita).
+
+    Lienzo fila 13: por defecto puede cambiar el tipo de cambio (como un Asesor); tipo_cambio=False = Personal.
+    """
+    from django.contrib.auth.models import Permission
+    usuario = get_user_model().objects.create_user(username, password=password, **campos)
+    codigos = ["view_commercial_costs"] + (["change_commercial_fx"] if tipo_cambio else [])
+    usuario.user_permissions.add(*Permission.objects.filter(content_type__app_label="quotes", codename__in=codigos))
+    return usuario
 
 CLAVES = (
     "ofertas",
@@ -498,24 +507,20 @@ class VistaCotizacionTests(TestCase):
             respuesta = await self.async_client.get(reverse("cotizar_productos"))
         self.assertContains(respuesta, "1 USD = $17.50 MXN")
         self.assertContains(respuesta, "<strong>Capturado otro día:</strong> <span>confirma que siga vigente.</span>", html=False)
-        self.assertContains(respuesta, 'capturado <span title="2 ene 2020, 04:00">hace ')   # 24C; exacta en hora de CDMX
+        self.assertContains(respuesta, 'capturado a mano <span title="2 ene 2020, 04:00">hace ')   # 24C; exacta en hora de CDMX
         self.assertContains(respuesta, " años</span> · se conserva")
         self.assertNotContains(respuesta, "UTC")
 
-    async def test_v25_sugiere_el_de_syscom_y_solo_se_aplica_al_pulsar_usar(self):
-        """14A: nada se aplica solo; «Usar» toma el valor del servidor, lo marca SYSCOM y lo recuerda."""
+    async def test_v25_el_de_syscom_se_aplica_solo(self):
+        """Lienzo fila 13: sin uno a mano, el de SYSCOM de hoy se aplica solo, se marca SYSCOM y se recuerda."""
         await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
         consulta = mock.AsyncMock(return_value=Decimal("18.54"))
         with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta), sin_red():
             blanco = await self.async_client.get(reverse("cotizar_productos"))
-            self.assertContains(blanco, "SYSCOM hoy: <strong>$18.54</strong>")
-            self.assertContains(blanco, "(contado)")
-            self.assertContains(blanco, 'name="usar_tipo_cambio" value="syscom"')
-            self.assertNotContains(blanco, 'class="fx-aplicado"')
-            usado = await self.async_client.get(reverse("cotizar_productos"), {"tipo_cambio": "", "usar_tipo_cambio": "syscom"})
-        self.assertContains(usado, "1 USD = $18.54 MXN")
-        self.assertContains(usado, "SYSCOM · ")
-        self.assertNotContains(usado, "SYSCOM hoy:")
+        self.assertContains(blanco, "1 USD = $18.54 MXN")
+        self.assertContains(blanco, "SYSCOM (contado) · consultado ")
+        self.assertContains(blanco, "se actualiza solo")
+        self.assertNotContains(blanco, "SYSCOM hoy:")
         self.assertEqual(consulta.await_count, 1)                       # se guarda 30 min
         sesion = await self.async_client.asession()
         self.assertEqual((await sesion.aget(CLAVE_TIPO_CAMBIO))["origen"], "syscom")
@@ -523,59 +528,69 @@ class VistaCotizacionTests(TestCase):
         with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta):
             busqueda = await self.buscar([adaptador("syscom", usd("1", "10.00")), adaptador("alfa"), adaptador("beta")])
         self.assertEqual((busqueda.context["tipo_cambio"].valor, busqueda.context["tipo_cambio"].origen), (Decimal("18.54"), "syscom"))
-        self.assertContains(busqueda, "SYSCOM · ")
+        # El formulario reenvía el mismo valor: sigue siendo el automático, no uno a mano.
+        with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta):
+            reenviado = await self.buscar([adaptador("syscom", usd("1", "10.00")), adaptador("alfa"), adaptador("beta")],
+                                          tipo_cambio="18.54")
+        self.assertEqual(reenviado.context["tipo_cambio"].origen, "syscom")
 
-    async def test_v26_lo_escrito_a_mano_manda_sobre_usar(self):
+    async def test_v26_volver_a_syscom_manda_sobre_lo_escrito(self):
         await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
         with mock.patch("apps.quotes.views.consultar_tipo_cambio", mock.AsyncMock(return_value=Decimal("18.54"))), sin_red():
-            respuesta = await self.async_client.get(reverse("cotizar_productos"), {"tipo_cambio": "19.00", "usar_tipo_cambio": "syscom"})
-        self.assertContains(respuesta, "1 USD = $19.00 MXN")
-        self.assertNotContains(respuesta, "SYSCOM · ")
+            manual = await self.async_client.get(reverse("cotizar_productos"), {"tipo_cambio": "19.00"})
+            self.assertContains(manual, "1 USD = $19.00 MXN")
+            self.assertContains(manual, "capturado a mano")
+            self.assertContains(manual, "SYSCOM hoy: <strong>$18.54</strong>")
+            self.assertContains(manual, 'name="usar_tipo_cambio" value="syscom"')
+            vuelta = await self.async_client.get(reverse("cotizar_productos"), {"tipo_cambio": "19.00", "usar_tipo_cambio": "syscom"})
+        self.assertContains(vuelta, "1 USD = $18.54 MXN")
+        self.assertContains(vuelta, "SYSCOM (contado) · ")
 
     async def test_v27_si_syscom_no_responde_o_no_esta_activo(self):
         consulta = mock.AsyncMock(side_effect=httpx.ConnectError("sin conexión"))
         with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta), sin_red():
             sin_syscom = await self.async_client.get(reverse("cotizar_productos"))
-        self.assertNotContains(sin_syscom, "SYSCOM hoy:")
-        self.assertNotContains(sin_syscom, "No se pudo consultar el de SYSCOM")
+        self.assertNotContains(sin_syscom, 'class="fx-aplicado"')
+        self.assertContains(sin_syscom, "Sin tipo de cambio de SYSCOM; escríbelo a mano.")
         self.assertEqual(consulta.await_count, 0)                       # sin SYSCOM activo no se consulta
 
         await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
         with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta), sin_red(), self.assertLogs("apps.quotes.views", "WARNING"):
             caido = await self.async_client.get(reverse("cotizar_productos"))
             otra_vez = await self.async_client.get(reverse("cotizar_productos"))
-        self.assertContains(caido, "No se pudo consultar el de SYSCOM; escríbelo a mano.")
-        self.assertContains(otra_vez, "No se pudo consultar el de SYSCOM; escríbelo a mano.")
+        self.assertContains(caido, "SYSCOM no respondió y no hay un valor de hoy; escríbelo a mano.")
+        self.assertContains(otra_vez, "SYSCOM no respondió y no hay un valor de hoy; escríbelo a mano.")
         self.assertEqual(consulta.await_count, 1)                       # el fallo también se guarda (1 min)
-        sinsugerencia = await self.async_client.get(reverse("cotizar_productos"), {"tipo_cambio": "", "usar_tipo_cambio": "syscom"})
-        self.assertNotContains(sinsugerencia, 'class="fx-aplicado"')    # «Usar» sin valor de SYSCOM no inventa uno
+        self.assertNotContains(otra_vez, 'class="fx-aplicado"')         # sin valor de SYSCOM no se inventa uno
 
-    async def test_v28_si_syscom_cambia_se_avisa_y_actualizar_toma_el_nuevo(self):
-        """Opción 1: solo para un valor que salió de SYSCOM; nunca se actualiza solo; lo manual no se toca."""
+    async def test_v27b_si_syscom_falla_se_usa_el_ultimo_valor_del_dia(self):
+        """Punto 2 del lienzo fila 13: el último valor bueno de SYSCOM de hoy sigue sirviendo."""
         await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
-        sesion = await self.async_client.asession()
-        await sesion.aset(CLAVE_TIPO_CAMBIO, {"valor": "18.40", "fecha": timezone.now().isoformat(), "origen": "syscom"})
-        await sesion.asave()
+        with mock.patch("apps.quotes.views.consultar_tipo_cambio", mock.AsyncMock(return_value=Decimal("18.54"))), sin_red():
+            await self.async_client.get(reverse("cotizar_productos"))
+        # Caduca el valor de 30 min; queda el del día.
+        await cache.adelete(f"comparador:tipo_cambio_syscom:{settings.SYSCOM_TIPO_CAMBIO_CAMPO}")
+        falla = mock.AsyncMock(side_effect=httpx.ConnectError("sin conexión"))
+        with mock.patch("apps.quotes.views.consultar_tipo_cambio", falla), sin_red(), self.assertLogs("apps.quotes.views", "WARNING"):
+            respuesta = await self.async_client.get(reverse("cotizar_productos"))
+        self.assertContains(respuesta, "1 USD = $18.54 MXN")
+        self.assertEqual(falla.await_count, 1)
+
+    async def test_v28_el_de_syscom_se_actualiza_solo_y_el_manual_no(self):
+        await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
+        await self.guardar_tipo_cambio(valor="18.40", fecha=timezone.now().isoformat(), origen="syscom")
         consulta = mock.AsyncMock(return_value=Decimal("18.54"))
         with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta), sin_red():
-            aviso = await self.async_client.get(reverse("cotizar_productos"))
-            self.assertContains(aviso, "1 USD = $18.40 MXN")              # sigue el aplicado
-            self.assertContains(aviso, "SYSCOM ahora: <strong>$18.54</strong>")
-            self.assertContains(aviso, 'name="usar_tipo_cambio" value="actualizar"')
-            actualizado = await self.async_client.get(reverse("cotizar_productos"),
-                                                      {"tipo_cambio": "18.40", "usar_tipo_cambio": "actualizar"})
-        self.assertContains(actualizado, "1 USD = $18.54 MXN")
-        self.assertContains(actualizado, "SYSCOM · ")
-        self.assertNotContains(actualizado, "SYSCOM ahora:")
+            nuevo = await self.async_client.get(reverse("cotizar_productos"))
+        self.assertContains(nuevo, "1 USD = $18.54 MXN")
+        self.assertNotContains(nuevo, "SYSCOM hoy:")
         self.assertEqual((await (await self.async_client.asession()).aget(CLAVE_TIPO_CAMBIO))["valor"], "18.54")
 
-        sesion = await self.async_client.asession()
-        await sesion.aset(CLAVE_TIPO_CAMBIO, {"valor": "18.40", "fecha": timezone.now().isoformat(), "origen": "manual"})
-        await sesion.asave()
+        await self.guardar_tipo_cambio(valor="18.40", fecha=timezone.now().isoformat(), origen="manual")
         with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta), sin_red():
             manual = await self.async_client.get(reverse("cotizar_productos"))
         self.assertContains(manual, "1 USD = $18.40 MXN")
-        self.assertNotContains(manual, "SYSCOM ahora:")
+        self.assertContains(manual, "Volver a SYSCOM")
 
     async def guardar_tipo_cambio(self, **datos):
         sesion = await self.async_client.asession()
@@ -606,32 +621,58 @@ class VistaCotizacionTests(TestCase):
             otra_vez = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
         self.assertContains(otra_vez, "Capturado otro día")
 
-    async def test_v30_de_otro_dia_ofrece_el_de_syscom_de_hoy_sin_aplicarlo(self):
+    async def test_v30_de_otro_dia_el_manual_avisa_y_el_de_syscom_se_renueva(self):
         await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
         ayer = (timezone.now() - timedelta(days=1)).isoformat()
         consulta = mock.AsyncMock(return_value=Decimal("18.54"))
-        for origen in ("manual", "syscom"):
-            await self.guardar_tipo_cambio(valor="18.40", fecha=ayer, origen=origen)
-            with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta), sin_red():
-                respuesta = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
-            self.assertContains(respuesta, "1 USD = $18.40 MXN")                       # sigue el aplicado
-            self.assertContains(respuesta, "Usar $18.54 de hoy")
-            self.assertContains(respuesta, 'name="usar_tipo_cambio" value="actualizar"')
-            self.assertNotContains(respuesta, "SYSCOM ahora:")                          # un solo aviso
-        await self.guardar_tipo_cambio(valor="18.54", fecha=ayer, origen="syscom")       # SYSCOM no cambió
+        await self.guardar_tipo_cambio(valor="18.40", fecha=ayer, origen="manual")
         with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta), sin_red():
-            igual = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
-        self.assertContains(igual, "Sigue vigente")
-        self.assertNotContains(igual, "de hoy</button>")
+            manual = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
+        self.assertContains(manual, "1 USD = $18.40 MXN")                                # sigue el aplicado
+        self.assertContains(manual, "Capturado otro día")
+        self.assertContains(manual, "Volver a SYSCOM ($18.54)")
+        await self.guardar_tipo_cambio(valor="18.54", fecha=ayer, origen="syscom")         # mismo valor, otro día
+        with mock.patch("apps.quotes.views.consultar_tipo_cambio", consulta), sin_red():
+            syscom = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
+        self.assertContains(syscom, "1 USD = $18.54 MXN")
+        self.assertNotContains(syscom, "Capturado otro día")
+        guardado = await (await self.async_client.asession()).aget(CLAVE_TIPO_CAMBIO)
+        self.assertEqual(timezone.localdate(datetime.fromisoformat(guardado["fecha"])), timezone.localdate())
 
     async def test_v31_otro_dia_se_cuenta_en_hora_de_ciudad_de_mexico(self):
         """Capturado 16:30 y revisado 19:29 del mismo día en México: en UTC ya era otro día; no debe avisar."""
         ahora = datetime(2026, 10, 21, 1, 29, tzinfo=dt_timezone.utc)                 # 20/10 19:29 en México
-        await self.guardar_tipo_cambio(valor="18.54", fecha="2026-10-20T22:30:00+00:00", origen="syscom")
+        await self.guardar_tipo_cambio(valor="18.54", fecha="2026-10-20T22:30:00+00:00", origen="manual")
         with mock.patch("django.utils.timezone.now", return_value=ahora), sin_red():
             respuesta = await self.async_client.get(reverse("cotizar_productos"), {"nueva": "1"})
         self.assertNotContains(respuesta, "Capturado otro día")
-        self.assertContains(respuesta, 'SYSCOM · <span title="20 oct 2026, 16:30">hace 2 horas</span>')
+        self.assertContains(respuesta, 'capturado a mano <span title="20 oct 2026, 16:30">hace 2 horas</span>')
+
+    async def test_v31b_personal_ve_el_de_syscom_y_no_lo_puede_cambiar(self):
+        """Lienzo fila 13: sin permiso de tipo de cambio se ignora lo escrito y no hay campo para escribirlo."""
+        personal = await sync_to_async(crear_asesor)("personal_tc", tipo_cambio=False)
+        await self.async_client.aforce_login(personal)
+        await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
+        await self.guardar_tipo_cambio(valor="19.90", fecha=timezone.now().isoformat(), origen="manual")
+        with mock.patch("apps.quotes.views.consultar_tipo_cambio", mock.AsyncMock(return_value=Decimal("18.54"))):
+            respuesta = await self.buscar([adaptador("syscom", usd("1", "10.00")), adaptador("alfa"), adaptador("beta")],
+                                          tipo_cambio="25.00")
+        self.assertEqual((respuesta.context["tipo_cambio"].valor, respuesta.context["tipo_cambio"].origen), (Decimal("18.54"), "syscom"))
+        self.assertContains(respuesta, "Solo un Asesor o un Administrador puede cambiarlo.")
+        self.assertNotContains(respuesta, 'id="tipo_cambio"')
+        self.assertNotContains(respuesta, "Cambiar</summary>")
+
+    async def test_v31c_personal_sin_syscom_no_ve_precios_en_dolares(self):
+        personal = await sync_to_async(crear_asesor)("personal_tc", tipo_cambio=False)
+        await self.async_client.aforce_login(personal)
+        await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
+        falla = mock.AsyncMock(side_effect=httpx.ConnectError("sin conexión"))
+        with mock.patch("apps.quotes.views.consultar_tipo_cambio", falla), self.assertLogs("apps.quotes.views", "WARNING"):
+            respuesta = await self.buscar([adaptador("syscom", usd("1", "10.00")), adaptador("alfa"), adaptador("beta")])
+        self.assertEqual(respuesta.status_code, 400)
+        self.assertContains(respuesta, "No hay tipo de cambio de SYSCOM en este momento", status_code=400)
+        self.assertContains(respuesta, "Sin tipo de cambio: SYSCOM no respondió", status_code=400)
+        self.assertNotContains(respuesta, "Escribir tipo de cambio", status_code=400)
 
     async def test_v32_al_volver_se_muestra_la_ultima_busqueda(self):
         """22A: el menú (sin parámetros) lleva a la última búsqueda; «Nueva búsqueda» y un formulario vacío la olvidan."""

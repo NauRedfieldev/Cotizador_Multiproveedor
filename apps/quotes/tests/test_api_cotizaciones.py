@@ -1043,6 +1043,43 @@ class DocumentalAPITests(CommercialFixtures, TestCase):
         self.assertEqual(mail.outbox[0].bcc, ["ventas@qa.example.invalid"])
         self.assertNotIn("ventas@qa.example.invalid", mail.outbox[0].to + mail.outbox[0].cc)
 
+    def test_pdf_no_parte_partidas_salvo_que_una_no_quepa_en_una_pagina(self):
+        # Lienzo fila 11: la tabla repite su encabezado solo arriba de cada página y no corta partidas.
+        from copy import deepcopy
+        from apps.quotes import pdf
+        quote = pdf.build_demo_quote("COT-2026-0001")
+        quote["items"] = [deepcopy(quote["items"][0]) for _ in range(12)]
+        def splits(context):
+            with mock.patch.object(pdf, "Table", wraps=pdf.Table) as table:
+                data = pdf.generate_quote_pdf(context)
+            self.assertTrue(data.startswith(b"%PDF"))
+            return [c.kwargs["splitInRow"] for c in table.call_args_list if c.kwargs.get("repeatRows") == 1]
+        self.assertEqual(splits(quote), [0])
+        huge = deepcopy(quote)
+        huge["items"] = [deepcopy(quote["items"][0])]
+        huge["items"][0]["description"] = "Descripción muy larga. " * 600   # más alta que una página
+        self.assertEqual(splits(huge), [0, 1])                               # solo entonces se permite partirla
+
+    def test_colores_de_marca_compartidos_por_pantalla_pdf_y_correo(self):
+        from apps.quotes import pdf
+        self.assertEqual(pdf.colores_marca("torva"), {"color": "#0F8F95", "text": "#0B6E73", "tint": "#E6F5F5"})
+        self.assertEqual(pdf.colores_marca(None), pdf.colores_marca("cconor"))   # anteriores = CCONOR
+        self.assertEqual(pdf.colores_marca("cconor")["text"], "#0B4A93")
+        self.assertIs(api.COLORES_EMPRESA, pdf.COLORES_MARCA)
+
+    def test_correo_con_nombre_y_color_de_su_empresa(self):
+        from django.core import mail
+        created = self.create()
+        self.confirm_and_issue(created)
+        body = {**self.document_params({**created, "status": "ISSUED"}), "exact": True, "email": "qa@example.invalid"}
+        result = self.client.post(reverse("enviar_cotizacion_correo", args=[created["folio"]]), json.dumps(body), content_type="application/json")
+        self.assertEqual(result.status_code, 200)
+        html = mail.outbox[0].alternatives[0].content
+        self.assertIn("background-color: #0B4A93", html)                 # franja del color de CCONOR
+        self.assertIn(EMPRESA_QA["name"].split()[0].upper(), html)       # su nombre, no «CCONOR» fijo
+        self.assertNotIn("#7311F5", html)
+        self.assertNotIn("SOLUCIONES TECNOLÓGICAS", html)
+
     def test_correo_asunto_con_el_nombre_de_su_empresa(self):
         from django.core import mail
         created = self.create()

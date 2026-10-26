@@ -19,6 +19,13 @@ TAX = "change_commercial_tax"
 FX = "change_commercial_fx"
 DISCOUNT = "apply_commercial_discount"
 ADJUSTMENTS = frozenset((MARGIN, MANUAL_SALE, TAX, FX, DISCOUNT))
+ASESOR_GROUP = "Asesor CCONOR"
+# B6 (escenario D): tres roles fijos. Asesor = Personal + dólares + partidas manuales/servicios.
+ROLE_PERMISSIONS = {
+    INTERNAL_GROUP: frozenset((VIEW_COSTS,)),
+    ASESOR_GROUP: frozenset((VIEW_COSTS, FX, MANUAL_SALE)),
+    ADMIN_GROUP: ADJUSTMENTS | {VIEW_COSTS, MANAGE},
+}
 
 
 def fresh_actor(actor):
@@ -55,11 +62,11 @@ def configure_commercial_groups(*, actor):
             codename__in=ADJUSTMENTS | {VIEW_COSTS, MANAGE})}
         if set(permisos) != ADJUSTMENTS | {VIEW_COSTS, MANAGE}:
             raise ValidationError("Faltan permisos comerciales; completar migrate/post_migrate primero.")
-        internal, _ = Group.objects.get_or_create(name=INTERNAL_GROUP)
-        admin, _ = Group.objects.get_or_create(name=ADMIN_GROUP)
-        internal.permissions.set([permisos[VIEW_COSTS]])
-        admin.permissions.set(permisos.values())
-        return internal, admin
+        grupos = {}
+        for nombre, codenames in ROLE_PERMISSIONS.items():
+            grupos[nombre], _ = Group.objects.get_or_create(name=nombre)
+            grupos[nombre].permissions.set([permisos[c] for c in codenames])
+        return grupos[INTERNAL_GROUP], grupos[ADMIN_GROUP]
 
 
 def set_commercial_permission(user_id, capability, *, actor, enabled):

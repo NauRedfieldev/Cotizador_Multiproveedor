@@ -3,17 +3,7 @@
 
 {% block title %}CCONOR - Iniciar sesión{% endblock %}
 
-{% block extra_css %}
-<style>
-    /* 13C: acceso sin nada del sistema (sin menú ni pie): tarjeta centrada con el logo. */
-    .acceso { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; background: #F8F7FE; }
-    .acceso-tarjeta { width: 100%; max-width: 420px; background: #FFFFFF; border: 1px solid #EAE7F3; border-radius: 20px;
-        box-shadow: 0 16px 40px rgba(17, 22, 56, 0.08); padding: 36px; }
-    .acceso-tarjeta .form-control { height: 46px; }
-    .acceso-entrar { height: 48px; font-weight: 600; }
-    .acceso-aviso { background: #EEF6F5; color: var(--cconor-eleccion); border: 0; border-radius: 10px; font-weight: 600; }
-</style>
-{% endblock %}
+{% block extra_css %}{% include 'registration/_acceso_estilos.html' %}{% endblock %}
 
 {% block content %}
 <!-- M7a: LoginView de Django (docs/28). Sin sesión, todo el sitio redirige aquí y luego vuelve a la página pedida. -->
@@ -49,6 +39,7 @@
             <input type="hidden" name="next" value="{{ next }}">
             <button type="submit" class="btn btn-cconor-primary acceso-entrar w-100">Entrar</button>
         </form>
+        <div class="text-center mt-3"><a class="acceso-enlace" href="{% url 'recuperar_contrasena' %}">¿Olvidaste tu contraseña?</a></div>
     </div>
 </div>
 {% endblock %}

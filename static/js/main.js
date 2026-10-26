@@ -25,7 +25,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
 /* 15A: tipo de cambio de la sesión. Uno solo para el comparador, el cotizador y el chip del menú.
  * window.cconorTipoCambio.cargar() / .guardar(cuerpo) devuelven {session, syscom, syscom_failed}
- * y avisan con el evento «cconor:tipo-cambio». Nada se aplica solo: siempre lo decide el asesor. */
+ * y avisan con el evento «cconor:tipo-cambio». Lienzo fila 13: el de SYSCOM de hoy se aplica solo para todos;
+ * solo quien tiene permiso de tipo de cambio escribe otro (el servidor lo vuelve a comprobar). */
 (function () {
     'use strict';
     const item = document.getElementById('fxChipItem');
@@ -65,9 +66,14 @@ document.addEventListener('DOMContentLoaded', function () {
     const $ = id => document.getElementById(id);
     function pintar(datos) {
         const s = datos.session, sys = datos.syscom;
+        // Lienzo fila 13: el de SYSCOM de hoy se pone solo; solo quien tiene permiso escribe otro.
+        const puede = datos.can_change !== false;
+        const manual = !!s && s.source !== 'syscom';
         const chip = $('fxChip');
         chip.classList.toggle('cconor-fx-vacio', !s);
-        $('fxChipIcon').hidden = !s;
+        const icono = $('fxChipIcon');
+        icono.hidden = !s;
+        icono.className = `bi ${puede ? 'bi-check-lg' : 'bi-lock-fill'}`;
         const texto = $('fxChipText');
         texto.replaceChildren();
         if (s) {
@@ -76,21 +82,28 @@ document.addEventListener('DOMContentLoaded', function () {
             extra.textContent = `· ${origen(s)}`;
             texto.append(`USD $${mostrar(s.value)} `, extra);
         } else {
-            texto.textContent = 'USD sin capturar'; // el de SYSCOM se ve al abrirlo
+            texto.textContent = 'USD sin tipo de cambio';
         }
-        chip.setAttribute('aria-label', s ? `Tipo de cambio de tu sesión: 1 USD = ${mostrar(s.value)} MXN, ${origen(s)}` : 'Tipo de cambio sin capturar');
-        $('fxMenuValue').textContent = s ? `1 USD = $${mostrar(s.value)} MXN` : 'Sin capturar';
-        $('fxMenuOrigin').textContent = s ? `${s.source === 'syscom' ? 'SYSCOM' : 'Capturado a mano'}, ${cuando(s.date)}` : '';
+        chip.setAttribute('aria-label', s ? `Tipo de cambio: 1 USD = ${mostrar(s.value)} MXN, ${origen(s)}${puede ? '' : ', solo lectura'}` : 'Sin tipo de cambio');
+        $('fxMenuTitle').textContent = puede ? 'Tipo de cambio de tu sesión' : 'Tipo de cambio de SYSCOM';
+        $('fxMenuValue').textContent = s ? `1 USD = $${mostrar(s.value)} MXN` : 'No disponible';
+        const etiqueta = sys?.label ? ` (${sys.label})` : '';
+        $('fxMenuOrigin').textContent = s ? (manual ? `Capturado a mano, ${cuando(s.date)}` : `SYSCOM${etiqueta}, consultado ${cuando(s.date)} · se actualiza solo`)
+            : (datos.syscom_failed ? 'SYSCOM no respondió y no hay un valor de hoy. Se vuelve a intentar en unos minutos.' : 'No hay tipo de cambio de SYSCOM.');
         $('fxMenuOrigin').title = s ? window.cconorFechas.exacta(s.date) : '';
-        // 21A: «Sigue vigente» en el comparador guarda confirmed; el aviso cuenta desde ahí.
-        $('fxMenuOtroDia').textContent = s && !esHoy(s.confirmed || s.date) ? 'Capturado otro día: confirma que siga vigente.' : '';
-        // SYSCOM: «Usar» si aún no hay uno; «Actualizar» si el de la sesión vino de SYSCOM y cambió.
-        const ofrecer = sys && (!s || (s.source === 'syscom' && sinCeros(s.value) !== sinCeros(sys.value)));
+        // 21A: el aviso de otro día es solo para uno capturado a mano (el de SYSCOM se renueva solo).
+        $('fxMenuOtroDia').textContent = manual && !esHoy(s.confirmed || s.date) ? 'Capturado otro día: confirma que siga vigente.'
+            : (!s && !puede ? 'Mientras tanto no se pueden ver precios en dólares.' : '');
+        // «Volver a SYSCOM» solo para quien lo capturó a mano y el de SYSCOM es distinto.
+        const ofrecer = puede && sys && (!s || (manual && sinCeros(s.value) !== sinCeros(sys.value)));
         $('fxMenuSyscom').hidden = !ofrecer;
         if (ofrecer) {
-            $('fxMenuSyscomText').textContent = `${s ? 'SYSCOM ahora' : 'SYSCOM hoy'}: $${mostrar(sys.value)}${sys.label ? ` (${sys.label})` : ''}`;
-            $('fxMenuUseSyscom').textContent = s ? 'Actualizar' : 'Usar';
+            $('fxMenuSyscomText').textContent = `SYSCOM hoy: $${mostrar(sys.value)}${etiqueta}`;
+            $('fxMenuUseSyscom').textContent = s ? 'Volver a SYSCOM' : 'Usar';
         }
+        $('fxMenuForm').hidden = !puede;
+        $('fxMenuForm').classList.toggle('d-flex', puede);
+        $('fxMenuBloqueado').hidden = puede;
         item.hidden = false;
     }
     // En el comparador la página se vuelve a buscar con el valor nuevo, para no mostrar precios con el anterior.

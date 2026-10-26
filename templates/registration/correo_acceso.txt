@@ -1,0 +1,14 @@
+{% autoescape off %}Hola, {{ nombre }}:
+
+{% if invitacion %}{% if invito %}{{ invito }} te dio{% else %}Tienes{% endif %} acceso al Portal de Cotización de {{ marca.nombre }} con el rol de {{ rol }}.{% else %}Recibimos una solicitud para restablecer tu contraseña del Portal de Cotización de {{ marca.nombre }}.{% endif %}
+
+Tu usuario para entrar: {{ usuario.get_username }}
+
+{% if invitacion %}Elige tu contraseña aquí:{% else %}Elige tu nueva contraseña aquí:{% endif %}
+{{ enlace }}
+
+El enlace sirve una sola vez y caduca el {{ caduca|date:"d/m/Y" }} a las {{ caduca|date:"H:i" }}.
+{% if invitacion %}Si no esperabas esta invitación, ignora este correo.{% else %}Si no lo pediste, ignora este correo: tu contraseña actual sigue igual.{% endif %}
+
+Correo automático del Portal de Cotización de {{ empresa }}. No respondas a este mensaje.
+{% endautoescape %}
