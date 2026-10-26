@@ -1,0 +1,164 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}CCONOR - Usuarios y permisos{% endblock %}
+{% block extra_css %}
+<style>
+    /* B6 (lienzo fila 12): solo Administrador y Dueño. Colores del sitio (4C). */
+    .usr-titulo { font-size: 1.9rem; font-weight: 700; color: var(--cconor-azul-marino); }
+    .usr-boton { height: 40px; padding-top: 0; padding-bottom: 0; display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; font-weight: 600; }
+    .usr-buscar { width: 260px; max-width: 100%; height: 40px; }
+    .usr-roles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+    @media (max-width: 991px) { .usr-roles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 575px) { .usr-roles { grid-template-columns: minmax(0, 1fr); } }
+    .usr-rol { border: 1px solid #EAE7F3; border-top: 4px solid var(--rol-color); border-radius: 14px; padding: 14px 16px; background: #FFFFFF;
+        display: flex; flex-direction: column; gap: 6px; }
+    .usr-rol-conteo { margin-left: auto; font-size: 12px; font-weight: 700; border-radius: 999px; padding: 2px 9px; background: var(--rol-tinte); color: var(--rol-color); }
+    .usr-permiso { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #3D4160; }
+    .usr-permiso .bi-check-lg { color: var(--cconor-eleccion); }
+    .usr-permiso.is-no { color: #8A87A0; }
+    .usr-tabla-caja { border: 1px solid #EAE7F3; border-radius: 14px; overflow-x: auto; background: #FFFFFF; }
+    .usr-tabla { width: 100%; min-width: 1040px; border-collapse: collapse; font-size: 14px; }
+    .usr-tabla th { background: #FAFAFD; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #3D4160;
+        padding: 12px 16px; border-bottom: 1px solid #EAE7F3; white-space: nowrap; }
+    .usr-tabla td { padding: 11px 16px; border-bottom: 1px solid #EAE7F3; vertical-align: middle; }
+    .usr-tabla tr:last-child td { border-bottom: 0; }
+    .usr-tabla tr.is-inactiva .usr-atenuar { opacity: .55; }
+    .usr-avatar { width: 36px; height: 36px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; flex: none;
+        font-size: 13px; font-weight: 700; color: #FFFFFF; }
+    .usr-correo { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3D4160; }
+    .usr-etiqueta { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+    .usr-tu { color: var(--cconor-eleccion); background: #E6F2F0; }
+    .usr-extra { color: #3446B8; background: #EEF0FF; }
+    .usr-pendiente { color: #8A4100; background: #FFF3E6; }
+    .usr-dueno { color: #8A4100; background: #FFF3E6; font-size: 13px; padding: 4px 12px; }
+    .usr-rol-select { width: 210px; height: 38px; }
+    .usr-nota { font-size: 11px; color: #5B5F7A; }
+    .usr-switch { width: 38px; height: 22px; border-radius: 999px; border: 0; padding: 0; position: relative; flex: none; background: #CFCBDA; }
+    .usr-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 999px; background: #FFFFFF; transition: left .15s; }
+    .usr-switch[aria-checked="true"] { background: var(--cconor-eleccion); }
+    .usr-switch[aria-checked="true"]::after { left: 19px; }
+    .usr-switch:disabled { opacity: .5; }
+    .usr-switch.is-extra[aria-checked="true"] { background: #3446B8; }
+    .usr-accion { height: 32px; padding: 0 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+    .usr-cambio { display: flex; flex-direction: column; gap: 6px; border: 1px solid #EAE7F3; border-radius: 12px; padding: 12px 14px; background: #FAFAFD; font-size: 14px; }
+    .usr-opcion { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid #CFCBDA; border-radius: 10px; font-size: 14px; cursor: pointer; }
+    .usr-opcion:has(input:checked) { border: 2px solid var(--cconor-azul-marino); background: #F6F5FB; }
+    .usr-linea { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #F0EEF6; font-size: 14px; }
+    .usr-aviso { display: flex; gap: 12px; align-items: flex-start; background: #EEF6F5; border-radius: 10px; padding: 12px 14px; font-size: 13px; color: #1F4D47; }
+    .usr-toast { position: fixed; right: 24px; bottom: 24px; z-index: 1090; max-width: min(420px, calc(100vw - 32px)); background: var(--cconor-azul-marino);
+        color: #FFFFFF; border-radius: 12px; padding: 12px 16px; font-size: 14px; box-shadow: 0 12px 30px rgba(17,22,56,.25); }
+    .usr-toast.is-error { background: #B42318; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-lg-4 py-4" id="usuariosApp" data-api="{% url 'api_usuarios' %}">
+    <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+        <div class="me-auto">
+            <h1 class="usr-titulo mb-1">Usuarios y permisos</h1>
+            <p class="text-secondary mb-0">Solo administradores. Los cambios aplican en la siguiente acción de cada usuario.</p>
+        </div>
+        <label class="visually-hidden" for="usrBuscar">Buscar usuario</label>
+        <input type="search" id="usrBuscar" class="form-control usr-buscar" placeholder="Buscar por nombre o usuario" autocomplete="off">
+        <button type="button" class="btn btn-cconor-primary usr-boton" id="usrInvitar"><i class="bi bi-person-plus" aria-hidden="true"></i>Invitar usuario</button>
+    </div>
+
+    <div class="usr-roles mb-3" id="usrRoles" aria-label="Roles"></div>
+
+    <div class="usr-tabla-caja">
+        <table class="usr-tabla">
+            <thead><tr><th scope="col">Usuario</th><th scope="col">Correo</th><th scope="col">Rol</th><th scope="col">Cuenta</th><th scope="col">Último acceso</th><th scope="col">Acciones</th></tr></thead>
+            <tbody id="usrFilas"><tr><td colspan="6" class="text-secondary">Cargando…</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Confirmar cambio de rol o desactivar cuenta -->
+<div class="modal fade" id="usrConfirmar" tabindex="-1" aria-labelledby="usrConfirmarTitulo" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="border-radius: 16px;">
+            <div class="modal-header border-0 pb-0"><h2 class="modal-title h5 fw-bold" id="usrConfirmarTitulo"></h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+            <div class="modal-body d-flex flex-column gap-3" id="usrConfirmarCuerpo"></div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-cconor-primary" id="usrConfirmarSi"></button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Editar: rol + permisos extra -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="usrEditar" aria-labelledby="usrEditarTitulo" style="width: min(500px, 100vw);">
+    <div class="offcanvas-header align-items-start">
+        <div class="d-flex align-items-center gap-3">
+            <span class="usr-avatar" id="usrEditarAvatar" aria-hidden="true"></span>
+            <div><h2 class="offcanvas-title h5 fw-bold mb-0" id="usrEditarTitulo"></h2><div class="small text-secondary" id="usrEditarSub"></div></div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Cerrar"></button>
+    </div>
+    <div class="offcanvas-body d-flex flex-column gap-3">
+        <div>
+            <label class="form-label fw-semibold small" for="usrEditarRol">Rol</label>
+            <select class="form-select" id="usrEditarRol">
+                <option value="none">Sin acceso</option><option value="personal">Personal</option><option value="asesor">Asesor</option><option value="admin">Administrador</option>
+            </select>
+        </div>
+        <div>
+            <div class="form-label fw-semibold small mb-1">Permisos</div>
+            <div id="usrEditarPermisos"></div>
+            <div class="usr-nota mt-2">Los extras solo suman: no se le puede quitar algo que su rol sí trae. «Gestionar usuarios» solo lo tiene el rol Administrador.</div>
+        </div>
+        <div class="usr-cambio flex-row flex-wrap align-items-center gap-2">Se verá así: <b id="usrEditarRolNombre"></b><span id="usrEditarEtiqueta"></span></div>
+        <div class="mt-auto d-flex align-items-center gap-2 pt-2">
+            <button type="button" class="btn btn-link text-danger fw-semibold px-1 me-auto text-decoration-none" id="usrEditarCuenta"></button>
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="offcanvas">Cancelar</button>
+            <button type="button" class="btn btn-cconor-primary" id="usrEditarGuardar">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Invitar usuario -->
+<div class="modal fade" id="usrInvitarModal" tabindex="-1" aria-labelledby="usrInvitarTitulo" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <form class="modal-content" id="usrInvitarForm" novalidate style="border-radius: 16px;">
+            <div class="modal-header border-0 pb-0"><h2 class="modal-title h5 fw-bold" id="usrInvitarTitulo">Invitar usuario</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+            <div class="modal-body d-flex flex-column gap-3">
+                <div class="row g-3">
+                    <div class="col-sm-6"><label class="form-label fw-semibold small" for="invNombre">Nombre</label>
+                        <input class="form-control" id="invNombre" maxlength="150" autocomplete="off" required></div>
+                    <div class="col-sm-6"><label class="form-label fw-semibold small" for="invApellidos">Apellidos</label>
+                        <input class="form-control" id="invApellidos" maxlength="150" autocomplete="off"></div>
+                    <div class="col-sm-6"><label class="form-label fw-semibold small" for="invUsuario">Usuario para entrar</label>
+                        <input class="form-control" id="invUsuario" maxlength="150" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+                        <div class="usr-nota mt-1">Se sugiere solo; se puede cambiar.</div></div>
+                    <div class="col-sm-6"><label class="form-label fw-semibold small" for="invCorreo">Correo</label>
+                        <input class="form-control" id="invCorreo" type="email" maxlength="254" autocomplete="off" required>
+                        <div class="usr-nota mt-1">Aquí le llega la invitación. Revísalo bien.</div></div>
+                </div>
+                <fieldset>
+                    <legend class="form-label fw-semibold small">Rol</legend>
+                    <div class="row g-2">
+                        <div class="col-sm-4"><label class="usr-opcion h-100"><input type="radio" name="invRol" value="personal" class="form-check-input mt-1" checked><span><b>Personal</b><br><span class="small text-secondary">Cotiza en pesos</span></span></label></div>
+                        <div class="col-sm-4"><label class="usr-opcion h-100"><input type="radio" name="invRol" value="asesor" class="form-check-input mt-1"><span><b>Asesor</b><br><span class="small text-secondary">+ cambiar tipo de cambio, manuales y servicios</span></span></label></div>
+                        <div class="col-sm-4"><label class="usr-opcion h-100"><input type="radio" name="invRol" value="admin" class="form-check-input mt-1"><span><b>Administrador</b><br><span class="small text-secondary">Todo + usuarios</span></span></label></div>
+                    </div>
+                    <div class="usr-nota mt-2">Los permisos extra se agregan después con «Editar».</div>
+                </fieldset>
+                <div class="usr-aviso"><i class="bi bi-envelope fs-5" aria-hidden="true"></i>
+                    <span>Se le enviará desde la cuenta de sistemas un enlace para que elija su propia contraseña. Nadie más la conoce. El enlace sirve una sola vez y caduca en 3 días; si caduca, se usa «Reenviar invitación».</span></div>
+                <div class="alert alert-danger small mb-0" id="invError" role="alert" hidden></div>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="submit" class="btn btn-cconor-primary" id="invEnviar">Enviar invitación</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="usr-toast" id="usrToast" role="status" aria-live="polite" hidden></div>
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/usuarios.js' %}?v=2"></script>{% endblock %}

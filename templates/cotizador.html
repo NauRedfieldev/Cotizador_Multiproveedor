@@ -80,7 +80,7 @@
     </section>
 
     <section class="cconor-card p-3 mb-4" aria-labelledby="step2Title">
-        <div class="step-title"><span class="step-badge" aria-hidden="true">2</span><div><h5 class="fw-bold mb-0" id="step2Title">Tipo de cambio del día</h5><div class="small text-muted">Necesario para ver precios en dólares. Aplica a toda la cotización.</div></div></div>
+        <div class="step-title"><span class="step-badge" aria-hidden="true">2</span><div><h5 class="fw-bold mb-0" id="step2Title">Tipo de cambio del día</h5><div class="small text-muted">Se pone solo con el de SYSCOM de hoy. Aplica a toda la cotización.</div></div></div>
         <div class="d-flex flex-wrap align-items-end gap-2">
             <div><label for="newExchangeRate" class="form-label">Pesos por dólar (MXN)</label><input id="newExchangeRate" class="form-control" inputmode="decimal" placeholder="Valor del día" disabled></div>
             <button type="button" id="applyFxBtn" class="btn btn-cconor-primary" disabled>Aplicar</button>
@@ -110,7 +110,7 @@
             <div class="col-md-3"><label for="providerFilter" class="form-label">Proveedor (interno)</label><select id="providerFilter" class="form-select"><option value="">Todos</option></select></div>
             <div class="col-md-3"><button id="searchProductBtn" type="button" class="btn btn-cconor-primary w-100" disabled>Buscar</button></div>
         </div>
-        <div class="small text-muted mt-2">Para precios en dólares, primero aplica el tipo de cambio del paso 2. Buscar no cambia las partidas ya agregadas.</div>
+        <div class="small text-muted mt-2">Los precios en dólares se convierten con el tipo de cambio del paso 2. Buscar no cambia las partidas ya agregadas.</div>
         <div id="searchWarning" class="alert alert-warning small mt-2 d-none" role="status"></div>
         <div id="searchStatus" class="small mt-2" role="status" aria-live="polite"></div>
         <div id="resultsList" class="list-group mt-2"></div>
@@ -221,4 +221,4 @@
     </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=32"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=33"></script>{% endblock %}

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"></head>
+<body style="margin: 0; padding: 0; background-color: #F8F7FE; font-family: Arial, Helvetica, sans-serif;">
+    <div style="max-width: 620px; margin: 0 auto; padding: 24px;">
+        {# B6 (lienzo fila 12): invitación o restablecer contraseña, desde sistemas@. Nunca lleva la contraseña. #}
+        <div style="background-color: {{ marca.barra }}; padding: 20px 28px; border-radius: 12px 12px 0 0;">
+            <span style="color: #FFFFFF; font-size: 20px; font-weight: bold; letter-spacing: 1px;">{{ marca.nombre|upper }}</span>
+            {% if marca.resto %}<span style="color: {{ marca.subtitulo }}; font-size: 11px; display: block; letter-spacing: 2px;">{{ marca.resto|upper }}</span>{% endif %}
+        </div>
+        <div style="background-color: #FFFFFF; padding: 28px; border: 1px solid #EAE7F3; border-top: none; border-radius: 0 0 12px 12px;">
+            <p style="color: #111638; font-size: 15px; margin-top: 0;">Hola, {{ nombre }}:</p>
+            {% if invitacion %}
+            <p style="color: #111638; font-size: 15px;">{% if invito %}{{ invito }} te dio{% else %}Tienes{% endif %} acceso al Portal de Cotización de {{ marca.nombre }} con el rol de {{ rol }}.</p>
+            {% else %}
+            <p style="color: #111638; font-size: 15px;">Recibimos una solicitud para restablecer tu contraseña del Portal de Cotización de {{ marca.nombre }}.</p>
+            {% endif %}
+            <table style="width: 100%; border-collapse: collapse; margin: 18px 0; background-color: #F8F7FE; border: 1px solid #EAE7F3;">
+                <tr>
+                    <td style="padding: 12px 16px; font-size: 13px; color: #5A5F7A;">Tu usuario para entrar:</td>
+                    <td style="padding: 12px 16px; font-size: 13px; font-weight: bold; color: #111638; font-family: Courier, monospace;" align="right">{{ usuario.get_username }}</td>
+                </tr>
+            </table>
+            <p style="margin: 22px 0;">
+                <a href="{{ enlace }}" style="display: inline-block; background-color: {{ marca.barra }}; color: #FFFFFF; font-size: 15px; font-weight: bold; text-decoration: none; padding: 12px 22px; border-radius: 8px;">{% if invitacion %}Elegir mi contraseña{% else %}Elegir nueva contraseña{% endif %}</a>
+            </p>
+            <p style="color: #5A5F7A; font-size: 12px; line-height: 1.5;">
+                El enlace sirve una sola vez y caduca el {{ caduca|date:"d/m/Y" }} a las {{ caduca|date:"H:i" }}.<br>
+                {% if invitacion %}Si no esperabas esta invitación, ignora este correo.{% else %}Si no lo pediste, ignora este correo: tu contraseña actual sigue igual.{% endif %}
+            </p>
+            <p style="color: #5A5F7A; font-size: 11px; line-height: 1.5; word-break: break-all;">Si el botón no funciona, copia este enlace en tu navegador:<br>{{ enlace }}</p>
+            <p style="color: #8A8DA3; font-size: 11px; border-top: 1px solid #EAE7F3; padding-top: 12px; margin-bottom: 0;">Correo automático del Portal de Cotización de {{ empresa }}. No respondas a este mensaje.</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}CCONOR - Recuperar contraseña{% endblock %}
+
+{% block extra_css %}{% include 'registration/_acceso_estilos.html' %}{% endblock %}
+
+{% block content %}
+<!-- B6 (lienzo fila 12): el enlace sale de sistemas@. El mensaje es el mismo exista o no el correo. -->
+<div class="acceso">
+    <div class="acceso-tarjeta">
+        <div class="text-center mb-4">
+            <img src="{% static 'img/logo.png' %}" alt="CCONOR Soluciones Tecnológicas" width="180" height="64" style="height: 64px; width: auto;" class="mb-3">
+            <h1 class="h4 fw-bold mb-1" style="color: var(--cconor-azul-marino);">Recuperar contraseña</h1>
+        </div>
+
+        {% if enviado %}
+        <div class="alert acceso-aviso small" role="status">
+            Revisa tu correo. Si ese correo pertenece a una cuenta activa, en unos minutos te llegará el enlace para elegir una nueva contraseña. Revisa también la carpeta de spam.
+        </div>
+        <div class="text-center"><a class="acceso-enlace" href="{% url 'recuperar_contrasena' %}">Volver a intentar</a></div>
+        {% else %}
+        <p class="small text-secondary">Escribe el correo de tu cuenta y te enviaremos un enlace para elegir una nueva contraseña.</p>
+        {% if invalido %}
+        <div class="alert alert-danger small" role="alert">Escribe un correo válido.</div>
+        {% endif %}
+        <form method="post" action="{% url 'recuperar_contrasena' %}">
+            {% csrf_token %}
+            <div class="mb-4">
+                <label for="recuperarCorreo" class="form-label fw-semibold small">Correo</label>
+                <input type="email" class="form-control" name="email" id="recuperarCorreo" maxlength="254"
+                       autocomplete="email" autofocus required>
+            </div>
+            <button type="submit" class="btn btn-cconor-primary acceso-entrar w-100">Enviar enlace</button>
+        </form>
+        {% endif %}
+        <div class="text-center mt-3"><a class="acceso-enlace" href="{% url 'login' %}">← Volver a iniciar sesión</a></div>
+    </div>
+</div>
+{% endblock %}

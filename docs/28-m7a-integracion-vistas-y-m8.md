@@ -949,6 +949,55 @@ Solo navegador (`static/js/main.js`, `static/js/cotizador.js`, `templates/compar
 - Pruebas: `test_pdf_no_parte_partidas_salvo_que_una_no_quepa_en_una_pagina`,
   `test_colores_de_marca_compartidos_por_pantalla_pdf_y_correo`, `test_correo_con_nombre_y_color_de_su_empresa`.
 
+### 14.19 Usuarios y permisos: roles, invitaciones y contraseñas (B6, lienzo fila 12, 2026-10-23)
+
+- **Roles fijos (escenario D)**, uno por persona: Personal (ver costos y cotizar en pesos), **Asesor** (Personal +
+  tipo de cambio + partidas manuales/servicios; grupo nuevo «Asesor CCONOR») y Administrador (todo + gestionar
+  usuarios). `permissions.ROLE_PERMISSIONS` los define y `configure_commercial_groups` crea los tres (volver a
+  ejecutarlo, A5). «Sin acceso» = sin grupo: entra pero no cotiza.
+- **Extras:** permisos sueltos que solo suman (los cinco ajustes que el rol no trae), solo para Personal y Asesor; se
+  muestran como etiqueta («Asesor + descuentos»). «Gestionar usuarios» nunca es extra. Al cambiar de rol se pregunta
+  si se conservan o se quitan (`keep_extras`); a Administrador o «Sin acceso» desaparecen.
+- **Dueño = superusuario:** nadie lo edita desde el panel; se asigna o se quita solo en `/admin/`. Los
+  administradores de CCONOR no deben tener `is_staff` (quien edita usuarios en `/admin/` puede darse superusuario).
+- **Reglas del servidor** (`apps/quotes/usuarios.py`): solo quien tiene `manage_commercial_permissions`; nadie cambia
+  su propio rol ni desactiva su cuenta; siempre queda al menos un Administrador activo sin contar al Dueño;
+  desactivar borra sus sesiones (reactivar no las revive). Un administrador puede nombrar y quitar a otros.
+  Cada cambio queda en `LogEntry` (prefijo «B6:»), sin tablas nuevas.
+- **Página** `/administracion/usuarios/` (menú de usuario → «Usuarios y permisos», visible solo con el permiso) y API
+  `api/v1/admin/users/` (GET lista, POST invitar), `<id>/` (PATCH `role`, `extras`, `keep_extras`, `is_active`),
+  `<id>/invitation/` (POST reenviar) y `<id>/password-link/` (POST enlace para restablecer).
+- **Invitación:** la cuenta se crea sin contraseña (inutilizable) y recibe un enlace de un solo uso para elegirla
+  (`PASSWORD_RESET_TIMEOUT`, 3 días). «Reenviar invitación» invalida el enlace anterior. Invitación pendiente =
+  nunca ha entrado y sin contraseña. Usuario y correo no se repiten (sin distinguir mayúsculas).
+- **Contraseñas:** «¿Olvidaste tu contraseña?» en el inicio de sesión (`/recuperar-contrasena/`): mismo mensaje
+  exista o no el correo, máximo 3 enlaces por hora por correo (10 por IP), sin enlace a cuentas desactivadas o
+  invitaciones pendientes. El administrador también puede enviar el enlace desde el panel. `/elegir-contrasena/…`
+  (vista de Django) valida en español, entra al guardar y cierra las sesiones con la contraseña anterior.
+- **Correo de sistemas:** invitaciones y enlaces salen de `MAILERS["sistemas"]` (`SISTEMAS_SMTP_FROM`, `_HOST`,
+  `_PORT`, `_SECURITY`, `_USER`, `_PASSWORD`), nunca de ventas; sin `_HOST` solo se escriben en la consola. Con
+  servidor y sin remitente → 503 y no se crea la cuenta. Nunca llevan contraseña.
+- Pruebas: `apps/quotes/tests/test_usuarios.py` (29).
+
+### 14.20 Tipo de cambio de SYSCOM automático para todos (lienzo fila 13, 2026-10-26)
+
+- **Antes había una incongruencia:** el tipo de cambio de la sesión (chip del menú y comparador) lo podía escribir
+  cualquiera, pero en la cotización solo quien tenía permiso de tipo de cambio. Personal no podía cotizar en dólares.
+- **Ahora:** el de SYSCOM de hoy (`SYSCOM_TIPO_CAMBIO_CAMPO`, `normal` = contado; validado al arrancar) se aplica
+  solo para todos: sesión, comparador, buscador del cotizador y cada cotización nueva o revisión nueva desde un
+  histórico. Lo consulta el servidor; el cliente nunca puede hacer pasar un número como «de SYSCOM».
+- **Cambiarlo** (escribir otro valor) exige `change_commercial_fx` (Asesor, Administrador o el extra): `PUT
+  api/v1/fx/session/` con `value` → 403 sin permiso; el comparador ignora `tipo_cambio` de quien no tiene permiso;
+  la búsqueda JSON solo acepta `tipo_cambio` con permiso. «Volver a SYSCOM» (`use_syscom`) es para todos.
+- **Cotización:** `POST api/v1/quotes/fx-contexts/` acepta `{"use_syscom": true}` (contexto `source: syscom`, sin
+  permiso de tipo de cambio). Guardar con un contexto de SYSCOM no exige permiso; capturarlo a mano o quitarlo, sí
+  (`snapshots._commercial_adjustments`). La búsqueda del cotizador envía `fx_context_id` (el de la cotización) en vez
+  del valor; sin ninguno usa el de SYSCOM. El detalle interno dice el origen y, si fue a mano, `capturado_por`.
+- **Reglas aceptadas por el usuario:** si SYSCOM no responde se usa el último valor suyo de ese día; sin ninguno,
+  solo precios en pesos (Personal) o captura a mano (con permiso). El de SYSCOM se renueva solo cada día; uno a mano
+  conserva su valor con el aviso «de otro día». Las cotizaciones guardadas conservan el suyo.
+- Pruebas: `TipoCambioPorRolTests` (test_api_busqueda), `test_v25`–`test_v31c` (test_vistas_cotizacion).
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 > **Rediseño 12A (2026-10-20, rama `feature/ui-interfaz-general`).** La pantalla pasó a lista y

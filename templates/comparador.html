@@ -89,25 +89,28 @@
         </div>
         {% endif %}
         <div class="comparador-fx border-top mt-3 pt-3 d-flex flex-wrap align-items-center gap-2">
-            <label for="tipo_cambio" class="fw-semibold mb-0">Tipo de cambio para precios en dólares:</label>
+            {# Lienzo fila 13: el de SYSCOM de hoy es automático para todos; solo quien tiene permiso escribe otro. #}
+            {% if puede_cambiar_tipo_cambio %}<label for="tipo_cambio" class="fw-semibold mb-0">Tipo de cambio para precios en dólares:</label>
+            {% else %}<span class="fw-semibold">Tipo de cambio para precios en dólares:</span>{% endif %}
             {% if tipo_cambio %}
-            <span class="fx-aplicado"><i class="bi bi-check-lg" aria-hidden="true"></i> 1 USD = ${{ tipo_cambio.valor }} MXN</span>
-            <span class="small text-secondary">{% if tipo_cambio.origen == "syscom" %}SYSCOM · {% else %}capturado {% endif %}<span title="{{ tipo_cambio_exacta }}">{{ tipo_cambio_hace }}</span>{% if tipo_cambio_confirmado and not tipo_cambio_otro_dia %} · <span title="{{ tipo_cambio_confirmado_exacta }}">confirmado {{ tipo_cambio_confirmado_hace }}</span>{% endif %} · se conserva durante tu sesión</span>
-            {% if tipo_cambio_syscom_nuevo %}
-            <span class="fx-sugerido">SYSCOM ahora: <strong>${{ tipo_cambio_syscom_nuevo }}</strong>
-                <button type="submit" name="usar_tipo_cambio" value="actualizar" class="btn btn-sm btn-outline-primary">Actualizar</button></span>
+            <span class="fx-aplicado"><i class="bi bi-{% if puede_cambiar_tipo_cambio %}check-lg{% else %}lock-fill{% endif %}" aria-hidden="true"></i> 1 USD = ${{ tipo_cambio.valor }} MXN</span>
+            <span class="small text-secondary">{% if tipo_cambio.origen == "syscom" %}SYSCOM{% if tipo_cambio_etiqueta %} ({{ tipo_cambio_etiqueta }}){% endif %} · consultado <span title="{{ tipo_cambio_exacta }}">{{ tipo_cambio_hace }}</span> · se actualiza solo{% else %}capturado a mano <span title="{{ tipo_cambio_exacta }}">{{ tipo_cambio_hace }}</span>{% if tipo_cambio_confirmado and not tipo_cambio_otro_dia %} · <span title="{{ tipo_cambio_confirmado_exacta }}">confirmado {{ tipo_cambio_confirmado_hace }}</span>{% endif %} · se conserva durante tu sesión{% endif %}</span>
+            {% if tipo_cambio_syscom_hoy and not tipo_cambio_otro_dia %}
+            <span class="fx-sugerido">SYSCOM hoy: <strong>${{ tipo_cambio_syscom_hoy }}</strong>
+                <button type="submit" name="usar_tipo_cambio" value="syscom" class="btn btn-sm btn-outline-primary">Volver a SYSCOM</button></span>
             {% endif %}
             {% if tipo_cambio_otro_dia %}
-            {# 21A: «Sigue vigente» oculta el aviso hasta mañana; «Usar el de hoy» solo si SYSCOM cambió. Nunca automático. #}
+            {# 21A: solo para uno capturado a mano: «Sigue vigente» oculta el aviso hasta mañana. #}
             <div class="fx-otro-dia w-100" role="status">
                 <strong>Capturado otro día:</strong> <span>confirma que siga vigente.</span>
                 {% if tipo_cambio_syscom_hoy %}<span>SYSCOM hoy: <strong>${{ tipo_cambio_syscom_hoy }}</strong></span>{% endif %}
                 <span class="ms-auto d-flex flex-wrap gap-2">
                     <button type="submit" name="usar_tipo_cambio" value="confirmar" class="btn btn-sm btn-outline-primary">Sigue vigente</button>
-                    {% if tipo_cambio_syscom_hoy %}<button type="submit" name="usar_tipo_cambio" value="actualizar" class="btn btn-sm btn-cconor-primary">Usar ${{ tipo_cambio_syscom_hoy }} de hoy</button>{% endif %}
+                    {% if tipo_cambio_syscom_hoy %}<button type="submit" name="usar_tipo_cambio" value="syscom" class="btn btn-sm btn-cconor-primary">Volver a SYSCOM (${{ tipo_cambio_syscom_hoy }})</button>{% endif %}
                 </span>
             </div>
             {% endif %}
+            {% if puede_cambiar_tipo_cambio %}
             <details class="fx-cambiar">
                 <summary>Cambiar</summary>
                 <span class="d-inline-flex align-items-center gap-2"><span class="fw-semibold">1 USD =</span>
@@ -120,6 +123,9 @@
                 </span></span>
             </details>
             {% else %}
+            <span class="small text-secondary">Solo un Asesor o un Administrador puede cambiarlo.</span>
+            {% endif %}
+            {% elif puede_cambiar_tipo_cambio %}
             <span class="d-inline-flex align-items-center gap-2"><span class="fw-semibold">1 USD =</span>
                 <span class="input-group fx-campo">
                     <span class="input-group-text">$</span>
@@ -128,13 +134,9 @@
                            pattern="[0-9]+(\.[0-9]+)?" placeholder="Ej. 18.50">
                     <span class="input-group-text">MXN</span>
                 </span></span>
-            {% if tipo_cambio_sugerido %}
-            <span class="fx-sugerido">SYSCOM hoy: <strong>${{ tipo_cambio_sugerido }}</strong>{% if tipo_cambio_sugerido_etiqueta %} <span class="small text-secondary">({{ tipo_cambio_sugerido_etiqueta }})</span>{% endif %}
-                <button type="submit" name="usar_tipo_cambio" value="syscom" class="btn btn-sm btn-outline-primary">Usar</button></span>
-            {% elif tipo_cambio_syscom_fallo %}
-            <span class="small text-secondary">No se pudo consultar el de SYSCOM; escríbelo a mano.</span>
-            {% endif %}
-            <span class="small text-secondary">Obligatorio si el proveedor da precios en USD (SYSCOM). Se conserva durante tu sesión.</span>
+            <span class="small text-secondary">{% if tipo_cambio_syscom_fallo %}SYSCOM no respondió y no hay un valor de hoy; escríbelo a mano.{% else %}Sin tipo de cambio de SYSCOM; escríbelo a mano.{% endif %} Obligatorio si el proveedor da precios en USD.</span>
+            {% else %}
+            <span class="small text-secondary">Sin tipo de cambio: {% if tipo_cambio_syscom_fallo %}SYSCOM no respondió y no hay un valor de hoy{% else %}no hay tipo de cambio de SYSCOM{% endif %}. Mientras tanto no se pueden mostrar precios en dólares; se vuelve a intentar en unos minutos.</span>
             {% endif %}
         </div>
     </form>
@@ -146,7 +148,7 @@
         <div class="flex-grow-1">
             <div class="fw-bold">No se pudo buscar</div>
             <div class="small text-secondary">{{ error }}</div>
-            {% if "tipo de cambio" in error %}
+            {% if "tipo de cambio" in error and puede_cambiar_tipo_cambio %}
             <button type="button" class="btn btn-sm btn-outline-primary mt-2" data-enfocar="tipo_cambio">Escribir tipo de cambio</button>
             {% endif %}
         </div>

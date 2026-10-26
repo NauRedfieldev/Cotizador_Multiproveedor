@@ -228,7 +228,7 @@ test('búsqueda: la pista de tipo de cambio solo acompaña a ese error y depende
     const { tools } = runtime();
     const fx = 'Captura el tipo de cambio (pesos por dólar) para comparar los precios en USD.';
     assert.match(tools.fxSearchHint(fx, true), /paso 2/);
-    assert.match(tools.fxSearchHint(fx, false), /pide a un administrador/);
+    assert.equal(tools.fxSearchHint(fx, false), '');   // lienzo fila 13: sin permiso, el de SYSCOM es automático
     for (const other of ['Inicia sesión para continuar.', 'No fue posible consultar a los proveedores.', '', undefined]) {
         assert.equal(tools.fxSearchHint(other, true), '');
         assert.equal(tools.fxSearchHint(other, false), '');

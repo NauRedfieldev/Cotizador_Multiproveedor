@@ -21,6 +21,7 @@ from django.urls import include, path
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.generic import TemplateView
 
+from apps.quotes.usuarios import ElegirContrasena, recuperar_contrasena
 from apps.quotes.views import cotizador_comercial
 
 urlpatterns = [
@@ -32,6 +33,9 @@ urlpatterns = [
     # M7a: login real (LOGIN_URL). Logout solo por POST, como exige Django.
     path('login/', auth_views.LoginView.as_view(), name='login'),
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),
+    # B6: «¿Olvidaste tu contraseña?» y el enlace (invitación o restablecer) para elegir contraseña.
+    path('recuperar-contrasena/', recuperar_contrasena, name='recuperar_contrasena'),
+    path('elegir-contrasena/<uidb64>/<token>/', ElegirContrasena.as_view(), name='elegir_contrasena'),
     # Con sesión: SYSCOM pide mostrar sus precios de distribuidor solo a usuarios con
     # sesión (docs/02 §8.2). ensure_csrf_cookie: el cotizador guarda por POST con fetch.
     # M2: la vista entrega las condiciones predeterminadas que se precargan.

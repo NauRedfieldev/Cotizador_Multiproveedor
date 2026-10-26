@@ -2,7 +2,7 @@
 
 from django.urls import path
 
-from . import api, views
+from . import api, usuarios, views
 
 urlpatterns = [
     # M7: comparador de proveedores. 'comparador' va primero porque resolve() da el
@@ -18,6 +18,12 @@ urlpatterns = [
     # 15A/16A: tipo de cambio de la sesión (menú superior y cotizador).
     path("api/v1/fx/session/", api.tipo_cambio_sesion, name="api_tipo_cambio_sesion"),
     path("api/v1/commercial/permissions/<int:user_id>/", api.permisos_comerciales, name="api_permisos_comerciales"),
+    # B6: «Usuarios y permisos» (solo quien gestiona permisos) y su API.
+    path("administracion/usuarios/", usuarios.administracion_usuarios, name="administracion_usuarios"),
+    path("api/v1/admin/users/", usuarios.api_usuarios, name="api_usuarios"),
+    path("api/v1/admin/users/<int:user_id>/", usuarios.api_usuario, name="api_usuario"),
+    path("api/v1/admin/users/<int:user_id>/invitation/", usuarios.api_reenviar_invitacion, name="api_reenviar_invitacion"),
+    path("api/v1/admin/users/<int:user_id>/password-link/", usuarios.api_enlace_contrasena, name="api_enlace_contrasena"),
     # M7a: cotizaciones sobre los servicios de M8 (docs/28 y docs/25 M8 §2).
     path("api/v1/quotes/", api.crear_cotizacion, name="api_crear_cotizacion"),
     # 18B: clientes de las cotizaciones propias para «Elegir cliente».

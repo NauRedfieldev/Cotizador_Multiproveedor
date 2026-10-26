@@ -10,7 +10,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 
 import httpx
@@ -293,6 +293,20 @@ CLAVE_TIPO_CAMBIO = "comparador_tipo_cambio"
 # 14A: el de SYSCOM se guarda 30 min (1 min tras un fallo) para no consultarlo en cada visita.
 SEGUNDOS_TIPO_CAMBIO_SYSCOM = 30 * 60
 SEGUNDOS_FALLO_TIPO_CAMBIO_SYSCOM = 60
+ERROR_SIN_TIPO_CAMBIO = "Captura el tipo de cambio (pesos por dólar) para comparar los precios en USD."
+ERROR_SIN_TIPO_CAMBIO_SYSCOM = ("No hay tipo de cambio de SYSCOM en este momento, así que no se pueden mostrar precios "
+                                "en dólares. Se vuelve a intentar en unos minutos.")
+
+
+def _mismo_valor(texto, otro):
+    try:
+        return Decimal(texto) == Decimal(otro)
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+
+
+# Último valor bueno de SYSCOM de cada día: respaldo si SYSCOM deja de responder (punto 2 del lienzo fila 13).
+SEGUNDOS_DIA_TIPO_CAMBIO_SYSCOM = 36 * 60 * 60
 ETIQUETAS_TIPO_CAMBIO_SYSCOM = {
     "normal": "contado", "preferencial": "preferencial", "un_dia": "a 1 día", "una_semana": "a 1 semana",
     "dos_semanas": "a 2 semanas", "tres_semanas": "a 3 semanas", "un_mes": "a 1 mes",
@@ -314,34 +328,44 @@ async def cotizar_productos(request):
         parametros = {k: v for k, v in ultima["params"].items() if v}
         return HttpResponseRedirect(f"{request.path}?{urlencode({**parametros, 'ultima': '1'})}")
     recordado = await request.session.aget(CLAVE_TIPO_CAMBIO)
-    usado = None
+    puede = await sync_to_async(puede_cambiar_tipo_cambio, thread_sensitive=True)(await request.auser())
     accion = request.GET.get("usar_tipo_cambio")
-    if (accion == "syscom" and not request.GET.get("tipo_cambio", "").strip()) or accion == "actualizar":
-        # «Usar» (14A) y «Actualizar» (opción 1): el valor sale del servidor, no del formulario, para poder
-        # marcarlo como de SYSCOM. «Usar» respeta lo escrito a mano; «Actualizar» lo pide explícitamente.
-        usado, _ = await tipo_cambio_sugerido()
-        if usado is not None:
-            parametros = request.GET.copy()
-            parametros["tipo_cambio"] = f"{usado:f}"
-            request.GET = parametros
-    elif "tipo_cambio" not in request.GET and recordado:
-        parametros = request.GET.copy()
-        parametros["tipo_cambio"] = recordado["valor"]
-        request.GET = parametros
+    pedido = request.GET.get("tipo_cambio", "").strip()
+    # Lienzo fila 13: el de SYSCOM de hoy es automático para todos. Solo quien tiene permiso de tipo de cambio
+    # escribe otro (o conserva el que escribió); «Usar»/«Volver a SYSCOM» regresan al automático.
+    manual = None
+    if puede and accion not in ("syscom", "actualizar"):
+        if pedido and not (recordado and recordado.get("origen") == "syscom" and _mismo_valor(pedido, recordado["valor"])):
+            manual = pedido
+        elif not pedido and "tipo_cambio" not in request.GET and recordado and recordado.get("origen") != "syscom":
+            manual = recordado["valor"]
+    parametros = request.GET.copy()
+    usado = None
+    if manual is not None:
+        parametros["tipo_cambio"] = manual
+    else:
+        recordado = await tipo_cambio_automatico(request.session, recordado)
+        if recordado:
+            parametros["tipo_cambio"] = recordado["valor"]
+            usado = Decimal(recordado["valor"])
+        elif "tipo_cambio" in parametros:
+            del parametros["tipo_cambio"]
+    request.GET = parametros
     status, contexto = await buscar(request)
     await _recordar_ofertas_vistas(request.session, contexto)
     await _recordar_busqueda(request, contexto, status, ultima)
     await _recordar_tipo_cambio(request, contexto, recordado, usado, confirmar=accion == "confirmar")
+    contexto["puede_cambiar_tipo_cambio"] = puede
+    contexto["tipo_cambio_etiqueta"] = ETIQUETAS_TIPO_CAMBIO_SYSCOM.get(settings.SYSCOM_TIPO_CAMBIO_CAMPO, "")
     if contexto["tipo_cambio"] is None:
         contexto["tipo_cambio_sugerido"], contexto["tipo_cambio_syscom_fallo"] = await tipo_cambio_sugerido()
-        contexto["tipo_cambio_sugerido_etiqueta"] = ETIQUETAS_TIPO_CAMBIO_SYSCOM.get(settings.SYSCOM_TIPO_CAMBIO_CAMPO, "")
-    elif contexto["tipo_cambio"].origen == "syscom" or contexto["tipo_cambio_otro_dia"]:
-        # Opción 1: si el aplicado salió de SYSCOM y SYSCOM ya tiene otro, se avisa con «Actualizar» (nunca solo).
-        # 21A: si es de otro día, el aviso ofrece «Usar el de hoy» (también para uno capturado a mano).
+        if contexto["error"] == ERROR_SIN_TIPO_CAMBIO and not puede:
+            contexto["error"] = ERROR_SIN_TIPO_CAMBIO_SYSCOM
+    elif contexto["tipo_cambio"].origen != "syscom":
+        # Capturado a mano: se ofrece «Volver a SYSCOM» si el de hoy es distinto (nunca cambia solo).
         actual, _ = await tipo_cambio_sugerido()
         if actual is not None and actual != contexto["tipo_cambio"].valor:
-            clave = "tipo_cambio_syscom_hoy" if contexto["tipo_cambio_otro_dia"] else "tipo_cambio_syscom_nuevo"
-            contexto[clave] = actual
+            contexto["tipo_cambio_syscom_hoy"] = actual
     # Fuera del event loop: los context processors pueden leer la sesión (ORM síncrono).
     return await sync_to_async(render)(request, PLANTILLA_COMPARADOR, contexto, status=status)
 
@@ -411,7 +435,7 @@ async def _recordar_tipo_cambio(request, contexto, recordado, usado=None, confir
         if usado is not None and tipo.valor == usado:
             tipo = TipoCambio(tipo.valor, "syscom", tipo.fecha)
         confirmado = None
-        if recordado and recordado["valor"] == f"{tipo.valor:f}" and usado is None:
+        if recordado and recordado["valor"] == f"{tipo.valor:f}" and (usado is None or recordado.get("origen") == "syscom"):
             tipo = TipoCambio(tipo.valor, recordado.get("origen", tipo.origen), datetime.fromisoformat(recordado["fecha"]))
             confirmado = recordado.get("confirmado")
             if confirmar:
@@ -427,7 +451,8 @@ async def _recordar_tipo_cambio(request, contexto, recordado, usado=None, confir
             contexto["tipo_cambio_confirmado_hace"] = hace_texto(contexto["tipo_cambio_confirmado"])
             contexto["tipo_cambio_confirmado_exacta"] = fecha_exacta(contexto["tipo_cambio_confirmado"])
         revisado = contexto["tipo_cambio_confirmado"] or tipo.fecha
-        contexto["tipo_cambio_otro_dia"] = timezone.localdate(revisado) != timezone.localdate()
+        # El de SYSCOM se renueva solo cada día; el aviso de otro día es para el capturado a mano.
+        contexto["tipo_cambio_otro_dia"] = tipo.origen != "syscom" and timezone.localdate(revisado) != timezone.localdate()
     elif not texto and recordado:
         await request.session.apop(CLAVE_TIPO_CAMBIO)  # vacío a propósito: se olvida
 
@@ -454,27 +479,64 @@ async def _recordar_ofertas_vistas(session, contexto):
 
 
 async def tipo_cambio_sugerido():
-    """14A: (pesos por dólar de SYSCOM | None, falló). None sin SYSCOM activo; nunca se aplica solo."""
+    """(pesos por dólar de SYSCOM | None, falló). None sin SYSCOM activo.
+
+    Lienzo fila 13: es el tipo de cambio automático de todos. Si SYSCOM no responde se usa el último valor
+    que dio ese mismo día; si no hay ninguno de hoy, None (solo precios en pesos).
+    """
     campo = settings.SYSCOM_TIPO_CAMBIO_CAMPO
     clave = f"comparador:tipo_cambio_syscom:{campo}"
+    del_dia = f"comparador:tipo_cambio_syscom_dia:{campo}:{timezone.localdate().isoformat()}"
     guardado = await cache.aget(clave)
-    if guardado is not None:
-        return (Decimal(guardado), False) if guardado else (None, True)
-    proveedor = await Provider.objects.filter(code="syscom", active=True).only("base_url", "timeout_ms").afirst()
-    if proveedor is None:
-        return None, False
+    if guardado:
+        return Decimal(guardado), False
+    if guardado is None:
+        proveedor = await Provider.objects.filter(code="syscom", active=True).only("base_url", "timeout_ms").afirst()
+        if proveedor is None:
+            return None, False
+        try:
+            async with httpx.AsyncClient(timeout=min(proveedor.timeout_ms, 4000) / 1000) as client:
+                valor = await consultar_tipo_cambio(proveedor.base_url, campo, client)
+        except (httpx.HTTPError, ProviderError, ValueError) as exc:
+            logger.warning("No se pudo consultar el tipo de cambio de SYSCOM: %s", type(exc).__name__)
+            await cache.aset(clave, "", SEGUNDOS_FALLO_TIPO_CAMBIO_SYSCOM)
+        else:
+            await cache.aset(clave, f"{valor:f}", SEGUNDOS_TIPO_CAMBIO_SYSCOM)
+            await cache.aset(del_dia, f"{valor:f}", SEGUNDOS_DIA_TIPO_CAMBIO_SYSCOM)
+            return valor, False
+    ultimo = await cache.aget(del_dia)
+    return (Decimal(ultimo), False) if ultimo else (None, True)
+
+
+def puede_cambiar_tipo_cambio(usuario):
+    """Lienzo fila 13: el de SYSCOM es para todos; escribir otro valor solo con el permiso de tipo de cambio."""
+    from .permissions import FX, require_commercial_permission
     try:
-        async with httpx.AsyncClient(timeout=min(proveedor.timeout_ms, 4000) / 1000) as client:
-            valor = await consultar_tipo_cambio(proveedor.base_url, campo, client)
-    except (httpx.HTTPError, ProviderError, ValueError) as exc:
-        logger.warning("No se pudo consultar el tipo de cambio de SYSCOM: %s", type(exc).__name__)
-        await cache.aset(clave, "", SEGUNDOS_FALLO_TIPO_CAMBIO_SYSCOM)
-        return None, True
-    await cache.aset(clave, f"{valor:f}", SEGUNDOS_TIPO_CAMBIO_SYSCOM)
-    return valor, False
+        require_commercial_permission(usuario, FX)
+    except PermissionDenied:
+        return False
+    return True
 
 
-async def buscar(request):
+async def tipo_cambio_automatico(session, recordado):
+    """Pone en la sesión el de SYSCOM de hoy y lo devuelve; sin valor de hoy lo quita (None).
+
+    Conserva la hora de consulta mientras el valor y el día sean los mismos.
+    """
+    valor, _ = await tipo_cambio_sugerido()
+    if valor is None:
+        if recordado:
+            await session.apop(CLAVE_TIPO_CAMBIO)
+        return None
+    if (recordado and recordado.get("origen") == "syscom" and Decimal(recordado["valor"]) == valor
+            and timezone.localdate(datetime.fromisoformat(recordado["fecha"])) == timezone.localdate()):
+        return recordado
+    nuevo = {"valor": f"{valor:f}", "fecha": timezone.now().isoformat(), "origen": "syscom"}
+    await session.aset(CLAVE_TIPO_CAMBIO, nuevo)
+    return nuevo
+
+
+async def buscar(request, tipo_cambio_fijo=None):
     """Flujo de búsqueda: M2 search_all → M6 por proveedor → M5 sobre lo que se muestra.
 
     Devuelve (status, contexto) con las seis claves de docs/26 §4 en todas las respuestas.
@@ -502,6 +564,9 @@ async def buscar(request):
     except _EntradaInvalida as exc:
         contexto["error"] = str(exc)
         return 400, contexto
+    if tipo_cambio_fijo is not None:
+        # API del cotizador: el de la cotización (contexto del servidor) o el de SYSCOM, no un texto del cliente.
+        tipo_cambio = tipo_cambio_fijo
     contexto["tipo_cambio"] = tipo_cambio
 
     consulta = ProductQuery(term=parametros.get("q", ""), sku=parametros.get("sku"))
@@ -520,7 +585,7 @@ async def buscar(request):
     disponibles = [r for r in resultados if r.ok]
     if tipo_cambio is None and any(o.currency == "USD" for r in disponibles for o in r.offers):
         _asignar_caidos(contexto, sorted(caidos), nombres)
-        contexto["error"] = "Captura el tipo de cambio (pesos por dólar) para comparar los precios en USD."
+        contexto["error"] = ERROR_SIN_TIPO_CAMBIO
         return 400, contexto
 
     comparadas = []

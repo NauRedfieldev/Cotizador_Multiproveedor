@@ -148,11 +148,11 @@
         if (!Array.isArray(list)) return '';
         return list.filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s && !/[\r\n]/.test(s)).slice(0, 50).join('\n');
     }
-    // Pista solo cuando la búsqueda falla por falta de tipo de cambio, según el permiso del usuario.
+    // Pista solo cuando la búsqueda falla por falta de tipo de cambio. Lienzo fila 13: sin permiso no hay
+    // nada que capturar (el de SYSCOM es automático); el mensaje del servidor ya lo explica.
     function fxSearchHint(message, canChangeFx) {
         if (!/tipo de cambio/i.test(message || '')) return '';
-        return canChangeFx ? ' Aplícalo en el paso 2 «Tipo de cambio del día» y vuelve a buscar.'
-            : ' No tienes permiso para capturar el tipo de cambio; pide a un administrador que te lo habilite.';
+        return canChangeFx ? ' Aplícalo en el paso 2 «Tipo de cambio del día» y vuelve a buscar.' : '';
     }
     // «100.000000» → «100»: mismo valor decimal, más legible al recargar.
     function trimZeros(value) {
@@ -398,7 +398,7 @@
             for (const id of ['applyFxBtn', 'clearFxBtn', 'newExchangeRate']) $(id).disabled = !allowed || !has('change_commercial_fx');
             if (state.fxPending) { $('newExchangeRate').disabled = true; $('clearFxBtn').disabled = true; $('applyFxBtn').disabled = state.busy; }
             text('applyFxBtn', state.fxPending ? 'Resolver tipo de cambio' : 'Aplicar');
-            text('fxPermissionHint', has('change_commercial_fx') ? '' : 'Sin permiso para capturar el tipo de cambio; pide a un administrador que te lo habilite. El ya guardado se conserva al editar.');
+            text('fxPermissionHint', has('change_commercial_fx') ? '' : '🔒 Solo un Asesor o un Administrador puede cambiar el tipo de cambio.');
             const [statusText, statusKind] = state.sessionExpired ? ['Sesión vencida', 'danger'] :
                 state.pending ? ['Resultado de guardado por confirmar', 'dirty'] : state.readonly ? ['Solo lectura', 'readonly'] :
                 state.conflict ? ['Conflicto: recarga la revisión', 'danger'] : state.busy ? ['Procesando…', 'neutral'] :
@@ -1093,7 +1093,7 @@
             for (const [query, items] of groups) {
                 if (stopped) { for (const item of items) results.push({ item, kind: 'error', message: 'quedó pendiente por el límite de búsquedas; espera un minuto y vuelve a pulsar «Traer».' }); continue; }
                 const filters = query.startsWith('sku:') ? { sku: query.slice(4) } : { q: query.slice(2) };
-                if (state.fx && has('change_commercial_fx')) filters.tipo_cambio = state.fx.value;
+                if (state.fx?.id) filters.fx_context_id = state.fx.id;
                 let offers;
                 try { offers = (await api.search(filters)).data || []; }
                 catch (err) {
@@ -1209,7 +1209,7 @@
             for (const [query, group] of groups) {
                 if (stopped) { for (const line of group) rows.push({ line, kind: 'error', message: 'Límite de búsquedas: vuelve a revisar en un minuto. Se conserva.' }); continue; }
                 const filters = query.startsWith('sku:') ? { sku: query.slice(4) } : { q: query.slice(2) };
-                if (state.fx && has('change_commercial_fx')) filters.tipo_cambio = state.fx.value;
+                if (state.fx?.id) filters.fx_context_id = state.fx.id;
                 let offers;
                 try { offers = (await api.search(filters)).data || []; }
                 catch (err) {
@@ -1266,7 +1266,7 @@
             text('searchStatus', 'Buscando…'); $('resultsList').replaceChildren();
             try {
                 const filters = { q: $('productSearchInput').value.trim() };
-                if (state.fx && has('change_commercial_fx')) filters.tipo_cambio = state.fx.value;
+                if (state.fx?.id) filters.fx_context_id = state.fx.id;
                 const response = await api.search(filters, searchAbort.signal);
                 if (version !== searchVersion) return;
                 state.products = response.data || [];
@@ -1295,9 +1295,15 @@
         }
         function fxDisplay() {
             const value = state.fx ? String(state.fx.value).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') : '';
-            text('exchangeRate', state.fx ? `Aplicado: 1 USD = ${value} MXN` : 'Sin tipo de cambio');
+            const syscom = state.fx?.source === 'syscom';
+            text('exchangeRate', state.fx ? `Aplicado: 1 USD = ${value} MXN · ${syscom ? 'SYSCOM' : 'manual'}` : 'Sin tipo de cambio');
             $('exchangeRate').classList.toggle('fx-status-ok', !!state.fx);
-            text('fxEvidence', state.fx ? `Capturado ${hace(state.fx.date)} · ${state.fx.source === 'manual' ? 'captura manual' : state.fx.source}` : 'El sistema no supone un tipo de cambio. Si todo es en pesos, puede quedar vacío.');
+            // Lienzo fila 13: el de SYSCOM de hoy se pone solo en cada cotización nueva; a mano solo con permiso.
+            const label = fxSession?.syscom?.label ? ` (${fxSession.syscom.label})` : '';
+            text('fxEvidence', state.fx ? (syscom ? `SYSCOM${label} · consultado ${hace(state.fx.date)}`
+                : `Capturado a mano${state.fx.by ? ` por ${state.fx.by}` : ''} ${hace(state.fx.date)}`)
+                : state.fxAutoFailed ? `SYSCOM no respondió y no hay un valor de hoy. ${has('change_commercial_fx') ? 'Escribe el valor del día y pulsa «Aplicar».' : 'Mientras tanto no se pueden ver precios en dólares.'}`
+                : 'Se usa el de SYSCOM de hoy en cada cotización nueva. Si todo es en pesos, puede quedar vacío.');
             $('fxEvidence').title = state.fx ? exacta(state.fx.date) : '';
             if (state.fx) clearFieldError($('newExchangeRate'));
             fxShortcuts();
@@ -1394,7 +1400,8 @@
             const box = $('fxShortcuts');
             const tools = window.cconorTipoCambio;
             box.replaceChildren();
-            if (!fxSession || !tools || $('newExchangeRate').disabled || state.busy) return;
+            if (!fxSession || !tools || state.busy || !editable()) return;
+            const canFx = has('change_commercial_fx');
             const { sinCeros, mostrar, cuando, esHoy, origen } = tools;
             const session = fxSession.session, syscom = fxSession.syscom;
             const applied = state.fx ? sinCeros(state.fx.value) : null;
@@ -1415,18 +1422,16 @@
                 box.append(chip);
             };
             const use = value => { $('newExchangeRate').value = value; $('applyFxBtn').click(); };
-            const useSyscom = async () => {
-                try { use((await tools.guardar({ use_syscom: true })).session.value); } catch (err) { showError(err); }
-            };
-            if (session && sinCeros(session.value) !== applied) {
+            const useSyscom = () => applySyscomFx(true);
+            if (canFx && session && session.source !== 'syscom' && sinCeros(session.value) !== applied) {
                 add(['Tu sesión:', `$${mostrar(session.value)}`], `${origen(session)}, ${cuando(session.date)}`, 'Usar', () => use(session.value), exacta(session.date));
             }
-            const syscomNew = syscom && sinCeros(syscom.value) !== applied && !(session && sinCeros(session.value) === sinCeros(syscom.value));
-            const syscomOffer = !state.fx || otherDay || (session?.source === 'syscom' && sinCeros(session.value) === applied);
-            if (syscomNew && syscomOffer) {
-                add([state.fx ? 'SYSCOM ahora:' : 'SYSCOM hoy:', `$${mostrar(syscom.value)}`], syscom.label || 'SYSCOM', state.fx ? 'Actualizar' : 'Usar', useSyscom);
+            if (syscom && (!state.fx || state.fx.source !== 'syscom' || sinCeros(syscom.value) !== applied)) {
+                const manual = state.fx && state.fx.source !== 'syscom';
+                if (canFx || !manual) add(['SYSCOM hoy:', `$${mostrar(syscom.value)}`], syscom.label || 'SYSCOM',
+                    !state.fx ? 'Usar' : manual ? 'Volver a SYSCOM' : 'Actualizar', useSyscom);
             }
-            if (otherDay) {
+            if (otherDay && state.fx.source !== 'syscom') {
                 const warn = document.createElement('span');
                 warn.className = 'small fw-semibold'; warn.style.color = '#B54708';
                 warn.textContent = 'Capturado otro día: confirma que siga vigente.';
@@ -1468,8 +1473,8 @@
                 quoteFolio: detail.folio, quoteRevision: `${detail.revision} / ${detail.edit_version}`,
                 taxRate: safePercent(detail.tax_rate), discountPercent: detail.discount_percent ?? '' };
             for (const [id, value] of Object.entries(values)) $(id).value = value;
-            state.fx = detail.tipo_cambio ? { id: detail.fx_context_id,
-                value: detail.tipo_cambio.valor, source: detail.tipo_cambio.origen, date: detail.tipo_cambio.fecha } : null;
+            state.fx = detail.tipo_cambio ? { id: detail.fx_context_id, value: detail.tipo_cambio.valor,
+                source: detail.tipo_cambio.origen, date: detail.tipo_cambio.fecha, by: detail.tipo_cambio.capturado_por || '' } : null;
             fxDisplay();
             state.lines = detail.schema_version === 2 ? detail.items.map(loadLine) : [];
             // 5A: la empresa de una cotización guardada viene de su revisión (anteriores sin clave = CCONOR).
@@ -1652,6 +1657,42 @@
             }
             finally { state.busy = false; locks(); renderLines(); }
         });
+        // Lienzo fila 13: el de SYSCOM lo consulta el servidor (contexto «syscom»); cualquiera con acceso comercial.
+        async function applySyscomFx(userAction) {
+            if (state.busy || state.pending || state.fxPending) return false;
+            const epoch = state.epoch;
+            try {
+                const result = (await api.createFX({ request_id: crypto.randomUUID(), use_syscom: true })).data;
+                if (epoch !== state.epoch || (!userAction && state.fx)) return false;
+                state.fx = { id: result.fx_context_id, value: result.value, source: result.source, date: result.date };
+                state.fxAutoFailed = false; fxDisplay();
+                if (userAction) changed();
+                return true;
+            } catch (err) {
+                if (userAction) showError(err);
+                else { state.fxAutoFailed = true; fxDisplay(); }
+                return false;
+            } finally { locks(); renderLines(); }
+        }
+        // Cotización nueva (o revisión nueva desde un histórico): el de SYSCOM de hoy, o el que el asesor
+        // escribió a mano en la barra superior. No marca cambios sin guardar.
+        async function autoFx() {
+            if (state.fx || state.saved || state.readonly || !state.caps || !has('view_commercial_costs')) return;
+            const sesion = has('change_commercial_fx') ? (await window.cconorTipoCambio?.cargar().catch(() => null))?.session : null;
+            if (sesion && sesion.source !== 'syscom') {
+                const epoch = state.epoch;
+                try {
+                    const result = (await api.createFX({ request_id: crypto.randomUUID(), value: sinCerosFx(sesion.value) })).data;
+                    if (epoch !== state.epoch || state.fx) return;
+                    state.fx = { id: result.fx_context_id, value: result.value, source: result.source, date: result.date };
+                    fxDisplay();
+                } catch (_) { await applySyscomFx(false); }
+                finally { locks(); renderLines(); }
+                return;
+            }
+            await applySyscomFx(false);
+        }
+        const sinCerosFx = v => String(v).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
         $('clearFxBtn').addEventListener('click', () => { if (state.fxPending) return; state.fx = null; fxDisplay(); changed(); });
         $('newQuoteBtn').addEventListener('click', () => {
             if (state.dirty && !window.confirm('Descartar cambios no guardados y preparar otra cotización?')) return;
@@ -1667,6 +1708,7 @@
             previewAbort?.abort(); clearTimeout(previewTimer); state.epoch += 1; state.dirty = false;
             clearIssues(); notice('');
             clearSummary('Nueva cotización sin guardar'); fxDisplay(); error(); locks(); renderLines();
+            autoFx();
         });
         window.addEventListener('beforeunload', event => { if (state.dirty || state.pending || state.fxPending) { event.preventDefault(); event.returnValue = ''; } });
         const requestedModel = new URLSearchParams(window.location.search).get('sku');
@@ -1678,7 +1720,7 @@
             await capabilities();
             const query = new URLSearchParams(window.location.search);
             const folio = query.get('transition_folio') || query.get('folio');
-            if (!folio || !state.caps) return;
+            if (!folio || !state.caps) { await autoFx(); return; }
             state.busy = true; locks();
             let loaded = false;
             try {
@@ -1696,6 +1738,7 @@
                 }
             } catch (err) { showError(err); }
             finally { state.busy = false; locks(); renderLines(); }
+            if (loaded && query.has('transition_folio')) await autoFx();
             if (loaded && query.get('bandeja') === 'traer' && !query.has('transition_folio')) await trayFromComparator();
         }
         // 6A: «Agregar a COT-…» en la bandeja del comparador abre aquí ese borrador y trae la bandeja
