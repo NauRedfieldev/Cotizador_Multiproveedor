@@ -183,6 +183,9 @@
         // 5A: empresas configuradas (servidor). La cotización nueva elige una; al guardarse queda fija.
         const companies = (() => { try { const list = JSON.parse($('companiesData')?.textContent || '[]'); return Array.isArray(list) ? list : []; } catch { return []; } })();
         const initialIssueDate = $('issueDate').value;
+        // M10: el IVA inicial lo pone el servidor (apps/quotes/taxes.py) en la plantilla; en porcentaje («16»).
+        const initialTaxPercent = $('taxRate').value;
+        const initialTaxFraction = trimZeros(percentToFraction(initialTaxPercent));
         const defaultConditions = defaultConditionsText($('defaultConditions')?.textContent);
         const state = { caps: null, lines: [], products: [], saved: null, fx: null, dirty: false, busy: false,
             readonly: false, preview: null, epoch: 0, pending: null, fxPending: null, conflict: false,
@@ -1034,8 +1037,8 @@
         function blankLine() {
             return { key: crypto.randomUUID(), kind: 'MANUAL', persisted: false, name: '', provider: '', description: '', quantity: '1',
                 units: { source_label: '', sale_label: '', conversion_factor: '1', confirmed: false }, mode: 'MANUAL', margin: '35',
-                knownCost: false, cost: { amount: '', currency: 'MXN', vat_basis: 'NET', vat_rate: '0.16' },
-                sale: { amount: '', currency: 'MXN', vat_basis: 'NET', vat_rate: '0.16' }, expanded: true };
+                knownCost: false, cost: { amount: '', currency: 'MXN', vat_basis: 'NET', vat_rate: initialTaxFraction },
+                sale: { amount: '', currency: 'MXN', vat_basis: 'NET', vat_rate: initialTaxFraction }, expanded: true };
         }
         function lineFromOffer(offer, quantity = '1') {
             const line = blankLine();
@@ -1451,9 +1454,9 @@
                 units: { source_label: snapshot.source_unit_label, sale_label: snapshot.sale_unit_label,
                     conversion_factor: trimZeros(snapshot.conversion_factor), confirmed: true },
                 cost: { amount: snapshot.source_unit_price ?? '', currency: snapshot.source_currency || 'MXN',
-                    vat_basis: snapshot.cost_tax_rate_included === null ? 'NET' : 'INCLUDED', vat_rate: snapshot.cost_tax_rate_included ?? '0.16' },
+                    vat_basis: snapshot.cost_tax_rate_included === null ? 'NET' : 'INCLUDED', vat_rate: snapshot.cost_tax_rate_included ?? initialTaxFraction },
                 sale: { amount: snapshot.manual_unit_price ?? '', currency: snapshot.manual_currency || 'MXN',
-                    vat_basis: snapshot.manual_tax_rate_included === null ? 'NET' : 'INCLUDED', vat_rate: snapshot.manual_tax_rate_included ?? '0.16' } });
+                    vat_basis: snapshot.manual_tax_rate_included === null ? 'NET' : 'INCLUDED', vat_rate: snapshot.manual_tax_rate_included ?? initialTaxFraction } });
             return line;
         }
         function loadDetail(detail) {
@@ -1703,7 +1706,7 @@
             for (const id of ['clientName', 'clientRfc', 'clientEmail', 'clientContact', 'clientPhone', 'clientProject', 'quoteNotes', 'newExchangeRate']) $(id).value = '';
             $('quoteConditions').value = defaultConditions;
             $('quoteFolio').value = 'Se asigna al guardar'; $('quoteRevision').value = 'Sin guardar';
-            $('taxRate').value = '16'; $('discountPercent').value = '0'; $('validDays').value = '15';
+            $('taxRate').value = initialTaxPercent; $('discountPercent').value = '0'; $('validDays').value = '15';
             $('issueDate').value = initialIssueDate;
             previewAbort?.abort(); clearTimeout(previewTimer); state.epoch += 1; state.dirty = false;
             clearIssues(); notice('');
@@ -1732,7 +1735,7 @@
                     state.transition = { folio: detail.folio, revision: detail.revision, edit_version: detail.edit_version };
                     state.saved = null; state.loadedDetail = null; state.readonly = false; state.lines = []; state.fx = null;
                     $('quoteRevision').value = 'Nueva revisión: se asigna al guardar';
-                    $('issueDate').value = initialIssueDate; $('taxRate').value = '16'; $('discountPercent').value = '0';
+                    $('issueDate').value = initialIssueDate; $('taxRate').value = initialTaxPercent; $('discountPercent').value = '0';
                     $('transitionNotice').classList.remove('d-none');
                     error(); fxDisplay(); clearSummary('Captura y revisa explícitamente las nuevas partidas. No se copiaron entradas financieras del histórico.');
                 }

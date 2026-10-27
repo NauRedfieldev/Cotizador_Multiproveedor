@@ -40,6 +40,7 @@ from .comparison import NIVEL_SIN_COINCIDENCIA, TipoCambio, comparar_configurado
 from .models import DefaultCommercialCondition, Quote, QuoteRevision
 from .pdf import build_demo_quote, colores_marca, generate_quote_pdf, money, safe_filename
 from .snapshots import ArchivedPDFError, RevisionConflict, obtener_documento
+from .taxes import TASA_IVA_INICIAL
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,10 @@ def cotizador_comercial(request):
     condiciones = list(DefaultCommercialCondition.objects.filter(active=True).values_list("text", flat=True))
     # 5A: empresas configuradas para «Cotizar como» (solo aparece si hay más de una).
     from .api import empresas_publicas
-    return render(request, "cotizador.html", {"condiciones_predeterminadas": condiciones, "empresas": empresas_publicas()})
+    # M10: el IVA inicial de la pantalla sale de taxes.py, en porcentaje («16»).
+    tasa_iva_inicial = f"{(TASA_IVA_INICIAL * 100).normalize():f}"
+    return render(request, "cotizador.html", {"condiciones_predeterminadas": condiciones, "empresas": empresas_publicas(),
+                                              "tasa_iva_inicial": tasa_iva_inicial})
 
 
 @login_required

@@ -23,10 +23,11 @@ from django.utils import timezone
 
 from apps.providers.contracts import ProviderOffer
 
-from .commercial import MARGEN_INICIAL, TASA_IVA_INICIAL
+from .commercial import MARGEN_INICIAL
 from .comparison import OfertaComparada, TipoCambio
 from .models import Quote, QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
 from .snapshot_values import MAX_ITEMS, MONEY_CONTEXT, amount, decimal_limit
+from .taxes import TASA_IVA_INICIAL, calcular_iva, validar_tasa
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,7 @@ def _capture(quote, parts, *, actor, company, conditions, client, tipo_cambio, t
     authorize(quote, actor)
     parts = _parts(parts, tipo_cambio)
     header = _header(quote, company, conditions, client)
-    tax_rate = decimal_limit(tax_rate, 5, 4, maximum=Decimal("1"))
+    tax_rate = validar_tasa(tax_rate)
     if type(issue_date) is not date or type(valid_days) is not int or not 1 <= valid_days <= 3650:
         raise ValidationError("Fecha y vigencia inválidas (1–3650 días).")
     _valid_until(issue_date, valid_days)
@@ -262,7 +263,7 @@ def guardar_borrador(revision_id, partidas, *, actor, expected_version, company,
         revision.exchange_rate = decimal_limit(tipo_cambio.valor, 18, 8) if tipo_cambio else None
         revision.exchange_rate_source = tipo_cambio.origen if tipo_cambio else ""
         revision.exchange_rate_date = tipo_cambio.fecha if tipo_cambio else None
-        revision.tax_rate = decimal_limit(tax_rate, 5, 4, maximum=Decimal("1"))
+        revision.tax_rate = validar_tasa(tax_rate)
         revision.issue_date, revision.valid_days = issue_date, valid_days
         revision.edit_version += 1
         revision.save()
@@ -317,7 +318,7 @@ def contexto_revision(revision):
                           "unit_price": unit, "amount": line_amount, "stock": snapshot.stock,
                           "source_unit_price": snapshot.source_unit_price, "source_currency": snapshot.source_currency})
         subtotal = revision.subtotal if revision.status == QuoteRevision.Status.ISSUED else amount(sum((i["amount"] for i in items), Decimal("0")))
-        tax = revision.tax if revision.status == QuoteRevision.Status.ISSUED else amount(subtotal * revision.tax_rate)
+        tax = revision.tax if revision.status == QuoteRevision.Status.ISSUED else calcular_iva(subtotal, revision.tax_rate)
         total = revision.total if revision.status == QuoteRevision.Status.ISSUED else amount(subtotal + tax)
         tax_label = f"{revision.tax_rate * 100:g}%"
     return {**header, "revision": revision.number,
@@ -608,7 +609,7 @@ def _create_commercial(quote, parts, *, actor, company, conditions, tipo_cambio,
     if not isinstance(request_id, UUID):
         raise TypeError("request_id debe ser UUID estable entre reintentos.")
     header = _header(quote, company, conditions, client)
-    tax = decimal_limit(tax_rate, 5, 4, maximum=Decimal("1"))
+    tax = validar_tasa(tax_rate)
     discount = decimal_limit(discount_percent, 5, 2, maximum=Decimal("100"))
     if type(issue_date) is not date or type(valid_days) is not int or not 1 <= valid_days <= 3650:
         raise ValidationError("Fecha/vigencia comercial inválidas.")
@@ -659,7 +660,7 @@ def _commercial_edit_inputs(quote, revision, partidas, *, actor, expected_versio
     _valid_until(issue_date, valid_days)
     header = _header(quote, company, conditions, client)
     parts = _commercial_data(partidas)
-    tax = decimal_limit(tax_rate, 5, 4, maximum=Decimal("1"))
+    tax = validar_tasa(tax_rate)
     discount = decimal_limit(discount_percent, 5, 2, maximum=Decimal("100"))
     result = _commercial_calculate(parts, tipo_cambio, tax, discount)
     _commercial_adjustments(actor, parts, _commercial_stored(revision), tipo=tipo_cambio,
@@ -849,7 +850,7 @@ def previsualizar_comercial(quote_id, partidas, *, actor, company, conditions, c
         parts = _commercial_data(partidas)
         header = _header(quote, company, conditions, client if client is not None else {
             "business_name": quote.client_name, "rfc": quote.client_rfc, "email": quote.client_email})
-        tax = decimal_limit(tax_rate, 5, 4, maximum=Decimal("1"))
+        tax = validar_tasa(tax_rate)
         discount = decimal_limit(discount_percent, 5, 2, maximum=Decimal("100"))
         issue_date = quote.issue_date if issue_date is None else issue_date
         valid_days = quote.valid_days if valid_days is None else valid_days
@@ -989,7 +990,7 @@ def previsualizar_nueva_cotizacion(partidas, *, actor, company, client, conditio
     actor = require_commercial_permission(actor)
     quote = Quote(advisor=actor, client_name=client["business_name"], issue_date=issue_date, valid_days=valid_days)
     parts = _commercial_data(partidas)
-    tax = decimal_limit(tax_rate, 5, 4, maximum=Decimal("1"))
+    tax = validar_tasa(tax_rate)
     discount = decimal_limit(discount_percent, 5, 2, maximum=Decimal("100"))
     if type(issue_date) is not date or type(valid_days) is not int or not 1 <= valid_days <= 3650:
         raise ValidationError("Fecha/vigencia comercial inválidas.")

@@ -247,6 +247,8 @@ Regla actual: IVA único sobre subtotal MXN con tasa capturada, no motor fiscal.
 Acordar cálculo por partida/exenciones/cargos, migraciones y versión de esquema
 antes de cambiar cálculo. No recalcular emisiones con reglas nuevas; los documentos
 afectados requieren nueva revisión. Un stub futuro no reemplaza M8 silenciosamente.
+Implementado como punto de extensión en `apps/quotes/taxes.py`: ver
+[docs/31](31-m10-impuestos.md).
 
 ### M11: QA
 

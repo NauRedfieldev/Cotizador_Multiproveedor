@@ -18,9 +18,9 @@ from django.core.exceptions import ValidationError
 
 from .comparison import TipoCambio
 from .snapshot_values import MAX_ITEMS, MONEY_CONTEXT, decimal_limit
+from .taxes import TASA_IVA_INICIAL, calcular_iva, divisor_iva_incluido, validar_tasa
 
 MARGEN_INICIAL = Decimal("35")
-TASA_IVA_INICIAL = Decimal("0.16")
 _CIEN = Decimal("100")
 _UNO = Decimal("1")
 _CERO = Decimal("0.00")
@@ -41,11 +41,6 @@ class CodigoAdvertencia(StrEnum):
 # Avisos que se muestran pero no se aceptan ni bloquean la emisión.
 AVISOS_INFORMATIVOS = frozenset((CodigoAdvertencia.STOCK_CERO, CodigoAdvertencia.STOCK_INSUFICIENTE))
 _STOCK_MAXIMO = 9223372036854775807
-
-
-def _tasa(valor):
-    # Fracción: .16 representa 16%. Mismo rango/precisión técnica que M8.
-    return decimal_limit(valor, 5, 4, maximum=_UNO)
 
 
 def _margen(valor):
@@ -70,7 +65,7 @@ class PrecioCapturado:
         if self.moneda not in ("MXN", "USD"):
             raise ValidationError("Solo MXN y USD están soportados.")
         if self.tasa_iva_incluido is not None:
-            _tasa(self.tasa_iva_incluido)
+            validar_tasa(self.tasa_iva_incluido)
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,7 +173,7 @@ def _normalizar(precio, tipo_cambio):
         if tipo_cambio is None:
             raise ValidationError("USD requiere un tipo de cambio explícito.")
         valor *= decimal_limit(tipo_cambio.valor, 18, 8, minimum=Decimal("0.00000001"))
-    divisor = _UNO if precio.tasa_iva_incluido is None else _UNO + _tasa(precio.tasa_iva_incluido)
+    divisor = divisor_iva_incluido(precio.tasa_iva_incluido)
     return valor, divisor
 
 
@@ -251,7 +246,7 @@ def calcular_cotizacion(
         decimal_limit(tipo_cambio.valor, 18, 8, minimum=Decimal("0.00000001"))
     if descuento is not None and not isinstance(descuento, DescuentoGlobal):
         raise TypeError("Se requiere DescuentoGlobal o None.")
-    tasa_iva = _tasa(tasa_iva)
+    tasa_iva = validar_tasa(tasa_iva)
     referencias, calculadas, advertencias = set(), [], []
     with localcontext(MONEY_CONTEXT):
         for entrada in partidas:
@@ -284,7 +279,7 @@ def calcular_cotizacion(
             porcentaje = decimal_limit(descuento.porcentaje, 5, 2, maximum=_CIEN)
             descuento_calculado = _importe(subtotal * porcentaje, _CIEN)
         neto = subtotal - descuento_calculado
-        iva = _importe(neto * tasa_iva)
+        iva = calcular_iva(neto, tasa_iva)
         total = _importe(neto + iva)
         utilidad = neto - costo_conocido if all(p.importe_costo is not None for p in calculadas) else None
         if descuento_calculado and neto < costo_conocido:
