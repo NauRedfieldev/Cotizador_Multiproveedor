@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'django.contrib.postgres',
     'apps.catalog',
     'apps.providers',
+    'apps.providers_web',
     'apps.quotes',
 ]
 
@@ -184,7 +185,8 @@ COTIZACIONES_EMISION_HABILITADA = env.bool('COTIZACIONES_EMISION_HABILITADA', de
 # Configurar solo tras validar que el contrato aplica a todas las ofertas del proveedor.
 # Forma: {'codigo': {'vat_basis': 'NET'}} o INCLUDED con vat_rate como texto decimal.
 # SYSCOM NET verificado 2026-10-19 (docs/30 B4): el adaptador consulta con iva=0.
-CCONOR_PROVIDER_PRICE_BASES = {'syscom': {'vat_basis': 'NET'}}
+# Exel NET confirmado por el usuario en el portal 2026-10-27 (docs/30 B5, docs/31): MXN sin IVA.
+CCONOR_PROVIDER_PRICE_BASES = {'syscom': {'vat_basis': 'NET'}, 'exel': {'vat_basis': 'NET'}}
 
 # M7a: login con las vistas de django.contrib.auth (docs/28). Los usuarios se dan de alta en el admin.
 LOGIN_URL = 'login'

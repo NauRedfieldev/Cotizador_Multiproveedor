@@ -259,10 +259,12 @@ PLANTILLA_COMPARADOR = "comparador.html"
 LIMITE_COTIZACIONES = 20
 VENTANA_SEGUNDOS = 60
 # Declaración del consumidor de M5 (docs/21): SYSCOM manda el número de parte del
-# fabricante en model y mpn, verificado con la API real (docs/16 D11). Un proveedor
-# que no esté aquí no autoriza ninguna clave.
+# fabricante en model y mpn, verificado con la API real (docs/16 D11). Exel manda en los
+# dos su codigo_proveedor, el SKU del fabricante (confirmado por el usuario, docs/31 P11).
+# Un proveedor que no esté aquí no autoriza ninguna clave.
 CONFIANZA_POR_PROVEEDOR = {
     "syscom": IdentificadoresConfiables(mpn_confirmado=True, modelo_confirmado=True),
+    "exel": IdentificadoresConfiables(mpn_confirmado=True, modelo_confirmado=True),
 }
 _ENTERO_POSITIVO = re.compile(r"[0-9]{1,10}")
 

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<!-- Muestra de la respuesta 200 de POST /xlstore/Acceso con credenciales rechazadas (estructura real
+     del 2026-10-27, recortada; valores ficticios). Exel devuelve el usuario escrito: aquí es ficticio. -->
+<html lang="es">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>Acceso</title>
+</head>
+<body id="Body">
+    <form method="post" action="./Acceso" id="Form1">
+        <input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="viewstate-de-muestra-no-real" />
+        <input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="validacion-de-muestra-no-real" />
+        <main>
+            <div id="updPanelMaster">
+                <input type="hidden" name="ctl00$MainContent$hdnerror" id="MainContent_hdnerror" value="1" />
+                <input name="ctl00$MainContent$txtUsuario" type="text" value="USUARIO-DE-MUESTRA" maxlength="50" id="MainContent_txtUsuario" class="form-control" />
+                <input name="ctl00$MainContent$txtPassword" type="password" maxlength="50" id="MainContent_txtPassword" class="form-control" />
+                <div class="modal-body">
+                    Usuario y/o contraseña incorrectos. Por favor verifique sus datos e intente de nuevo. (900001)
+                </div>
+                <a href="Logout.aspx?9999" id="MainContent_lnkEnviarHome" class="btn btn-danger mb-3">Aceptar</a>
+            </div>
+        </main>
+    </form>
+</body>
+</html>

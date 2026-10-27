@@ -97,11 +97,11 @@ class PruebasReglasDelRepositorio(SimpleTestCase):
         self.assertEqual(usos, [])
 
     def test_providers_no_llama_a_float(self):
-        """G2 ⭐ apps/providers no llama a float(): el dinero va en Decimal."""
+        """G2 ⭐ apps/providers y apps/providers_web no llaman a float(): el dinero va en Decimal."""
         # Act
         llamadas = [
             ubicacion(ruta, nodo.lineno)
-            for ruta in archivos_python("apps/providers")
+            for ruta in archivos_python("apps/providers", "apps/providers_web")
             for nodo in ast.walk(arbol(ruta))
             if isinstance(nodo, ast.Call)
             and isinstance(nodo.func, ast.Name)
@@ -125,14 +125,28 @@ class PruebasReglasDelRepositorio(SimpleTestCase):
         self.assertEqual(referencias, [])
 
     def test_providers_no_importa_de_catalog_ni_de_quotes(self):
-        """G4 apps/providers no importa de apps.catalog ni de apps.quotes (dirección quotes → catalog → providers)."""
+        """G4 apps/providers y apps/providers_web no importan de apps.catalog ni de apps.quotes (dirección quotes → catalog → providers)."""
+        # Act
+        importaciones = [
+            ubicacion(ruta, nodo.lineno)
+            for ruta in archivos_python("apps/providers", "apps/providers_web")
+            for nodo in ast.walk(arbol(ruta))
+            for modulo in modulos_importados(ruta, nodo)
+            if modulo.startswith(("apps.catalog", "apps.quotes"))
+        ]
+
+        # Assert
+        self.assertEqual(importaciones, [])
+
+    def test_providers_no_importa_de_providers_web(self):
+        """G10 apps/providers no importa de apps.providers_web (dirección providers_web → providers, SDD M9)."""
         # Act
         importaciones = [
             ubicacion(ruta, nodo.lineno)
             for ruta in archivos_python("apps/providers")
             for nodo in ast.walk(arbol(ruta))
             for modulo in modulos_importados(ruta, nodo)
-            if modulo.startswith(("apps.catalog", "apps.quotes"))
+            if modulo == "apps.providers_web" or modulo.startswith("apps.providers_web.")
         ]
 
         # Assert
