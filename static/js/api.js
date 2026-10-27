@@ -33,7 +33,7 @@ const STORAGE_KEYS = {
 // el sistema y en los datos guardados con nombres anteriores.
 const PROVIDER_LABELS = {
     syscom: 'SYSCOM',
-    ct: 'Exel del Norte'
+    exel: 'Exel del Norte'  // code del Provider real (M9, docs/32)
 };
 
 // Copia del producto con la etiqueta vigente del proveedor (y la de su
@@ -64,7 +64,7 @@ function withDerivedData(product) {
 /**
  * Contrato oficial de búsqueda JSON (Product Schema, M7b):
  * {
- *   provider: string,           // 'syscom' | 'ct'
+ *   provider: string,           // 'syscom' | 'exel'
  *   provider_label: string,     // Derivado de PROVIDER_LABELS (fuente única)
  *   external_id: string,        // Identificador del producto en el proveedor
  *   name: string,
@@ -166,8 +166,8 @@ const MOCK_PRODUCTS = [
         es_divisible: false
     },
     {
-        provider: 'ct',
-        provider_label: PROVIDER_LABELS.ct,
+        provider: 'exel',
+        provider_label: PROVIDER_LABELS.exel,
         external_id: 'TL-SG3428MP',
         name: 'Switch TP-Link Omada 24 puertos Gigabit PoE+ 384W L2+ Managed',
         brand: 'TP-Link',
@@ -188,8 +188,8 @@ const MOCK_PRODUCTS = [
         es_divisible: false
     },
     {
-        provider: 'ct',
-        provider_label: PROVIDER_LABELS.ct,
+        provider: 'exel',
+        provider_label: PROVIDER_LABELS.exel,
         external_id: 'DELL-P2422H',
         name: 'Monitor Dell Profesional 23.8" Full HD IPS HDMI/DP/VGA',
         brand: 'Dell',
@@ -210,8 +210,8 @@ const MOCK_PRODUCTS = [
         es_divisible: false
     },
     {
-        provider: 'ct',
-        provider_label: PROVIDER_LABELS.ct,
+        provider: 'exel',
+        provider_label: PROVIDER_LABELS.exel,
         external_id: 'HPE-DL380-G10',
         name: 'Servidor HPE ProLiant DL380 Gen10 Xeon Silver 4208 16GB 8SFF',
         brand: 'HPE',
@@ -267,7 +267,7 @@ const INITIAL_MOCK_QUOTES = [
         items_count: 2,
         items: [
             { sku: 'PRO-CAT6-EXT', name: 'Bobina de Cable UTP Cat6 Exterior CMX', provider: 'syscom', price: 2180.00, margin: 22, qty: 4, total: 10638.40 },
-            { sku: 'DELL-P2422H', name: 'Monitor Dell Pro 23.8" Full HD IPS', provider: 'ct', price: 3490.00, margin: 15, qty: 5, total: 20067.50 }
+            { sku: 'DELL-P2422H', name: 'Monitor Dell Pro 23.8" Full HD IPS', provider: 'exel', price: 3490.00, margin: 15, qty: 5, total: 20067.50 }
         ]
     },
     {
@@ -301,7 +301,7 @@ const INITIAL_MOCK_QUOTES = [
         total: 136156.16,
         items_count: 2,
         items: [
-            { sku: 'HPE-DL380-G10', name: 'Servidor HPE ProLiant DL380 Gen10', provider: 'ct', price: 52400.00, margin: 12, qty: 2, total: 117376.00 }
+            { sku: 'HPE-DL380-G10', name: 'Servidor HPE ProLiant DL380 Gen10', provider: 'exel', price: 52400.00, margin: 12, qty: 2, total: 117376.00 }
         ]
     },
     {

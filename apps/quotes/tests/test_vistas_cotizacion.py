@@ -355,6 +355,22 @@ class VistaCotizacionTests(TestCase):
         self.assertIsNone(matches["alfa"].canonico)
         self.assertEqual(matches["alfa"].motivo, "FALLBACK_SIN_CATEGORIA")
 
+    async def test_v10c_exel_declara_la_misma_confianza_que_syscom(self):
+        # M9 (docs/31 P11): el codigo_proveedor de Exel es el SKU del fabricante, en model y mpn.
+        categoria = await Category.objects.acreate(name="Redes sintéticas")
+        canonico = await ProductoCanonico.objects.acreate(
+            marca="Marca X", modelo="MOD-1", descripcion="Equipo sintético", categoria=categoria
+        )
+        await Provider.objects.acreate(code="exel", name="Exel", base_url="https://exel.example.com")
+        item = mxn("1", "100.00", marca="Marca X", modelo="MOD-1")
+        respuesta = await self.buscar([adaptador("exel", item), adaptador("alfa", item)])
+        self.assertEqual(respuesta.status_code, 200)
+        matches = {o.oferta.provider_code: o.match for o in respuesta.context["ofertas"]}
+        self.assertEqual(matches["exel"].estado, EstadoMatch.AUTO_MATCH)
+        self.assertEqual(matches["exel"].metodo, MetodoMatch.DETERMINISTICO_MODELO)
+        self.assertEqual(matches["exel"].canonico.pk, canonico.pk)
+        self.assertEqual(matches["alfa"].estado, EstadoMatch.SIN_MATCH)
+
     async def test_v10b_categoria_llega_al_fallback_de_m5(self):
         categoria = await Category.objects.acreate(name="Switches")
         item = mxn("1", "100.00", marca="Marca X", nombre="Switch 24 puertos")

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<!-- Muestra de GET /xlstore/Acceso (estructura real del 2026-10-27, recortada; valores ficticios). -->
+<html lang="es">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>Acceso</title>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>
+</head>
+<body id="Body">
+    <div id="turnstile-widget" style="visibility:hidden;"></div>
+    <form method="post" action="./Acceso" onsubmit="javascript:return WebForm_OnSubmit();" id="Form1">
+        <div class="aspNetHidden">
+            <input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="" />
+            <input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="" />
+            <input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="viewstate-de-muestra-no-real" />
+        </div>
+        <div class="aspNetHidden">
+            <input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="A0B1C2D3" />
+            <input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="validacion-de-muestra-no-real" />
+        </div>
+        <input type="hidden" name="ctl00$hdnIdCarrito_debugear" id="hdnIdCarrito_debugear" />
+        <input type="hidden" name="ctl00$hdnMostrarMasterPopup" id="hdnMostrarMasterPopup" value="0" />
+        <input type="hidden" name="ctl00$hdnDirectorioRaiz" id="hdnDirectorioRaiz" value="https://www.exel.com.mx/xlstore/" />
+        <input type="hidden" name="ctl00$hdnTokenCloudflare" id="hdnTokenCloudflare" />
+        <div class="input-group">
+            <button type="button" class="btn">Categorías</button>
+            <select name="ctl00$ddlCategoria" id="ddlCategoria">
+                <option value="0">Seleccionar categor&#237;a</option>
+                <option value="1">C&#243;mputo</option>
+            </select>
+            <input type="text" class="form-control" id="txtBusqueda" placeholder="Buscar en XL-Store" maxlength="100" />
+        </div>
+        <main>
+            <div id="updPanelMaster">
+                <input type="hidden" name="ctl00$MainContent$hdnerror" id="MainContent_hdnerror" />
+                <input type="hidden" name="ctl00$MainContent$hdnToken" id="MainContent_hdnToken" />
+                <input name="ctl00$MainContent$txtUsuario" type="text" maxlength="50" id="MainContent_txtUsuario" class="form-control" />
+                <input name="ctl00$MainContent$txtPassword" type="password" maxlength="50" id="MainContent_txtPassword" class="form-control" />
+                <input type="submit" name="ctl00$MainContent$L_ButtonLogin" value="Iniciar Sesi&#243;n" id="L_ButtonLogin" class="btn btn-primary btn-login btn-cloudflare-turnstile" />
+                <input type="submit" name="ctl00$MainContent$btnCancelarSiteAviso" value="Cancelar" id="MainContent_btnCancelarSiteAviso" />
+            </div>
+        </main>
+    </form>
+    <form id="FormDeOtraCosa"><input type="hidden" name="ajeno" value="no-se-envia" /></form>
+</body>
+</html>
