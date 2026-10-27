@@ -122,7 +122,12 @@ Las dos llamadas llevan la cookie de la sesión y `X-Requested-With: XMLHttpRequ
 - **Precio:** el de la cuenta de CCONOR, nunca el de lista.
 
 ### 7.4 Con el frontend
-El mock de `static/js/api.js` usa el código `'ct'` con la etiqueta «Exel del Norte». El código real es `exel`, y alinearlo queda fuera de M9.
+En el flujo real, el nombre visible sale del servidor (`Provider.name` = «Exel del Norte»). El código `'ct'` que heredaba el frontend se alineó con el real el 2026-10-27:
+- `static/js/api.js`: `PROVIDER_LABELS.exel` y `provider: 'exel'` en los datos simulados;
+- clase `badge-exel` (antes `badge-ct`) en `static/css/custom.css`, `templates/base.html` y `templates/pdf/cotizacion_pdf.html`;
+- logo `static/img/exel_online.svg` (antes `ct_online.svg`; ningún archivo lo usa).
+
+Comprobado por el usuario: el comparador ya muestra productos de Exel.
 
 ## 8. Puesta en marcha en otro entorno (equipo)
 

@@ -70,7 +70,7 @@
         border-radius: 8pt;
     }
     .badge-syscom { background-color: #FFF3EB; color: #D32F2F; border: 0.5pt solid #FFD0BA; }
-    .badge-ct { background-color: #EBF8FF; color: #0284C7; border: 0.5pt solid #BAE6FD; }
+    .badge-exel { background-color: #EBF8FF; color: #0284C7; border: 0.5pt solid #BAE6FD; }
 
     /* ---------- Totales y condiciones ---------- */
     .bottom-table { width: 100%; border-collapse: collapse; margin-top: 14pt; }
@@ -162,7 +162,7 @@
                     <span class="text-muted small">{{ item.description }}</span>
                 </td>
                 <td class="center">
-                    <span class="badge {% if item.provider == 'SYSCOM' %}badge-syscom{% else %}badge-ct{% endif %}">{{ item.provider }}</span>
+                    <span class="badge {% if item.provider == 'SYSCOM' %}badge-syscom{% else %}badge-exel{% endif %}">{{ item.provider }}</span>
                 </td>
                 <td class="center fw-bold">{{ item.qty }}</td>
                 <td class="right">{{ item.unit_price_fmt }}</td>
