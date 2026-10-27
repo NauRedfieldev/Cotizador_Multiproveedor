@@ -138,7 +138,7 @@
                     <h6 class="fw-bold mb-1">Ajustes del total</h6>
                     <p class="small text-muted">Se aplican al total; puedes cambiarlos en cualquier momento.</p>
                     <div class="row g-3">
-                        <div class="col-6"><label for="taxRate" class="form-label">IVA (%)</label><input id="taxRate" class="form-control form-control-sm" inputmode="decimal" value="16" disabled><div id="taxPermissionHint" class="small text-muted"></div></div>
+                        <div class="col-6"><label for="taxRate" class="form-label">IVA (%)</label><input id="taxRate" class="form-control form-control-sm" inputmode="decimal" value="{{ tasa_iva_inicial }}" disabled><div id="taxPermissionHint" class="small text-muted"></div></div>
                         <div class="col-6"><label for="discountPercent" class="form-label">Descuento antes de IVA (%)</label><input id="discountPercent" class="form-control form-control-sm" inputmode="decimal" value="0" disabled><div id="discountPermissionHint" class="small text-muted"></div></div>
                     </div>
                 </div>
@@ -221,4 +221,4 @@
     </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=33"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=34"></script>{% endblock %}

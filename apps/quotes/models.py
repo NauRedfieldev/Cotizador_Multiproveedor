@@ -18,9 +18,10 @@ from django.utils import timezone
 
 from .snapshot_values import decimal_limit
 from .storage import QuotePDFStorage, quote_pdf_path
+from .taxes import TASA_IVA_INICIAL, validar_tasa
 
 TWO_PLACES = Decimal("0.01")
-DEFAULT_TAX_RATE = Decimal("0.16")  # IVA México
+DEFAULT_TAX_RATE = TASA_IVA_INICIAL  # M10: la tasa inicial vive en taxes.py
 
 REVISION_COMMERCIAL_FIELDS = (
     "calculation_version", "state_fingerprint", "exchange_context_id", "discount_percent",
@@ -326,7 +327,7 @@ class QuoteRevision(models.Model):
         ]
 
     def clean(self):
-        self.tax_rate = decimal_limit(self.tax_rate, 5, 4, maximum=Decimal("1"))
+        self.tax_rate = validar_tasa(self.tax_rate)
         if self.currency != "MXN":
             raise ValidationError("M8 emite en MXN.")
         if self.exchange_rate is not None:
@@ -352,7 +353,7 @@ class QuoteRevision(models.Model):
             raise ValidationError("Versión de esquema no soportada.")
 
     def clean_fields(self, exclude=None):
-        self.tax_rate = decimal_limit(self.tax_rate, 5, 4, maximum=Decimal("1"))
+        self.tax_rate = validar_tasa(self.tax_rate)
         if self.exchange_rate is not None:
             self.exchange_rate = decimal_limit(self.exchange_rate, 18, 8, minimum=Decimal("0.00000001"))
         if self.discount_percent is not None:

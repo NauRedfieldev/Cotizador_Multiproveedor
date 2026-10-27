@@ -36,6 +36,7 @@ from .pdf import COLORES_MARCA
 from . import snapshots as commercial_services
 from .permissions import ADJUSTMENTS, FX, MANAGE, VIEW_COSTS, require_commercial_permission, set_commercial_permission
 from .snapshot_values import MAX_ITEMS, decimal_limit
+from .taxes import TASA_IVA_INICIAL
 from .snapshots import (
     ArchivedPDFError, PartidaCapturada, RevisionConflict, acrear_revision, aemitir_revision,
     authorize, crear_borrador,
@@ -1066,7 +1067,7 @@ def _header_inputs(data, actor, revision=None):
         raise _EntradaInvalida("issue_date debe tener formato YYYY-MM-DD.") from None
     tipo, context_id = _fx_context(data.get("fx_context_id"), actor, revision)
     return {"client": client_data, "conditions": client["conditions"], "valid_days": client["valid_days"],
-        "issue_date": issue_date, "tax_rate": _decimal_text(data.get("tax_rate", "0.16"), 5, 4, maximum=Decimal("1")),
+        "issue_date": issue_date, "tax_rate": _decimal_text(data.get("tax_rate", str(TASA_IVA_INICIAL)), 5, 4, maximum=Decimal("1")),
         "discount_percent": _decimal_text(data.get("discount_percent", "0"), 5, 2, maximum=Decimal("100")),
         "tipo_cambio": tipo, "exchange_context_id": context_id}
 

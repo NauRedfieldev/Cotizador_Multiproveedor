@@ -928,3 +928,25 @@ class CondicionesPredeterminadasTests(TestCase):
                                     {"text": "Dos\r\nlíneas", "order": "2", "active": "on"})
         self.assertEqual(invalida.status_code, 200)  # El formulario muestra el error, no guarda.
         self.assertEqual(list(self.modelo.objects.values_list("text", flat=True)), ["Desde el admin", "Visible en el admin"])
+
+
+class TasaIvaInicialTests(TestCase):
+    """M10: el IVA inicial del cotizador sale de apps/quotes/taxes.py, no de la plantilla."""
+
+    def setUp(self):
+        self.client.force_login(crear_asesor())
+
+    def campo_iva(self):
+        import re
+        respuesta = self.client.get(reverse("cotizador"))
+        self.assertEqual(respuesta.status_code, 200)
+        campo = re.search(r'<input id="taxRate"[^>]*>', respuesta.content.decode())
+        self.assertIsNotNone(campo)
+        return campo.group(0)
+
+    def test_muestra_la_tasa_inicial_en_porcentaje(self):
+        self.assertIn('value="16"', self.campo_iva())
+
+    def test_si_cambia_la_tasa_inicial_cambia_la_pantalla(self):
+        with mock.patch("apps.quotes.views.TASA_IVA_INICIAL", Decimal("0.085")):
+            self.assertIn('value="8.5"', self.campo_iva())
