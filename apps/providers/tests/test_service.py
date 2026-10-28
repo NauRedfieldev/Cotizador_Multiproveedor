@@ -407,6 +407,27 @@ class PruebasConfiguracion(BaseServicio):
         # Assert
         self.assertEqual((resultados, self.api.peticiones), ([], []))
 
+    async def test_codes_consulta_solo_esos_activos_y_vacio_a_ninguno(self):
+        """39b codes filtra los activos (docs/34): un inactivo de la lista no entra; [] no consulta a nadie."""
+        # Arrange
+        await self.proveedor("alfa")
+        await self.proveedor("beta")
+        await self.proveedor("dormido", active=False)
+        for code in ("alfa", "beta"):
+            self.api.responder(f"{code}.example.com", "/productos", productos(producto("X1")))
+
+        # Act
+        with adaptadores_registrados(crear_adaptador("alfa"), crear_adaptador("beta"), crear_adaptador("dormido")):
+            solo_beta = await search_all(CONSULTA, transport=self.api.transport, codes=("beta", "dormido"))
+            ninguno = await search_all(CONSULTA, transport=self.api.transport, codes=[])
+            todos = await search_all(CONSULTA, transport=self.api.transport, codes=None)
+
+        # Assert
+        self.assertEqual([r.provider_code for r in solo_beta], ["beta"])
+        self.assertEqual(ninguno, [])
+        self.assertEqual([r.provider_code for r in todos], ["alfa", "beta"])
+        self.assertEqual(len(self.api.peticiones), 3)
+
     async def test_sin_credenciales_es_error_de_configuracion_sin_peticiones(self):
         """40 Si faltan las variables PROVIDER_<CODE>_*, da ProviderConfigError y no hace peticiones."""
         # Arrange

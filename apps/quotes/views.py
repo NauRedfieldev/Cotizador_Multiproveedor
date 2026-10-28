@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -22,9 +23,10 @@ from django.core.cache import cache
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.mail import EmailMultiAlternatives
 from django.core.validators import validate_email
-from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, QueryDict
 from django.shortcuts import render
 from django.template.loader import render_to_string
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
 
@@ -357,10 +359,18 @@ async def cotizar_productos(request):
         elif "tipo_cambio" in parametros:
             del parametros["tipo_cambio"]
     request.GET = parametros
-    status, contexto = await buscar(request)
+    inmediatos, diferidos = await _reparto_de_proveedores()
+    if diferidos:
+        status, contexto = await buscar(request, codes=inmediatos, parcial=True)
+    else:
+        status, contexto = await buscar(request)
     await _recordar_ofertas_vistas(request.session, contexto)
     await _recordar_busqueda(request, contexto, status, ultima)
     await _recordar_tipo_cambio(request, contexto, recordado, usado, confirmar=accion == "confirmar")
+    if diferidos and status == 200 and (request.GET.get("q", "").strip() or request.GET.get("sku", "").strip()):
+        contexto["pendiente_url"] = await _registrar_pendiente(request, contexto, [c for c, _ in diferidos])
+        contexto["pendientes_nombres"] = [nombre for _, nombre in diferidos]
+        contexto["proveedores_activos"] = len(inmediatos) + len(diferidos)  # el JS sabe si cayeron todos
     contexto["puede_cambiar_tipo_cambio"] = puede
     contexto["tipo_cambio_etiqueta"] = ETIQUETAS_TIPO_CAMBIO_SYSCOM.get(settings.SYSCOM_TIPO_CAMBIO_CAMPO, "")
     if contexto["tipo_cambio"] is None:
@@ -374,6 +384,63 @@ async def cotizar_productos(request):
             contexto["tipo_cambio_syscom_hoy"] = actual
     # Fuera del event loop: los context processors pueden leer la sesión (ORM síncrono).
     return await sync_to_async(render)(request, PLANTILLA_COMPARADOR, contexto, status=status)
+
+
+# Carga diferida (docs/34): búsquedas cuyos proveedores lentos faltan por pedir. {id: {"params": {q, sku,
+# categoria}, "tipo_cambio": {valor, origen, fecha} | None, "codes": [...]}}; las últimas, por si hay varias pestañas.
+CLAVE_PENDIENTES = "comparador_pendientes"
+MAX_PENDIENTES = 5
+PLANTILLA_OFERTA = "_comparador_oferta.html"
+
+
+async def _reparto_de_proveedores():
+    """(codes inmediatos, [(code, nombre)] diferidos) entre los activos, según CCONOR_PROVEEDORES_DIFERIDOS."""
+    activos = [p async for p in Provider.objects.filter(active=True).order_by("code").only("code", "name")]
+    diferidos = [(p.code, p.name) for p in activos if p.code in settings.CCONOR_PROVEEDORES_DIFERIDOS]
+    return [p.code for p in activos if p.code not in settings.CCONOR_PROVEEDORES_DIFERIDOS], diferidos
+
+
+async def _registrar_pendiente(request, contexto, codes):
+    """Guarda lo necesario para pedir los diferidos después, con los mismos datos que usó la página."""
+    pendientes = dict(await request.session.aget(CLAVE_PENDIENTES, {}))
+    tipo = contexto["tipo_cambio"]
+    ident = uuid.uuid4().hex
+    pendientes[ident] = {
+        "params": {k: request.GET.get(k, "") for k in ("q", "sku", "categoria")},
+        "tipo_cambio": {"valor": f"{tipo.valor:f}", "origen": tipo.origen, "fecha": tipo.fecha.isoformat()} if tipo else None,
+        "codes": codes,
+    }
+    for clave in list(pendientes)[:-MAX_PENDIENTES]:
+        del pendientes[clave]
+    await request.session.aset(CLAVE_PENDIENTES, pendientes)
+    return reverse("comparador_diferidos", args=[ident])
+
+
+@require_GET
+@login_required
+async def comparador_diferidos(request, ident):
+    """GET /comparador/diferidos/<id>/ → JSON con las tarjetas de los proveedores diferidos (docs/34).
+
+    De un solo uso: el pendiente sale de la sesión. Usa los parámetros y el tipo de cambio que guardó la
+    página (no los del navegador) y no suma en el límite de búsquedas, que ya contó la página.
+    """
+    pendientes = dict(await request.session.aget(CLAVE_PENDIENTES, {}))
+    pendiente = pendientes.pop(ident, None)
+    if pendiente is None:
+        return JsonResponse({"html": "", "ofertas": 0, "caidos": [],
+                             "error": "Esta búsqueda ya no está disponible. Vuelve a buscar."}, status=404)
+    await request.session.aset(CLAVE_PENDIENTES, pendientes)
+    request.GET = QueryDict(mutable=True)
+    request.GET.update(pendiente["params"])
+    tipo = pendiente["tipo_cambio"]
+    fijo = TipoCambio(Decimal(tipo["valor"]), tipo["origen"], datetime.fromisoformat(tipo["fecha"])) if tipo else None
+    _, contexto = await buscar(request, fijo, codes=pendiente["codes"], contar=False, parcial=True)
+    await _recordar_ofertas_vistas(request.session, contexto)
+    html = await sync_to_async(lambda: "".join(
+        render_to_string(PLANTILLA_OFERTA, {"o": o}) for o in contexto["ofertas"]
+    ))()
+    return JsonResponse({"html": html, "ofertas": len(contexto["ofertas"]),
+                         "caidos": contexto["proveedores_caidos_nombres"], "error": contexto["error"]})
 
 
 # 22A: última búsqueda del comparador en la sesión: {"params": {q, sku, categoria}, "fecha": ISO}.
@@ -542,13 +609,18 @@ async def tipo_cambio_automatico(session, recordado):
     return nuevo
 
 
-async def buscar(request, tipo_cambio_fijo=None):
+async def buscar(request, tipo_cambio_fijo=None, *, codes=None, contar=True, parcial=False):
     """Flujo de búsqueda: M2 search_all → M6 por proveedor → M5 sobre lo que se muestra.
 
     Devuelve (status, contexto) con las seis claves de docs/26 §4 en todas las respuestas.
     200 sin q ni sku (formulario en blanco) y aunque caigan proveedores (aviso en
     proveedores_caidos); 400 si la entrada no es válida; 429 al superar el límite;
     503 si no queda ningún proveedor útil.
+
+    Carga diferida del comparador (docs/34): codes limita los proveedores consultados;
+    contar=False no suma en el límite (el paso diferido ya lo contó la página);
+    parcial=True: otra parte del comparador completa la búsqueda; sin proveedores o con todos
+    caídos no da 503 (200 con el aviso de caídos).
     """
     parametros = request.GET
     contexto = {
@@ -562,7 +634,7 @@ async def buscar(request, tipo_cambio_fijo=None):
     if not parametros.get("q", "").strip() and not parametros.get("sku", "").strip():
         return 200, contexto  # sin búsqueda: no consulta a nadie ni cuenta en el límite
 
-    if await _limite_superado(request):
+    if contar and await _limite_superado(request):
         contexto["error"] = "Demasiadas búsquedas seguidas. Espera un minuto y vuelve a intentarlo."
         return 429, contexto
     try:
@@ -577,11 +649,13 @@ async def buscar(request, tipo_cambio_fijo=None):
 
     consulta = ProductQuery(term=parametros.get("q", ""), sku=parametros.get("sku"))
     try:
-        resultados = await search_all(consulta)
+        resultados = await search_all(consulta, codes=codes)
     except Exception:  # search_all ya absorbe los ProviderError: esto es un fallo del proceso.
         logger.exception("Fallo inesperado consultando proveedores")
         contexto["error"] = "No fue posible consultar a los proveedores en este momento."
         return 503, contexto
+    if not resultados and parcial:
+        return 200, contexto  # los demás proveedores llegan en la otra parte (docs/34)
     if not resultados:
         contexto["error"] = "No hay proveedores activos para consultar."
         return 503, contexto
@@ -606,7 +680,7 @@ async def buscar(request, tipo_cambio_fijo=None):
             continue
         comparadas.extend(comparacion.por_proveedor[resultado.provider_code])
     _asignar_caidos(contexto, sorted(caidos), nombres)
-    if len(caidos) == len(resultados):
+    if len(caidos) == len(resultados) and not parcial:
         contexto["error"] = "Ningún proveedor pudo responder en este momento. Inténtalo de nuevo en unos minutos."
         return 503, contexto
 

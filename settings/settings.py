@@ -188,6 +188,11 @@ COTIZACIONES_EMISION_HABILITADA = env.bool('COTIZACIONES_EMISION_HABILITADA', de
 # Exel NET confirmado por el usuario en el portal 2026-10-27 (docs/30 B5, docs/31): MXN sin IVA.
 CCONOR_PROVIDER_PRICE_BASES = {'syscom': {'vat_basis': 'NET'}, 'exel': {'vat_basis': 'NET'}}
 
+# Carga diferida del comparador (docs/34): estos proveedores se piden después de pintar la página,
+# para no hacer esperar a los rápidos. Exel tarda ~4 s (web scraping, docs/32 §11). Para añadir uno
+# lento, su code aquí; un code inactivo se ignora. El cotizador y la API no cambian.
+CCONOR_PROVEEDORES_DIFERIDOS = ('exel',)
+
 # M7a: login con las vistas de django.contrib.auth (docs/28). Los usuarios se dan de alta en el admin.
 LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'inicio'

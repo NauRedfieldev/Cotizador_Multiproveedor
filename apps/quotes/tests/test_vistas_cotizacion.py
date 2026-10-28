@@ -4,6 +4,7 @@ CotizarProductosTests (del equipo, M7b): página en blanco, validaciones y 503 s
 proveedores activos, todo antes de cualquier HTTP. VistaCotizacionTests (V1–V16): modo
 degradado con adaptadores de prueba cuyo fetch no hace HTTP.
 """
+import json
 from datetime import datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 from unittest import mock
@@ -30,8 +31,8 @@ from apps.providers.tests.soporte import (
     producto,
     sin_red,
 )
-from apps.quotes.views import (CLAVE_TIPO_CAMBIO, CLAVE_ULTIMA_BUSQUEDA, LIMITE_COTIZACIONES, clave_limite, fecha_exacta,
-                               hace_texto)
+from apps.quotes.views import (CLAVE_OFERTAS_VISTAS, CLAVE_PENDIENTES, CLAVE_TIPO_CAMBIO, CLAVE_ULTIMA_BUSQUEDA,
+                               LIMITE_COTIZACIONES, MAX_PENDIENTES, clave_limite, fecha_exacta, hace_texto)
 
 PLANTILLA = "comparador.html"
 
@@ -355,6 +356,7 @@ class VistaCotizacionTests(TestCase):
         self.assertIsNone(matches["alfa"].canonico)
         self.assertEqual(matches["alfa"].motivo, "FALLBACK_SIN_CATEGORIA")
 
+    @override_settings(CCONOR_PROVEEDORES_DIFERIDOS=())  # en la página, no en la carga diferida (docs/34)
     async def test_v10c_exel_declara_la_misma_confianza_que_syscom(self):
         # M9 (docs/31 P11): el codigo_proveedor de Exel es el SKU del fabricante, en model y mpn.
         categoria = await Category.objects.acreate(name="Redes sintéticas")
@@ -760,6 +762,147 @@ class VistaCotizacionTests(TestCase):
         respuesta = await self.buscar([adaptador("alfa", mxn("1", "1.00"))])
         self.assertEqual(respuesta.resolver_match.url_name, "comparador")
         self.assertEqual(reverse("cotizar_productos"), reverse("comparador"))
+
+
+@tag("django_db")
+@override_settings(OFERTAS_POR_PROVEEDOR=3, CCONOR_PROVEEDORES_DIFERIDOS=("beta",))
+class CargaDiferidaTests(TestCase):
+    """D1–D11: la página pinta los proveedores rápidos y los diferidos llegan por JS (docs/34), sin red."""
+
+    def setUp(self):
+        cache.clear()
+        crear_proveedor("alfa")
+        crear_proveedor("beta")
+        self.asesor = crear_asesor()
+        self.async_client.force_login(self.asesor)
+
+    async def pagina(self, adaptadores, **parametros):
+        parametros.setdefault("q", "camara ip")
+        with adaptadores_registrados(*adaptadores), sin_red():
+            return await self.async_client.get(reverse("cotizar_productos"), parametros)
+
+    async def diferidos(self, adaptadores, url):
+        with adaptadores_registrados(*adaptadores), sin_red():
+            respuesta = await self.async_client.get(url)
+        return respuesta, json.loads(respuesta.content)
+
+    async def pendientes(self):
+        return await (await self.async_client.asession()).aget(CLAVE_PENDIENTES, {})
+
+    async def test_d1_la_pagina_consulta_solo_los_inmediatos_y_deja_pendientes_los_diferidos(self):
+        llamadas = []
+        respuesta = await self.pagina([adaptador("alfa", mxn("1", "100.00"), llamadas=llamadas),
+                                       adaptador("beta", mxn("2", "50.00"), llamadas=llamadas)])
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(llamadas, ["alfa"])
+        self.assertEqual([o.oferta.provider_code for o in respuesta.context["ofertas"]], ["alfa"])
+        url = respuesta.context["pendiente_url"]
+        self.assertTrue(url.startswith("/comparador/diferidos/"))
+        self.assertContains(respuesta, f'data-pendiente-url="{url}"')
+        self.assertContains(respuesta, "Buscando en Beta")
+        self.assertContains(respuesta, 'data-proveedores="2"')
+        [pendiente] = (await self.pendientes()).values()
+        self.assertEqual(pendiente["codes"], ["beta"])
+        self.assertEqual(pendiente["params"]["q"], "camara ip")
+
+    async def test_d2_el_endpoint_devuelve_las_tarjetas_de_los_diferidos_una_sola_vez(self):
+        adaptadores = [adaptador("alfa", mxn("1", "100.00")), adaptador("beta", mxn("2", "50.00", nombre="Cámara IP B"))]
+        url = (await self.pagina(adaptadores)).context["pendiente_url"]
+        respuesta, datos = await self.diferidos(adaptadores, url)
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual((datos["ofertas"], datos["caidos"], datos["error"]), (1, [], None))
+        for fragmento in ('data-proveedor="beta"', 'data-id="2"', 'data-precio="50', 'data-nivel="',
+                          'data-sin-coincidencia="', 'data-bandeja-clave="beta:2"', "Cámara IP B"):
+            self.assertIn(fragmento, datos["html"])
+        self.assertEqual(await self.pendientes(), {})
+        otra, datos = await self.diferidos(adaptadores, url)
+        self.assertEqual(otra.status_code, 404)
+        self.assertIn("Vuelve a buscar", datos["error"])
+
+    async def test_d3_las_ofertas_diferidas_se_pueden_agregar_a_la_bandeja(self):
+        adaptadores = [adaptador("alfa", mxn("1", "100.00")), adaptador("beta", mxn("2", "50.00"))]
+        url = (await self.pagina(adaptadores)).context["pendiente_url"]
+        await self.diferidos(adaptadores, url)
+        vistas = await (await self.async_client.asession()).aget(CLAVE_OFERTAS_VISTAS)
+        self.assertIn("beta:2", vistas)
+        respuesta = await self.async_client.post(reverse("api_bandeja"), json.dumps({"key": "beta:2"}),
+                                                 content_type="application/json")
+        self.assertEqual(respuesta.status_code, 200)
+
+    async def test_d4_el_paso_diferido_no_cuenta_en_el_limite(self):
+        adaptadores = [adaptador("alfa", mxn("1", "100.00")), adaptador("beta", mxn("2", "50.00"))]
+        url = (await self.pagina(adaptadores)).context["pendiente_url"]
+        self.assertEqual(await cache.aget(clave_limite(self.asesor)), 1)
+        await self.diferidos(adaptadores, url)
+        self.assertEqual(await cache.aget(clave_limite(self.asesor)), 1)
+
+    async def test_d5_usa_el_tipo_de_cambio_que_guardo_la_pagina(self):
+        adaptadores = [adaptador("alfa", mxn("1", "100.00")), adaptador("beta", usd("2", "10.00"))]
+        url = (await self.pagina(adaptadores, tipo_cambio="17.50")).context["pendiente_url"]
+        respuesta, datos = await self.diferidos(adaptadores, url)  # la URL no lleva el tipo de cambio
+        self.assertEqual((datos["error"], datos["ofertas"]), (None, 1))
+        self.assertIn('data-precio="175', datos["html"])
+
+    async def test_d6_si_los_diferidos_caen_van_a_caidos(self):
+        adaptadores = [adaptador("alfa", mxn("1", "100.00")), adaptador("beta", error=TimeoutError())]
+        url = (await self.pagina(adaptadores)).context["pendiente_url"]
+        respuesta, datos = await self.diferidos(adaptadores, url)
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual((datos["ofertas"], datos["caidos"], datos["error"], datos["html"]), (0, ["Beta"], None, ""))
+
+    async def test_d7_sin_inmediatos_utiles_la_pagina_espera_a_los_diferidos_sin_503(self):
+        caidos = await self.pagina([adaptador("alfa", error=TimeoutError()), adaptador("beta")])
+        self.assertEqual(caidos.status_code, 200)
+        self.assertIsNone(caidos.context["error"])
+        self.assertEqual(caidos.context["proveedores_caidos"], ["alfa"])
+        self.assertIn("pendiente_url", caidos.context)
+        await Provider.objects.filter(code="alfa").aupdate(active=False)
+        solo_diferidos = await self.pagina([adaptador("alfa"), adaptador("beta")])
+        self.assertEqual(solo_diferidos.status_code, 200)
+        self.assertIsNone(solo_diferidos.context["error"])
+        self.assertContains(solo_diferidos, 'id="comparadorSinResultados" hidden')
+        self.assertContains(solo_diferidos, 'id="comparadorAvisoCaidos" hidden')
+        self.assertIn("pendiente_url", solo_diferidos.context)
+
+    async def test_d8_sin_busqueda_o_con_error_no_hay_pendiente(self):
+        adaptadores = [adaptador("alfa", mxn("1", "100.00")), adaptador("beta")]
+        casos = [({"q": ""}, 200), ({"categoria": "999"}, 400)]
+        for parametros, status in casos:
+            with self.subTest(parametros=parametros):
+                respuesta = await self.pagina(adaptadores, **parametros)
+                self.assertEqual(respuesta.status_code, status)
+                self.assertNotIn("pendiente_url", respuesta.context)
+        await cache.aset(clave_limite(self.asesor), LIMITE_COTIZACIONES, 60)
+        limite = await self.pagina(adaptadores)
+        self.assertEqual(limite.status_code, 429)
+        self.assertNotIn("pendiente_url", limite.context)
+        self.assertEqual(await self.pendientes(), {})
+
+    @override_settings(CCONOR_PROVEEDORES_DIFERIDOS=())
+    async def test_d9_sin_diferidos_la_pagina_consulta_a_todos_como_antes(self):
+        llamadas = []
+        respuesta = await self.pagina([adaptador("alfa", mxn("1", "100.00"), llamadas=llamadas),
+                                       adaptador("beta", mxn("2", "50.00"), llamadas=llamadas)])
+        self.assertEqual(sorted(llamadas), ["alfa", "beta"])
+        self.assertNotIn("pendiente_url", respuesta.context)
+        self.assertNotContains(respuesta, "comparadorPendiente")
+
+    async def test_d10_un_id_desconocido_da_404_y_sin_sesion_no_hay_acceso(self):
+        respuesta, datos = await self.diferidos([], reverse("comparador_diferidos", args=["no-existe"]))
+        self.assertEqual(respuesta.status_code, 404)
+        self.assertEqual((datos["html"], datos["ofertas"]), ("", 0))
+        await self.async_client.alogout()
+        anonimo = await self.async_client.get(reverse("comparador_diferidos", args=["no-existe"]))
+        self.assertEqual(anonimo.status_code, 302)
+
+    async def test_d11_solo_se_guardan_los_ultimos_pendientes(self):
+        adaptadores = [adaptador("alfa", mxn("1", "100.00")), adaptador("beta")]
+        urls = [(await self.pagina(adaptadores, q=f"camara {n}")).context["pendiente_url"] for n in range(MAX_PENDIENTES + 1)]
+        pendientes = await self.pendientes()
+        self.assertEqual(len(pendientes), MAX_PENDIENTES)
+        self.assertEqual([p["params"]["q"] for p in pendientes.values()], [f"camara {n}" for n in range(1, MAX_PENDIENTES + 1)])
+        respuesta, _ = await self.diferidos(adaptadores, urls[0])
+        self.assertEqual(respuesta.status_code, 404)
 
 
 @tag("django_db")

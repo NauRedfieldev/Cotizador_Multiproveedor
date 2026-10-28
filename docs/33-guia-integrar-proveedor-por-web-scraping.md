@@ -365,6 +365,7 @@ Además de P1–P16 (docs/20 §10), cada scraper responde estas, con alternativa
 | | `apps/quotes/views.py`: `CONFIANZA_POR_PROVEEDOR['<code>']` **solo** si `model`/`mpn` son del fabricante (con su prueba, como `test_v10c`) | Ninguna migración |
 | | `static/js/api.js` (`PROVIDER_LABELS`) y la clase `badge-<code>` (CSS, `base.html`, PDF) si el proveedor se muestra con insignia propia | |
 | | `docs/30` (su fila de pendientes), `MEMORY.md`, `AGENTS.md` (§Arquitectura: el scraper nuevo) | |
+| | `settings/settings.py`: `CCONOR_PROVEEDORES_DIFERIDOS` si su búsqueda es lenta (lo normal en web scraping; Exel tarda ~4 s): el comparador lo carga después (docs/34 §7) | |
 
 `apps/providers_web/base.py` y `extraccion.py` solo se tocan para añadir algo **genérico** que necesite el nuevo sitio, con sus pruebas; nunca para algo específico de un proveedor.
 

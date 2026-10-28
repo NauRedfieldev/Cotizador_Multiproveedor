@@ -160,6 +160,9 @@ comparador.html (M7b) ◄── contexto §4 ── cotizar_productos (M7)
 
 - **providers:** la vista no conoce los adaptadores. Un proveedor nuevo que se registre y se active entra
   solo en la búsqueda; solo hay que añadir su confianza (§5) si se quiere emparejar por clave.
+- **Carga diferida (2026-10-28, docs/34):** los proveedores de `CCONOR_PROVEEDORES_DIFERIDOS` (hoy Exel) no
+  se consultan al pintar la página; `static/js/comparador.js` los pide después a `/comparador/diferidos/<id>/`
+  e intercala sus tarjetas. La API `/api/v1/products/search/` sigue consultando a todos a la vez.
 - **catalog:** solo lectura (`ProductoCanonico`, `Category` y sinónimos). No se guarda ninguna decisión.
 - **quotes:** no se crea ni modifica ninguna `Quote`. Persistir la cotización y congelar precio, moneda y
   tipo de cambio queda para M8 (snapshot, docs/23).

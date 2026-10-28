@@ -1,0 +1,68 @@
+{% load l10n %}{# Tarjeta de una oferta del comparador. La usan comparador.html y la carga diferida (docs/34): los data-* dan el orden de la vista (nivel, precio en MXN, proveedor, id) para que static/js/comparador.js intercale las que llegan después. #}
+<div class="cconor-card p-3 mb-3 comparador-oferta{% if o.es_mejor_precio %} border border-success{% endif %}"
+     data-nivel="{{ o.nivel }}" data-precio="{{ o.precio_comparable|unlocalize }}" data-proveedor="{{ o.oferta.provider_code }}"
+     data-id="{{ o.oferta.external_id }}" data-sin-coincidencia="{% if o.sin_coincidencia %}1{% else %}0{% endif %}">
+    <div class="row g-3 align-items-center">
+        <div class="col-md-5 d-flex align-items-center gap-3">
+            {% if o.oferta.image_url %}
+            <img class="oferta-foto" src="{{ o.oferta.image_url }}" alt="Foto de {{ o.oferta.name }}" width="112" height="112"
+                 loading="lazy" decoding="async" referrerpolicy="no-referrer">
+            {% else %}
+            <div class="oferta-foto oferta-sin-foto" role="img" aria-label="El proveedor no envió foto"><i class="bi bi-image" aria-hidden="true"></i>Sin foto</div>
+            {% endif %}
+            <div class="oferta-texto">
+                <h6 class="fw-bold mb-1">{{ o.oferta.name }}</h6>
+                <div class="d-flex flex-wrap align-items-center gap-2 small text-muted">
+                    <span class="badge text-bg-light border">
+                        <i class="bi bi-shop me-1"></i>{{ o.proveedor_nombre }}
+                    </span>
+                    {% if o.oferta.brand %}<span><i class="bi bi-bookmark me-1"></i>{{ o.oferta.brand }}</span>{% endif %}
+                    {% if o.oferta.model %}<span class="font-monospace"><i class="bi bi-cpu me-1"></i>{{ o.oferta.model }}</span>{% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2 text-md-center">
+            <div class="fs-5 fw-bold" style="color: var(--cconor-azul-marino);">${{ o.precio_comparable|floatformat:2 }} MXN</div>
+            {% if o.es_mejor_precio %}
+            <span class="badge text-bg-success">Mejor precio</span>
+            {% endif %}
+            <div class="small text-muted">Precio original de referencia: {{ o.oferta.price }} {{ o.oferta.currency }}</div>
+        </div>
+        <div class="col-md-2 small">
+            {% if o.oferta.stock is None %}
+            <span class="text-secondary"><i class="bi bi-question-circle me-1"></i>Disponibilidad no informada</span>
+            {% elif o.oferta.stock == 0 %}
+            <span class="text-danger"><i class="bi bi-x-octagon me-1"></i>Sin existencias</span>
+            {% else %}
+            <span class="text-success"><i class="bi bi-check-circle me-1"></i>{{ o.oferta.stock }} disponibles</span>
+            {% endif %}
+        </div>
+        <div class="col-md-3 d-flex flex-column gap-2">
+            {# 19A: agrega esta oferta exacta a la bandeja (static/js/main.js); cada clic suma una pieza. #}
+            <button type="button" class="btn btn-cconor-primary btn-sm d-inline-flex align-items-center justify-content-center gap-1 w-100 bandeja-agregar"
+                    data-bandeja-clave="{{ o.oferta.provider_code }}:{{ o.oferta.external_id }}" aria-label="Agregar {{ o.oferta.name }} de {{ o.proveedor_nombre }} a la bandeja">
+                <i class="bi bi-plus-lg" aria-hidden="true"></i> <span>Agregar</span>
+            </button>
+            {% if o.oferta.product_url %}
+            <a class="btn btn-outline-primary btn-sm d-inline-flex align-items-center justify-content-center gap-1 w-100"
+                href="{{ o.oferta.product_url }}" target="_blank" rel="noopener noreferrer"
+                title="Abre la ficha pública del producto en una pestaña nueva">
+                Ver en {{ o.proveedor_nombre }} <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+            </a>
+            {% endif %}
+            {% if o.oferta.model %}
+            <a class="small text-center fw-semibold" href="{% url 'cotizador' %}?sku={{ o.oferta.model|urlencode }}"
+                title="Buscar este modelo y seleccionar una captura comercial; no agrega ni cambia el tipo de cambio automáticamente">Buscar en cotizador</a>
+            {% endif %}
+        </div>
+    </div>
+    {% if o.match.estado == 'AUTO_MATCH' %}
+    <div class="small mt-2 pt-2 border-top d-flex align-items-center gap-1" style="color: #198754;">
+        <i class="bi bi-patch-check-fill"></i> Identificado: {{ o.match.canonico.descripcion }}
+    </div>
+    {% elif o.match.estado == 'REVISION_MANUAL' %}
+    <div class="small mt-2 pt-2 border-top d-flex align-items-center gap-1" style="color: var(--cconor-naranja);">
+        <i class="bi bi-patch-question-fill"></i> Posible coincidencia: requiere revisión
+    </div>
+    {% endif %}
+</div>

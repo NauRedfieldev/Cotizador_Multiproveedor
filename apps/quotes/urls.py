@@ -10,6 +10,8 @@ urlpatterns = [
     # 'cotizar_productos' es el action del formulario (reverse encuentra la segunda).
     path("comparador/", views.cotizar_productos, name="comparador"),
     path("comparador/", views.cotizar_productos, name="cotizar_productos"),
+    # Carga diferida (docs/34): los proveedores lentos llegan después, por JS, con un id de un solo uso.
+    path("comparador/diferidos/<str:ident>/", views.comparador_diferidos, name="comparador_diferidos"),
     # M7a: misma búsqueda en JSON para el cotizador (docs/28).
     path("api/v1/products/search/", api.buscar_productos, name="api_buscar_productos"),
     path("api/v1/quotes/preview/", api.preview_nueva, name="api_preview_nueva"),
