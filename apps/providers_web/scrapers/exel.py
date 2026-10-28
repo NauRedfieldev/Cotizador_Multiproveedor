@@ -6,13 +6,17 @@ precio de la cuenta de CCONOR). Estructura confirmada con el sitio real el 2026-
 
 Solo aporta lo específico de Exel. El núcleo de M2 resuelve el paralelismo, el timeout, la sesión
 (guardada en ProviderToken como token y renovada una vez ante un 401) y el descarte de ofertas.
+Cada búsqueda correcta se guarda SEGUNDOS_CACHE en la caché de Django (docs/32 §11).
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from typing import Any, Mapping
 
 import httpx
+from django.core.cache import cache
 
 from apps.providers.adapters.base import NewToken, parse_json, parse_price, raise_for_status
 from apps.providers.contracts import ProductQuery, ProviderOffer
@@ -40,6 +44,9 @@ PARAMETROS_FIJOS = {
     "pruebas": "false",
 }
 MAX_CARACTERES = 100  # maxlength del buscador de la tienda
+# Exel tarda ~6 s por búsqueda (búsqueda + precios, medido el 2026-10-28, docs/32 §11): una búsqueda
+# repetida se sirve de la caché. La cuenta de CCONOR es una sola, así que vale para todos los asesores.
+SEGUNDOS_CACHE = 5 * 60
 # Lo que responde un servicio de la tienda sin sesión (según Scripts/buscar.js).
 SIN_SESION = ("sin_usuario", "sin_cliente", "logout")
 # W9: raw solo lleva estos campos; nunca los datos del agente de Exel ni la localidad de CCONOR.
@@ -91,6 +98,9 @@ class ExelScraper(WebScraperAdapter):
         return NewToken(sesion, VIDA_SESION)
 
     async def fetch(self, query: ProductQuery, client: httpx.AsyncClient) -> list[Mapping[str, Any]]:
+        clave = _clave_cache(query)
+        if (guardado := await cache.aget(clave)) is not None:
+            return guardado  # ni sesión ni peticiones
         cookie = await self.token(client)
         respuesta = await client.get(
             f"{self._base_url}/Productos/buscarJSON.aspx",
@@ -106,7 +116,9 @@ class ExelScraper(WebScraperAdapter):
             productos = [p for p in productos if _mismo_codigo(p, query.sku)]
         productos = productos[: query.limit]
         precios = await self._precios(productos, cookie, client)  # sin productos, no pide nada
-        return [_crudo(p, precios) for p in productos]
+        items = [_crudo(p, precios) for p in productos]
+        await cache.aset(clave, items, SEGUNDOS_CACHE)  # solo una respuesta correcta; un error no llega aquí
+        return items
 
     def parse_offer(self, item: Mapping[str, Any]) -> ProviderOffer:
         descripcion = item["descripcion"]
@@ -192,6 +204,12 @@ def _crudo(producto: Any, precios: Mapping[str, Mapping[str, Any]]) -> Any:
     if precio is not None:
         crudo["precios"] = dict(precio)
     return crudo
+
+
+def _clave_cache(query: ProductQuery) -> str:
+    """Lo que decide el resultado: el sku (filtra), el texto enviado y limit. Sin cookie ni credenciales."""
+    busqueda = [query.sku or None, None if query.sku else _recortar(query.term), query.limit]
+    return "exel:busqueda:" + hashlib.sha256(json.dumps(busqueda).encode()).hexdigest()
 
 
 def _mismo_codigo(producto: Any, sku: str) -> bool:
