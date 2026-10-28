@@ -250,6 +250,8 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!abierta) volar(b);
         if (await cambiar(api.trayAdd(clave)) && !abierta) avisar(items.find(i => i.key === clave));
     });
+    // Carga diferida del comparador (docs/34): las tarjetas que llegan después también marcan si ya están en la bandeja.
+    document.addEventListener('comparador:ofertas', () => pintar(items));
     // 6A: destino de la bandeja. «Borrador» lista los borradores propios (v2) y lleva al cotizador con
     // ?folio=…&revision=…&bandeja=traer: allí se vuelve a consultar al proveedor y se agrega; no se guarda solo.
     const ir = $('bandejaIr');

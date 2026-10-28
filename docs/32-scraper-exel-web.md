@@ -47,12 +47,15 @@ await search_all(ProductQuery(term="camara ip"))      # o ProductQuery(sku="DH-I
             ├─ GET {base_url}/Productos/buscarJSON.aspx?buscar=…&(parámetros fijos)  → {"Table": [...]}
             │    con sku: solo los de codigo_proveedor idéntico; luego recorte a limit
             ├─ GET {base_url}/Productos/buscarJSONprice.aspx?listaproductos=id|id|…  → precios de CCONOR
+            │    (lotes de 20 ids pedidos a la vez, §11)
             └─ cada producto: solo los campos permitidos + su precio
        └─ parse_offer de cada producto (los inválidos se descartan y se cuentan)
   ◄─ ProviderResult("exel", ofertas, error, elapsed_ms, discarded)
 ```
 
 Medido en la verificación: unos 3,5 s con inicio de sesión y 2,3 s reutilizándola. `timeout_ms` = 10000 cubre el login y las dos peticiones.
+
+Con el `limit` real (60), el 2026-10-28: 9,9 s con login y 5,9 s sin él. Desde entonces, una búsqueda repetida en 5 min sale de la caché sin pedir nada a Exel (§11).
 
 ### 4.1 Qué se envía a Exel
 
@@ -155,6 +158,47 @@ Red de seguridad: `sin_red()`, `credenciales_de_prueba("exel")` y `ApiFalsa` de 
 - **El sitio puede cambiar.** Si cambian el formulario o los servicios JSON, el resultado lleva `ProviderResponseError("La estructura del sitio cambió …")`: nunca una lista vacía silenciosa.
 - **Cloudflare Turnstile** está cargado en la página de acceso pero hoy inactivo. Si Exel lo activa, el login automático deja de funcionar (se verá como login rechazado) y **no se evade**: habrá que hablar con Exel.
 - **Una búsqueda descarga todos los resultados** (~615 KB para «camara ip»), porque Exel no pagina. Funciona dentro de `timeout_ms`, pero es lo más pesado de la consulta.
-- **Respuesta con la sesión caducada:** el diseño sigue lo que espera el JavaScript del propio sitio (`Scripts/buscar.js`). No se ha observado en real, para no gastar peticiones.
+- **Respuesta con la sesión caducada:** el diseño sigue lo que espera el JavaScript del propio sitio (`Scripts/buscar.js`). No se ha observado en real, para no gastar peticiones. La sonda del 2026-10-28 no fue concluyente: se quedó colgada durante una caída del sitio (§11).
 - **Cotizador:** falta probar de extremo a extremo que una oferta de Exel se añade a una cotización (§7.3).
 - **Promociones y precios por volumen** (`origen`, escalas): `precio` ya trae el precio vigente de la cuenta. Las escalas no se usan y solo `origen` y `vigencia` quedan en `raw`.
+
+## 11. Rendimiento y caché de búsquedas (2026-10-28)
+
+**Problema:** desde que se añadió Exel, una búsqueda del comparador pasó de ser casi inmediata a tardar unos 5 s. `search_all` espera a todos los proveedores (`asyncio.gather`), así que manda el más lento.
+
+**Medición real** (docs/31 §10, `ProductQuery(term="camara ip")` con `limit` 60):
+
+| Paso | Con login | Sesión ya abierta |
+|---|---|---|
+| Login (GET + POST `Acceso`) | 587 + 2460 ms | — |
+| `buscarJSON` (598 KB: Exel devuelve todos los productos) | 3905 ms | 2971 ms |
+| `buscarJSONprice` (60 ids) | 2921 ms | 2897 ms |
+| **Total Exel** | **9942 ms** | **5880 ms** |
+| SYSCOM / M5 (120 ofertas, local) | ~1 s / 114 ms | ~1 s / 118 ms |
+
+Casi todo el tiempo es del servidor de Exel. Los precios necesitan los ids de la búsqueda, así que las dos peticiones van en secuencia. Nuestro código, SYSCOM y M5 no son el problema.
+
+**Solución aplicada: caché de resultados en `ExelScraper.fetch`:**
+- **Dónde:** al principio de `fetch`, antes de pedir la sesión. Si la búsqueda está guardada, no se consulta `ProviderToken` ni se hace ninguna petición a Exel.
+- **Caché:** la de Django (`django.core.cache.cache`, `aget`/`aset`), la misma que usa `apps/quotes/views.py`. No hay `CACHES` en settings, así que es LocMem: una por proceso. Con varios procesos, cada uno tiene la suya.
+- **Clave:** `exel:busqueda:` + sha256 de `[sku, texto enviado, limit]` (`_clave_cache`). Con `sku`, el término no cuenta, porque se envía el sku y se filtra por él. El texto es el ya normalizado (`_recortar`), sin pasar a minúsculas: no está comprobado que Exel ignore las mayúsculas. La clave no lleva cookie ni credenciales.
+- **Valor:** la lista que devuelve `fetch`, con la lista blanca W9 (sin datos personales) y precios en `Decimal`. Una búsqueda sin resultados (`[]`) también se guarda.
+- **Vida:** `SEGUNDOS_CACHE` = 300 (5 min). La cuenta de CCONOR es la misma para todos los asesores, así que el resultado vale para todos. Un precio o unas existencias pueden tener hasta 5 min de antigüedad.
+- **Qué no se guarda:** los errores (HTTP, sesión caducada, estructura cambiada). Lanzan una excepción antes del `aset`, así que la siguiente búsqueda vuelve a preguntar a Exel.
+
+**Cómo se conecta:** M2 no cambia. `search_all` llama a `fetch` igual que siempre; si hay un 401, el reintento del núcleo vuelve a llamar a `fetch`, y como el error no se guardó, va a Exel. `catalog` y `quotes` reciben las mismas ofertas: `parse_offer` se ejecuta también sobre lo que sale de la caché.
+
+**Resultado verificado en real:** primera búsqueda, 5,4 s de Exel; la misma búsqueda repetida, **2 ms y 0 peticiones**.
+
+**Solución aplicada (paso 2): precios en lotes paralelos en `ExelScraper._precios`:**
+- **Medición** (docs/31 §10, lotes de ids disjuntos): `buscarJSONprice` tarda unos 45 ms por id (5 → 327 ms, 20 → 879 ms, 60 → 2698 ms). Exel atiende varios lotes a la vez sin penalizar: 2 lotes de 30 tardan 1478 ms en total.
+- **Cómo funciona:** los ids válidos se parten en lotes de `TAMANO_LOTE` = 20 y cada lote se pide con `_lote_de_precios`, todos a la vez con `asyncio.gather` (la concurrencia que permite AGENTS.md). Luego se juntan los precios. Siguen saliendo los mismos productos (hasta `limit`); solo cambia cómo se piden sus precios.
+- **Errores:** `gather` usa `return_exceptions=True`, así que se esperan todos los lotes y después se lanza el primer error, en el orden de los lotes. No quedan peticiones sueltas si el núcleo reintenta tras un 401. Un lote fallido tira la búsqueda entera, que tampoco se guarda en la caché: nunca desaparecen ofertas en silencio por falta de precio.
+- **Por qué 20:** con 3 lotes se recupera casi toda la ganancia. Lotes más pequeños apenas ahorran más (los ~3 s de `buscarJSON` no se pueden reducir) y multiplican las peticiones a Exel.
+- **Resultado verificado en real:** Exel pasa de 5880 ms a **4146 ms** (`buscarJSON` 2801 ms + 3 lotes a la vez en ~1,3 s).
+
+**Descartado por ahora: alargar la sesión.** La idea era subir `VIDA_SESION` de 20 min a 12 h para no pagar el login (~3 s) cada 15 min, confiando en que una sesión caducada se detecta (401) y se renueva. La sonda del 2026-10-28 con una sesión caducada se quedó colgada en vez de redirigir (coincidió con una caída del sitio). Si es lo normal, una sesión de 12 h convertiría cada caducidad en un timeout. Hace falta una sonda nueva con el sitio estable antes de plantearlo de nuevo.
+
+**Otras palancas, sin aplicar** (cada una necesita una decisión o un presupuesto):
+- **`timeout_ms` (admin):** la búsqueda con login roza los 10 s. Subirlo evita perder Exel en esas búsquedas, pero alarga la espera cuando Exel se cuelga; bajarlo hace lo contrario.
+- **Carga progresiva en el frontend** (SYSCOM primero, Exel después): toca la vista, la API de docs/26 y el frontend.

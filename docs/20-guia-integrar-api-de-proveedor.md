@@ -431,6 +431,7 @@ Cada proveedor nuevo responde estas preguntas en su SDD, con alternativas y una 
 | `apps/providers/tests/test_adaptador_<modulo>.py` | `.env_example` (solo los nombres de las variables) | Otros adaptadores, `apps/catalog/**`, `apps/quotes/**` |
 | `apps/providers/tests/muestras/<modulo>_*.json` | `.env` local (valores reales, nunca en git) | `settings/**`, `requirements*.txt` (nada de dependencias nuevas) |
 | `docs/NN-sdd-mX-<code>.md` y `docs/NN+1-adaptador-<code>.md` | `MEMORY.md`; `AGENTS.md` (§Arquitectura: el adaptador nuevo) | Ninguna migración: no hay cambios de modelo |
+| | `settings/settings.py`: `CCONOR_PROVEEDORES_DIFERIDOS` **solo** si su búsqueda es lenta (más de ~2 s): el comparador lo carga después (docs/34 §7) | |
 
 ## 12. Criterio de aceptación
 

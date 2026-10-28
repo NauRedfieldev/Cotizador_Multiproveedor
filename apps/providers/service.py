@@ -30,13 +30,18 @@ async def search_all(
     query: ProductQuery,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
+    codes: Iterable[str] | None = None,
 ) -> list[ProviderResult]:
     """Un ProviderResult por cada Provider activo, en orden de code.
 
-    Nunca lanza ProviderError: los errores van dentro de cada resultado. Deja propagar
-    asyncio.CancelledError. Solo escribe en la BD para guardar o invalidar tokens.
+    Con codes, solo los activos de esa lista (la carga diferida del comparador, docs/34); vacía no
+    consulta a nadie. Nunca lanza ProviderError: los errores van dentro de cada resultado. Deja
+    propagar asyncio.CancelledError. Solo escribe en la BD para guardar o invalidar tokens.
     """
-    proveedores = [p async for p in Provider.objects.filter(active=True).order_by("code")]
+    activos = Provider.objects.filter(active=True)
+    if codes is not None:
+        activos = activos.filter(code__in=list(codes))
+    proveedores = [p async for p in activos.order_by("code")]
     if not proveedores:
         return []
     # Sin timeout propio: manda el wait_for con Provider.timeout_ms (el de httpx, 5 s, cortaría antes).

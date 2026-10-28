@@ -1,9 +1,10 @@
-"""SDD M9 §8, pruebas E1–E28: scraper de la tienda de Exel del Norte.
+"""SDD M9 §8, pruebas E1–E28 (+ E29–E32: caché de búsquedas; E33–E34: precios por lotes; docs/32 §11): scraper de la tienda de Exel del Norte.
 
 Sin red y sin credenciales reales: ApiFalsa, sin_red() y credenciales_de_prueba() de
 apps/providers/tests/soporte.py. Las muestras de muestras/ tienen la estructura real del sitio
 (consultado el 2026-10-27, docs/31 §10) con valores ficticios.
 """
+import asyncio
 import copy
 import json
 from decimal import Decimal
@@ -12,6 +13,7 @@ from unittest import mock
 from urllib.parse import parse_qs
 
 import httpx
+from django.core.cache import cache
 from django.test import SimpleTestCase, TestCase, tag
 
 from apps.providers.adapters.base import NewToken
@@ -302,6 +304,7 @@ class RequestTokenTests(SimpleTestCase):
 class FetchTests(SimpleTestCase):
     def setUp(self):
         self.enterContext(sin_red())
+        cache.clear()  # la LocMemCache dura toda la suite: cada prueba empieza sin búsquedas guardadas
 
     async def buscar(self, api, query, adaptador=None):
         async with httpx.AsyncClient(transport=api.transport) as cliente:
@@ -496,6 +499,157 @@ class FetchTests(SimpleTestCase):
         self.assertEqual(api.rutas_pedidas(), [BUSQUEDA])
         self.assertTrue(all("precios" not in i for i in items))
 
+    async def test_una_busqueda_repetida_sale_de_la_cache_sin_sesion_ni_peticiones(self):
+        """E29 La misma búsqueda (con los espacios ya normalizados) no pide sesión ni hace peticiones; [] también se guarda."""
+        for busqueda, primera, repetida in (
+            ("exel_busqueda", ProductQuery(term="camara ip"), ProductQuery(term="  camara   ip ")),
+            ("exel_sin_resultados", ProductQuery(term="zzz"), ProductQuery(term="zzz")),
+        ):
+            with self.subTest(busqueda=busqueda):
+                # Arrange
+                api = api_de_busqueda(busqueda=busqueda)
+                adaptador = con_sesion(scraper())
+                esperado = await self.buscar(api, primera, adaptador)
+                api.peticiones.clear()
+
+                # Act
+                items = await self.buscar(api, repetida, adaptador)
+
+                # Assert
+                self.assertEqual(items, esperado)
+                self.assertEqual(api.peticiones, [])
+                self.assertEqual(adaptador.token.await_count, 0)  # buscar() le pone un token nuevo en cada llamada
+
+    async def test_otro_termino_sku_o_limit_no_aprovechan_la_cache(self):
+        """E30 La clave cambia con el texto enviado, el sku (que filtra) y limit; con sku, term no cuenta."""
+        # Arrange
+        await self.buscar(api_de_busqueda(), ProductQuery(term="camara ip"))
+        for query in (
+            ProductQuery(term="camara"),
+            ProductQuery(term="camara ip", sku="camara ip"),
+            ProductQuery(term="camara ip", sku="DM-IPC-900001"),
+            ProductQuery(term="camara ip", limit=1),
+        ):
+            with self.subTest(query=query):
+                api = api_de_busqueda(busqueda="exel_modelo" if query.sku else "exel_busqueda")
+
+                # Act
+                await self.buscar(api, query)
+
+                # Assert
+                self.assertEqual(api.rutas_pedidas()[0], BUSQUEDA)
+        self.assertEqual(
+            exel._clave_cache(ProductQuery(term="camara", sku="DM-IPC-900001")),
+            exel._clave_cache(ProductQuery(term="otra cosa", sku="DM-IPC-900001")),
+        )
+
+    async def test_un_error_no_se_guarda_en_la_cache(self):
+        """E31 Tras un error (HTTP, sesión caducada o estructura cambiada) la misma búsqueda vuelve a pedirse."""
+        for ruta, fallo in (
+            (RUTA_BUSQUEDA, httpx.Response(500)),
+            (RUTA_BUSQUEDA, httpx.Response(302, headers={"location": "/xlstore/Acceso"})),
+            (RUTA_PRECIOS, json_de({"precios": []})),
+        ):
+            with self.subTest(ruta=ruta, status=fallo.status_code):
+                # Arrange
+                api = api_de_busqueda()
+                api.responder(HOST, ruta, fallo, json_muestra("exel_busqueda" if ruta == RUTA_BUSQUEDA else "exel_precios"))
+                with self.assertRaises((ProviderResponseError, ProviderAuthError)):
+                    await self.buscar(api, ProductQuery(term="camara ip"))
+                api.peticiones.clear()
+
+                # Act
+                items = await self.buscar(api, ProductQuery(term="camara ip"))
+
+                # Assert
+                self.assertEqual(api.rutas_pedidas(), [BUSQUEDA, PRECIOS])
+                self.assertEqual(len(items), 3)
+                cache.clear()
+
+    async def test_se_guarda_cinco_minutos_con_una_clave_sin_la_sesion(self):
+        """E32 aset recibe la lista que devuelve fetch, SEGUNDOS_CACHE (300) y una clave que no lleva la cookie."""
+        # Arrange
+        api = api_de_busqueda()
+
+        # Act
+        with mock.patch.object(exel.cache, "aset", wraps=cache.aset) as guardar:
+            items = await self.buscar(api, ProductQuery(term="camara ip"))
+
+        # Assert
+        (clave, guardado, segundos), _ = guardar.call_args
+        self.assertEqual((guardado, segundos, exel.SEGUNDOS_CACHE), (items, 300, 300))
+        self.assertRegex(clave, r"^exel:busqueda:[0-9a-f]{64}$")
+        self.assertNotIn(CENTINELA_SESION, clave)
+
+    async def test_los_precios_se_piden_en_lotes_de_20_a_la_vez(self):
+        """E33 45 productos → 3 lotes (20, 20, 5) en paralelo, sin repetir ids; cada producto recibe su precio."""
+        # Arrange
+        api = PreciosPorLote(45)
+
+        # Act
+        items = await self.buscar(api, ProductQuery(term="camara ip"))
+
+        # Assert
+        self.assertEqual(exel.TAMANO_LOTE, 20)
+        self.assertEqual(sorted(len(lote) for lote in api.lotes), [5, 20, 20])
+        self.assertEqual(sorted(i for lote in api.lotes for i in lote), sorted(i["id_producto"] for i in items))
+        self.assertEqual(api.max_en_vuelo, 3)
+        for item in items:
+            self.assertEqual(item["precios"]["origen"], item["id_producto"])
+
+    async def test_si_un_lote_falla_falla_la_busqueda_tras_esperar_a_todos(self):
+        """E34 Un lote con error (o sesión caducada) tira la búsqueda, sin peticiones sueltas y sin guardarla en la caché."""
+        for fallo, esperado in (
+            (httpx.Response(500), ProviderResponseError),
+            (httpx.Response(302, headers={"location": "/xlstore/Acceso"}), ProviderAuthError),
+        ):
+            with self.subTest(status=fallo.status_code):
+                # Arrange
+                api = PreciosPorLote(45, fallos={1: fallo})
+                query = ProductQuery(term="camara ip")
+
+                # Act
+                with self.assertRaises(esperado):
+                    await self.buscar(api, query)
+
+                # Assert
+                self.assertEqual(api.terminados, 3)
+                self.assertIsNone(await cache.aget(exel._clave_cache(query)))
+
+
+class PreciosPorLote:
+    """Transporte: la búsqueda trae n productos y cada lote de precios recibe los suyos (origen = id).
+
+    Cuenta cuántos lotes van a la vez y cuántos terminan; `fallos` sustituye la respuesta del lote i.
+    """
+
+    def __init__(self, n, fallos=None):
+        base = muestra("exel_busqueda")["Table"][0]
+        self.busqueda = {"Table": [{**base, "id_producto": f"EXMLOTE{i:06d}"} for i in range(n)]}
+        self.fallos = fallos or {}
+        self.lotes, self.en_vuelo, self.max_en_vuelo, self.terminados = [], 0, 0, 0
+
+    async def __call__(self, request):
+        if request.url.path == RUTA_BUSQUEDA:
+            return json_de(self.busqueda)
+        ids = parametros(request)["listaproductos"].split("|")
+        indice = len(self.lotes)
+        self.lotes.append(ids)
+        if indice in self.fallos:
+            self.terminados += 1
+            return self.fallos[indice]  # falla al momento, mientras los demás lotes siguen en vuelo
+        self.en_vuelo += 1
+        self.max_en_vuelo = max(self.max_en_vuelo, self.en_vuelo)
+        await asyncio.sleep(0.01)  # mientras, salen los demás lotes
+        self.en_vuelo -= 1
+        self.terminados += 1
+        fila = muestra("exel_precios")[0]
+        return json_de([{**fila, "id_producto": i, "origen": i} for i in ids])
+
+    @property
+    def transport(self):
+        return httpx.MockTransport(self)
+
 
 @tag("unit")
 class ParseOfferTests(SimpleTestCase):
@@ -603,6 +757,7 @@ class ExelEnSearchAllTests(TestCase):
     def setUp(self):
         exigir_bd_de_pruebas()
         self.enterContext(sin_red())
+        cache.clear()
         self.enterContext(credenciales_de_prueba("exel", USUARIO=USUARIO_FALSO, CONTRASENA=CENTINELA_CONTRASENA))
         self.api = api_de_busqueda()
         self.api.responder(HOST, RUTA_ACCESO, pagina_de_acceso(), entrada_correcta())
@@ -630,10 +785,10 @@ class ExelEnSearchAllTests(TestCase):
         self.assertEqual(token.access_token, SESION)
 
     async def test_la_sesion_se_reutiliza_entre_busquedas(self):
-        """E23 Dos búsquedas: un solo inicio de sesión (GET + POST)."""
+        """E23 Dos búsquedas distintas (la caché no sirve): un solo inicio de sesión (GET + POST)."""
         # Act
         await self.buscar()
-        await self.buscar()
+        await self.buscar(ProductQuery(term="switch"))
 
         # Assert
         self.assertEqual(self.api.rutas_pedidas().count(ACCESO), 2)
@@ -651,7 +806,7 @@ class ExelEnSearchAllTests(TestCase):
         self.api.peticiones.clear()
 
         # Act
-        resultado = await self.buscar()
+        resultado = await self.buscar(ProductQuery(term="switch"))
 
         # Assert
         self.assertTrue(resultado.ok, resultado.error)
@@ -702,7 +857,7 @@ class ExelEnSearchAllTests(TestCase):
             exito = await self.buscar()
             await ProviderToken.objects.filter(provider=self.proveedor).adelete()
             self.api.responder(HOST, RUTA_ACCESO, pagina_de_acceso(), login_rechazado())
-            rechazo = await self.buscar()
+            rechazo = await self.buscar(ProductQuery(term="switch"))
 
         # Assert
         textos = "\n".join(logs.output) + str(exito.error) + str(rechazo.error) + repr(rechazo)

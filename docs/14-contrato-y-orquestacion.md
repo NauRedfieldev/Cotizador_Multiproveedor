@@ -26,7 +26,7 @@ Lo específico de cada proveedor (URL, autenticación, formato de respuesta) que
 | `adapters/__init__.py` | Lista de adaptadores reales | Importa cada `adapters/<code>.py` (vacío hasta M3) |
 | `registry.py` | Qué adaptador atiende a cada `Provider.code` | `@register`, `get_adapter_class`, `registered_codes` |
 | `tokens.py` | Token OAuth2 guardado en BD | `get_token`, `invalidate_token`, `RENEWAL_MARGIN` (5 min) |
-| `service.py` | Orquestación | `search_all(query, *, transport=None)` |
+| `service.py` | Orquestación | `search_all(query, *, transport=None, codes=None)`. `codes` (2026-10-28, docs/34) limita la búsqueda a esos proveedores activos; `None` = todos, como antes |
 | `apps.py` | Arranque | `ready()` importa `adapters` para que se registren |
 
 ## 3. Cómo funciona una búsqueda
