@@ -1,9 +1,10 @@
-"""SDD M9 §8, pruebas E1–E28 (+ E29–E32: caché de búsquedas, docs/32 §11): scraper de la tienda de Exel del Norte.
+"""SDD M9 §8, pruebas E1–E28 (+ E29–E32: caché de búsquedas; E33–E34: precios por lotes; docs/32 §11): scraper de la tienda de Exel del Norte.
 
 Sin red y sin credenciales reales: ApiFalsa, sin_red() y credenciales_de_prueba() de
 apps/providers/tests/soporte.py. Las muestras de muestras/ tienen la estructura real del sitio
 (consultado el 2026-10-27, docs/31 §10) con valores ficticios.
 """
+import asyncio
 import copy
 import json
 from decimal import Decimal
@@ -579,6 +580,75 @@ class FetchTests(SimpleTestCase):
         self.assertEqual((guardado, segundos, exel.SEGUNDOS_CACHE), (items, 300, 300))
         self.assertRegex(clave, r"^exel:busqueda:[0-9a-f]{64}$")
         self.assertNotIn(CENTINELA_SESION, clave)
+
+    async def test_los_precios_se_piden_en_lotes_de_20_a_la_vez(self):
+        """E33 45 productos → 3 lotes (20, 20, 5) en paralelo, sin repetir ids; cada producto recibe su precio."""
+        # Arrange
+        api = PreciosPorLote(45)
+
+        # Act
+        items = await self.buscar(api, ProductQuery(term="camara ip"))
+
+        # Assert
+        self.assertEqual(exel.TAMANO_LOTE, 20)
+        self.assertEqual(sorted(len(lote) for lote in api.lotes), [5, 20, 20])
+        self.assertEqual(sorted(i for lote in api.lotes for i in lote), sorted(i["id_producto"] for i in items))
+        self.assertEqual(api.max_en_vuelo, 3)
+        for item in items:
+            self.assertEqual(item["precios"]["origen"], item["id_producto"])
+
+    async def test_si_un_lote_falla_falla_la_busqueda_tras_esperar_a_todos(self):
+        """E34 Un lote con error (o sesión caducada) tira la búsqueda, sin peticiones sueltas y sin guardarla en la caché."""
+        for fallo, esperado in (
+            (httpx.Response(500), ProviderResponseError),
+            (httpx.Response(302, headers={"location": "/xlstore/Acceso"}), ProviderAuthError),
+        ):
+            with self.subTest(status=fallo.status_code):
+                # Arrange
+                api = PreciosPorLote(45, fallos={1: fallo})
+                query = ProductQuery(term="camara ip")
+
+                # Act
+                with self.assertRaises(esperado):
+                    await self.buscar(api, query)
+
+                # Assert
+                self.assertEqual(api.terminados, 3)
+                self.assertIsNone(await cache.aget(exel._clave_cache(query)))
+
+
+class PreciosPorLote:
+    """Transporte: la búsqueda trae n productos y cada lote de precios recibe los suyos (origen = id).
+
+    Cuenta cuántos lotes van a la vez y cuántos terminan; `fallos` sustituye la respuesta del lote i.
+    """
+
+    def __init__(self, n, fallos=None):
+        base = muestra("exel_busqueda")["Table"][0]
+        self.busqueda = {"Table": [{**base, "id_producto": f"EXMLOTE{i:06d}"} for i in range(n)]}
+        self.fallos = fallos or {}
+        self.lotes, self.en_vuelo, self.max_en_vuelo, self.terminados = [], 0, 0, 0
+
+    async def __call__(self, request):
+        if request.url.path == RUTA_BUSQUEDA:
+            return json_de(self.busqueda)
+        ids = parametros(request)["listaproductos"].split("|")
+        indice = len(self.lotes)
+        self.lotes.append(ids)
+        if indice in self.fallos:
+            self.terminados += 1
+            return self.fallos[indice]  # falla al momento, mientras los demás lotes siguen en vuelo
+        self.en_vuelo += 1
+        self.max_en_vuelo = max(self.max_en_vuelo, self.en_vuelo)
+        await asyncio.sleep(0.01)  # mientras, salen los demás lotes
+        self.en_vuelo -= 1
+        self.terminados += 1
+        fila = muestra("exel_precios")[0]
+        return json_de([{**fila, "id_producto": i, "origen": i} for i in ids])
+
+    @property
+    def transport(self):
+        return httpx.MockTransport(self)
 
 
 @tag("unit")

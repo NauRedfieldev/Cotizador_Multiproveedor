@@ -10,6 +10,7 @@ Cada búsqueda correcta se guarda SEGUNDOS_CACHE en la caché de Django (docs/32
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -47,6 +48,9 @@ MAX_CARACTERES = 100  # maxlength del buscador de la tienda
 # Exel tarda ~6 s por búsqueda (búsqueda + precios, medido el 2026-10-28, docs/32 §11): una búsqueda
 # repetida se sirve de la caché. La cuenta de CCONOR es una sola, así que vale para todos los asesores.
 SEGUNDOS_CACHE = 5 * 60
+# buscarJSONprice tarda ~45 ms por id y Exel atiende lotes a la vez sin penalizar (medido el
+# 2026-10-28): 60 ids en 3 lotes paralelos ≈ 0,9 s en vez de 2,7 s en una sola petición.
+TAMANO_LOTE = 20
 # Lo que responde un servicio de la tienda sin sesión (según Scripts/buscar.js).
 SIN_SESION = ("sin_usuario", "sin_cliente", "logout")
 # W9: raw solo lleva estos campos; nunca los datos del agente de Exel ni la localidad de CCONOR.
@@ -148,10 +152,26 @@ class ExelScraper(WebScraperAdapter):
     async def _precios(
         self, productos: list[Any], cookie: str, client: httpx.AsyncClient
     ) -> dict[str, dict[str, Any]]:
-        """Precio de CCONOR de cada producto, en una sola petición por lote (como la página)."""
+        """Precio de CCONOR de cada producto, en lotes de TAMANO_LOTE ids pedidos a la vez (docs/32 §11).
+
+        Sin ids no hay lotes ni peticiones. Se esperan todos los lotes y luego se lanza el primer error,
+        para no dejar peticiones sueltas si el núcleo reintenta.
+        """
         ids = [p["id_producto"] for p in productos if isinstance(p, dict) and _id_valido(p.get("id_producto"))]
-        if not ids:
-            return {}
+        lotes = [ids[i : i + TAMANO_LOTE] for i in range(0, len(ids), TAMANO_LOTE)]
+        respuestas = await asyncio.gather(
+            *(self._lote_de_precios(lote, cookie, client) for lote in lotes), return_exceptions=True
+        )
+        precios: dict[str, dict[str, Any]] = {}
+        for respuesta in respuestas:
+            if isinstance(respuesta, BaseException):
+                raise respuesta
+            precios.update(respuesta)
+        return precios
+
+    async def _lote_de_precios(
+        self, ids: list[str], cookie: str, client: httpx.AsyncClient
+    ) -> dict[str, dict[str, Any]]:
         respuesta = await client.get(
             f"{self._base_url}/Productos/buscarJSONprice.aspx",
             params={"listaproductos": "|".join(ids)},
