@@ -998,6 +998,24 @@ Solo navegador (`static/js/main.js`, `static/js/cotizador.js`, `templates/compar
   conserva su valor con el aviso «de otro día». Las cotizaciones guardadas conservan el suyo.
 - Pruebas: `TipoCambioPorRolTests` (test_api_busqueda), `test_v25`–`test_v31c` (test_vistas_cotizacion).
 
+### 14.21 Editar el concepto de un producto de proveedor (opción B, 2026-10-29)
+
+- **Qué hace:** en «Detalle de la partida» de un producto de SYSCOM/Exel, el campo «Concepto en la cotización»
+  permite ajustar el nombre que ven la tabla y el PDF. El nombre del proveedor sigue a la vista en el recuadro
+  «Del proveedor» y el enlace «Usar el nombre del proveedor» lo regresa. La fila muestra la etiqueta «Editado» (al
+  pasar el cursor, el nombre original).
+- **Datos:** `QuoteSnapshot.name` no cambia: sigue siendo el nombre del proveedor que el servidor toma de la oferta y
+  `_commercial_adjustments` protege. El concepto va en la columna nueva `edited_name` (migración 0007, vacía por
+  defecto); `_commercial_data` la recorta y la deja vacía si es igual al nombre del proveedor. Solo `source_kind=API`
+  la admite (el modelo y la API rechazan un manual; un concepto manual guardado sigue bloqueado, decisión del usuario).
+- **API:** cada partida acepta `edited_name` opcional (texto ≤ 6000). Con `source.type=EXISTING`, si falta la llave se
+  conserva el guardado. El detalle de la revisión lo devuelve junto con `name`.
+- **Huella:** `_commercial_fingerprint` omite `edited_name` vacío, así las revisiones guardadas antes conservan su
+  `state_fingerprint`. Las emitidas no cambian (su PDF original manda).
+- **PDF/contexto cliente:** `edited_name or name`. «Revisar precios» (`replaceWithOffer`) conserva el concepto editado.
+- Pruebas: `ConceptoEditadoTests` (test_commercial_persistence), `test_concepto_editado_*` (test_api_busqueda) y
+  «concepto editado viaja solo en partidas API» (tools/test_cotizador_comercial.cjs). cotizador.js v35, custom.css v24.
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 > **Rediseño 12A (2026-10-20, rama `feature/ui-interfaz-general`).** La pantalla pasó a lista y

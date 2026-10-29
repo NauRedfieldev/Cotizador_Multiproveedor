@@ -471,6 +471,42 @@ class CommercialSearchTests(CommercialFixtures, TestCase):
                                        json.dumps(edit), content_type="application/json")
         self.assertEqual(response.status_code, 200, response.content.decode())
 
+    def test_concepto_editado_se_guarda_edita_y_devuelve(self):
+        body = self.body(self.search())
+        body["items"][0]["edited_name"] = "  Concepto a mi gusto "
+        created = self.post(body)
+        from apps.quotes.models import QuoteRevision
+        s = QuoteRevision.objects.get(quote__folio=created["folio"]).snapshots.get()
+        self.assertEqual(s.edited_name, "Concepto a mi gusto")
+        self.assertNotEqual(s.name, s.edited_name)
+        edit = {k: v for k, v in body.items() if k not in ("request_id", "schema_version", "notes")}
+        edit["items"][0]["source"] = {"type": "EXISTING"}
+        edit["items"][0]["edited_name"] = "Otro concepto"
+        edit["edit_version"] = 1
+        response = self.client.put(reverse("api_guardar_revision", args=[created["folio"], 1]),
+                                   json.dumps(edit), content_type="application/json")
+        self.assertEqual(response.status_code, 200, response.content.decode())
+        detalle = self.client.get(reverse("api_guardar_revision", args=[created["folio"], 1])).json()["data"]
+        self.assertEqual(detalle["items"][0]["edited_name"], "Otro concepto")
+        self.assertEqual(detalle["items"][0]["name"], s.name)
+        # Sin la llave, EXISTING conserva el concepto guardado.
+        del edit["items"][0]["edited_name"]
+        edit["edit_version"] = 2
+        response = self.client.put(reverse("api_guardar_revision", args=[created["folio"], 1]),
+                                   json.dumps(edit), content_type="application/json")
+        self.assertEqual(response.status_code, 200, response.content.decode())
+        self.assertEqual(QuoteRevision.objects.get(quote__folio=created["folio"]).snapshots.get().edited_name, "Otro concepto")
+
+    def test_concepto_editado_rechazado_en_manual_o_si_no_es_texto(self):
+        body = self.body(self.search())
+        body["items"][0]["edited_name"] = 5
+        self.post(body, 400)
+        body["items"][0]["edited_name"] = "x" * 6001
+        self.post(body, 400)
+        manual = alta_comercial()
+        manual["items"][0]["edited_name"] = "Otro"
+        self.post(manual, 400)
+
     def test_reintentar_alta_no_necesita_captura_original(self):
         body = self.body(self.search())
         first = self.post(body)

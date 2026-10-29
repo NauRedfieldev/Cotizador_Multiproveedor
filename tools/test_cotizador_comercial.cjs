@@ -145,6 +145,14 @@ test('API envía referencias, no costos ni moneda originales; EXISTING no recapt
     assert.deepEqual(plain(tools.item({ ...api, persisted: true }).source), { type: 'EXISTING' });
     assert.throws(() => tools.item({ ...api, units: { ...api.units, confirmed: false } }));
 });
+test('concepto editado viaja solo en partidas API, recortado', () => {
+    const { tools } = runtime();
+    const api = line({ kind: 'API', mode: 'MARGIN', offer: { context_ref: 'captura', offer_ref: 'oferta' } });
+    assert.equal(tools.item(api).edited_name, '');
+    assert.equal(tools.item({ ...api, editedName: '  Mi concepto ' }).edited_name, 'Mi concepto');
+    assert.equal(tools.item({ ...api, persisted: true, editedName: 'Guardado' }).edited_name, 'Guardado');
+    assert.equal(tools.item(line({ editedName: 'Ignorado' })).edited_name, undefined);
+});
 test('resolución de PUT perdido comprueba versión y huella antes de repetir', () => {
     const { tools } = runtime();
     const intent = { version: 3, baseFingerprint: 'antes', fingerprint: 'propuesta' };

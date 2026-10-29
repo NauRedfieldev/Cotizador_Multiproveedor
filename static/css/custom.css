@@ -2008,3 +2008,6 @@ body.line-drag-active {
     .company-option { grid-template-columns: 110px 1px minmax(0, 1fr); padding-right: 3rem; }
     .company-logo { max-width: 104px; }
 }
+
+/* Partida con concepto editado (el nombre del proveedor queda en el detalle). */
+.line-edited-chip { background: #e7f0fa; color: #0B4A93; font-weight: 600; vertical-align: 1px; }

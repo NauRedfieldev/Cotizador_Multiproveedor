@@ -23,7 +23,7 @@ from django.utils import timezone
 from apps.quotes.models import Quote, QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
 from apps.quotes.permissions import ADJUSTMENTS, configure_commercial_groups
 from apps.quotes.snapshots import (
-    PartidaComercialCapturada, RevisionConflict, _commercial_stored,
+    PartidaComercialCapturada, RevisionConflict, _commercial_fingerprint, _commercial_stored,
     _current_commercial_state,
     ArchivedPDFError, aemitir_revision, aprevisualizar_comercial, aprevisualizar_revision_comercial,
     confirmar_advertencias_comerciales, crear_borrador_comercial, crear_revision_comercial,
@@ -783,6 +783,49 @@ class CommercialConcurrencyTests(CommercialFixtures, TransactionTestCase):
         self.assertEqual(preview["cliente"]["total"], issued.total)
 
 
+class ConceptoEditadoTests(CommercialFixtures, TestCase):
+    """Concepto editado de una partida API: `name` conserva el nombre del proveedor."""
+
+    def test_api_guarda_concepto_y_conserva_nombre_del_proveedor(self):
+        r = self.commercial_draft([commercial_line(kind="API", edited_name="  Cable corto  ")])
+        s = r.snapshots.get()
+        self.assertEqual((s.name, s.edited_name), ("Concepto sintético", "Cable corto"))
+        cliente = previsualizar_revision_comercial(r.pk, actor=self.actor, expected_version=r.edit_version)["cliente"]
+        self.assertEqual(cliente["items"][0]["name"], "Cable corto")
+        self.assertTrue(generate_quote_pdf(cliente).startswith(b"%PDF-"))
+
+    def test_vacio_o_igual_al_del_proveedor_queda_sin_editar(self):
+        for valor in ("", "   ", " Concepto sintético "):
+            with self.subTest(valor=valor):
+                r = crear_borrador_comercial(self.quote.pk, [commercial_line(kind="API", edited_name=valor)],
+                    actor=self.actor, company=COMPANY, conditions=["QA"])
+                self.assertEqual(r.snapshots.get().edited_name, "")
+                cliente = previsualizar_revision_comercial(r.pk, actor=self.actor, expected_version=1)["cliente"]
+                self.assertEqual(cliente["items"][0]["name"], "Concepto sintético")
+
+    def test_concepto_manual_no_admite_concepto_editado(self):
+        with self.assertRaises(ValidationError):
+            self.commercial_draft([commercial_line(edited_name="Otro nombre")])
+
+    def test_editar_concepto_de_api_guardada_no_es_recaptura(self):
+        r = self.commercial_draft([commercial_line(kind="API")])
+        part = PartidaComercialCapturada(**_commercial_stored(r)[0])
+        r = self.commercial_edit(r, [replace(part, edited_name="Nuevo concepto")])
+        s = r.snapshots.get()
+        self.assertEqual((s.name, s.edited_name), ("Concepto sintético", "Nuevo concepto"))
+        with self.assertRaises(RevisionConflict):
+            self.commercial_edit(r, [replace(part, name="Nombre falso")])
+
+    def test_huella_sin_concepto_editado_no_cambia(self):
+        # Las revisiones guardadas antes del campo deben seguir coincidiendo con su huella.
+        r = self.commercial_draft([commercial_line(kind="API")])
+        legacy = [{k: v for k, v in p.items() if k != "edited_name"} for p in _commercial_stored(r)]
+        self.assertEqual(_commercial_fingerprint(r.header, legacy, None, r.tax_rate, r.discount_percent,
+            r.issue_date, r.valid_days, r.based_on_id, r.exchange_context_id), r.state_fingerprint)
+        editada = self.commercial_edit(r, [replace(PartidaComercialCapturada(**_commercial_stored(r)[0]), edited_name="Otro")])
+        self.assertNotEqual(editada.state_fingerprint, r.state_fingerprint)
+
+
 class CommercialMigrationTests(TransactionTestCase):
     def test_forward_backward_aislado_conserva_v1_sin_defaults_comerciales(self):
         latest = MigrationExecutor(connection).loader.graph.leaf_nodes()
@@ -802,6 +845,7 @@ class CommercialMigrationTests(TransactionTestCase):
             r, s = QuoteRevision.objects.get(pk=revision.pk), QuoteSnapshot.objects.get(pk=snapshot.pk)
             self.assertEqual((r.schema_version, r.discount_percent, r.calculation_version), (1, None, None))
             self.assertEqual((s.source_unit_price, s.quantity, s.line_key), (D("1.004"), D("1.50"), None))
+            self.assertEqual(s.edited_name, "")
             MigrationExecutor(connection).migrate(old)
             self.assertTrue(state.get_model("quotes", "QuoteSnapshot").objects.filter(pk=snapshot.pk).exists())
         finally:
