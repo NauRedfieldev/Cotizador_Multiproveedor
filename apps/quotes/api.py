@@ -986,7 +986,7 @@ def _commercial_items(items, actor, revision=None):
     old = {} if revision is None else {str(s.line_key): s for s in revision.snapshots.all()}
     output, keys = [], set()
     for item in items:
-        _fields(item, {"line_key", "source", "quantity", "units", "pricing", "description", "cost"},
+        _fields(item, {"line_key", "source", "quantity", "units", "pricing", "description", "cost", "edited_name"},
                 {"line_key", "source", "quantity", "units", "pricing"})
         key = _uuid(item["line_key"])
         if key in keys:
@@ -1046,6 +1046,10 @@ def _commercial_items(items, actor, revision=None):
             raise _EntradaInvalida("Modo MARGIN o MANUAL requerido.")
         data.update(line_key=key, quantity=Decimal(_entero(item["quantity"], "quantity")),
             description=_texto_requerido(item.get("description", data.get("description", "")), "description", 6000))
+        # Concepto editado: solo productos de proveedor; el manual se nombra en source.name.
+        data["edited_name"] = _texto_requerido(item.get("edited_name", data.get("edited_name", "")), "edited_name", 6000)
+        if data["edited_name"] and data["source_kind"] != "API":
+            raise _EntradaInvalida("Solo un producto de proveedor admite concepto editado.")
         output.append(commercial_services.PartidaComercialCapturada(**data))
     return output
 

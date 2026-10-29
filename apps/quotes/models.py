@@ -394,6 +394,9 @@ class QuoteSnapshot(models.Model):
     position = models.PositiveIntegerField(validators=[MinValueValidator(1)])
     code = models.TextField(blank=True)
     name = models.TextField()
+    # Concepto editado por el asesor (solo partidas API v2). Vacío = se muestra `name`, que sigue
+    # siendo el nombre original del proveedor.
+    edited_name = models.TextField(blank=True, default="")
     description = models.TextField(blank=True)
     provider_code = models.CharField(max_length=80, blank=True)
     provider_name = models.CharField(max_length=255, blank=True)
@@ -489,6 +492,8 @@ class QuoteSnapshot(models.Model):
             if self.source_unit_price is None or self.source_currency is None or any(
                     getattr(self, f) is not None for f in SNAPSHOT_COMMERCIAL_FIELDS):
                 raise ValidationError("Partida v1 requiere original y no admite campos v2.")
+            if self.edited_name:
+                raise ValidationError("Partida v1 no admite concepto editado.")
         elif self.revision.schema_version == 2:
             self.commercial_input()  # Valida la combinación sin redondear entradas.
             if self.amount is not None or self.line_key is None or self.source_kind not in ("API", "MANUAL"):
@@ -501,6 +506,8 @@ class QuoteSnapshot(models.Model):
                 raise ValidationError("Una captura API requiere proveedor.")
             if self.source_kind == "MANUAL" and (self.provider_code or self.provider_name or self.external_id):
                 raise ValidationError("No se atribuye una captura manual a una API.")
+            if self.source_kind == "MANUAL" and self.edited_name:
+                raise ValidationError("Un concepto manual no lleva concepto editado; su nombre es el concepto.")
             if self.source_unit_price is None and (self.source_currency is not None or self.cost_tax_rate_included is not None):
                 raise ValidationError("No se inventa moneda/tasa para un costo desconocido.")
         else:

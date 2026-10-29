@@ -97,6 +97,8 @@ class PartidaComercialCapturada(PartidaCapturada):
     manual_unit_price: Decimal | None = None
     manual_currency: str | None = None
     manual_tax_rate_included: Decimal | None = None
+    # Concepto editado (solo API). `name` conserva el nombre original del proveedor.
+    edited_name: str = ""
 
 
 def authorize(quote, actor):
@@ -508,8 +510,12 @@ def _commercial_data(partidas):
             raise ValidationError("Identidad de partida duplicada.")
         keys.add(entrada.line_key)
         datos = asdict(entrada)
-        for field in ("name", "code", "description", "provider_code", "provider_name", "external_id", "brand", "model", "mpn"):
+        for field in ("name", "edited_name", "code", "description", "provider_code", "provider_name", "external_id", "brand", "model", "mpn"):
             _text(datos[field], required=field == "name", limit=80 if field == "provider_code" else 255 if field == "provider_name" else 6000)
+        # Igual al nombre del proveedor (o solo espacios) = sin editar.
+        datos["edited_name"] = datos["edited_name"].strip()
+        if datos["edited_name"] == datos["name"].strip():
+            datos["edited_name"] = ""
         for field in ("source_unit_label", "sale_unit_label"):
             _text(datos[field], required=True, limit=80)
         model = QuoteSnapshot(**datos)
@@ -530,6 +536,9 @@ def _commercial_calculate(parts, tipo, tax, discount):
 
 
 def _commercial_fingerprint(header, parts, tipo, tax, discount, issue_date, days, based_on, context_id):
+    # Sin concepto editado no entra la llave: las revisiones guardadas antes de edited_name
+    # conservan su huella.
+    parts = [{k: v for k, v in p.items() if k != "edited_name" or v} for p in parts]
     payload = {"schema": 2, "calculation": 1, "header": header, "parts": parts,
         "fx": None if tipo is None else {"value": str(decimal_limit(tipo.valor, 18, 8)),
             "source": tipo.origen, "date": tipo.fecha.astimezone(dt_timezone.utc).isoformat(), "context": str(context_id)},
@@ -743,12 +752,12 @@ def _commercial_client_context(revision, result=None, *, snapshots=None):
     lines = [None] * len(snapshots) if revision.status == QuoteRevision.Status.ISSUED else result.partidas
     for snapshot, line in zip(snapshots, lines, strict=True):
         if line is None:
-            items.append({"code": snapshot.code or "—", "name": snapshot.name,
+            items.append({"code": snapshot.code or "—", "name": snapshot.edited_name or snapshot.name,
                 "description": snapshot.description, "brand": snapshot.brand, "model": snapshot.model,
                 "qty": int(snapshot.quantity), "unit_label": snapshot.sale_unit_label, "amount": snapshot.sale_amount})
             continue
         label, approximate = commercial_unit_money(line.venta_unitaria_mxn, snapshot.quantity, line.importe_venta)
-        items.append({"code": snapshot.code or "—", "name": snapshot.name,
+        items.append({"code": snapshot.code or "—", "name": snapshot.edited_name or snapshot.name,
             "description": snapshot.description, "brand": snapshot.brand, "model": snapshot.model,
             "qty": int(snapshot.quantity), "unit_label": snapshot.sale_unit_label,
             "unit_price": line.venta_unitaria_mxn, "unit_price_label": label,

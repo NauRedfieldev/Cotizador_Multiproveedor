@@ -90,6 +90,7 @@
             units: { source_label: line.units.source_label.trim(), sale_label: line.units.sale_label.trim(),
                 conversion_factor: conversion, confirmed: true },
             description: line.description, pricing: { mode: isService(line) ? 'MANUAL' : line.mode } };
+        if (line.kind === 'API') data.edited_name = (line.editedName || '').trim();
         if (line.kind === 'MANUAL') data.cost = isService(line) ? { amount: '0', currency: 'MXN', vat_basis: 'NET' } :
             line.knownCost ? within('cost', () => price(line.cost)) : null;
         if (data.pricing.mode === 'MARGIN') {
@@ -253,7 +254,7 @@
             if (!state.lines.length) issues.push({ field: 'productSearchInput', message: 'Agrega al menos un producto o concepto.', place: 'Productos y conceptos' });
             state.lines.forEach((line, index) => {
                 try { item(line); } catch (err) {
-                    issues.push({ lineKey: line.key, lineField: err.field, message: err.message, place: `Partida ${index + 1} · ${line.name || 'Concepto manual'}` });
+                    issues.push({ lineKey: line.key, lineField: err.field, message: err.message, place: `Partida ${index + 1} · ${shownName(line) || 'Concepto manual'}` });
                 }
             });
             return issues;
@@ -447,7 +448,17 @@
             }
         }
         // Fila de la tabla: nombre, unidad, cantidad, estado y botón «Editar»/«Completar».
-        const rowLabel = line => `${line.name || 'Concepto manual sin nombre'} · ${isService(line) ? 'Servicio propio' : line.provider || 'Manual'}`;
+        // Concepto editado (solo API): `name` sigue siendo el nombre del proveedor.
+        const isEdited = line => line.kind === 'API' && !!line.editedName?.trim() && line.editedName.trim() !== line.name.trim();
+        const shownName = line => isEdited(line) ? line.editedName.trim() : line.name;
+        const rowLabel = line => `${shownName(line) || 'Concepto manual sin nombre'} · ${isService(line) ? 'Servicio propio' : line.provider || 'Manual'}`;
+        function fillName(cell, line) {
+            cell.replaceChildren(rowLabel(line));
+            if (!isEdited(line)) return;
+            const chip = element('span', 'Editado', 'badge rounded-pill line-edited-chip ms-2');
+            chip.title = `Nombre del proveedor: ${line.name}`;
+            cell.append(chip);
+        }
         function syncQuantity(line) {
             for (const input of $('quoteItemsBody').querySelectorAll('[data-qty-for]')) {
                 if (input.dataset.qtyFor === line.key && input !== document.activeElement) input.value = line.quantity;
@@ -459,7 +470,7 @@
             return element('span', `${mark} ${status.label}`, `line-status-chip line-status-chip--${status.kind}`);
         }
         function syncRow(line, row) {
-            row.querySelector('.line-name').textContent = rowLabel(line);
+            fillName(row.querySelector('.line-name'), line);
             row.querySelector('.line-unit').textContent = line.units.sale_label || 'Pendiente';
             syncQuantity(line);
             row.querySelector('.line-status').replaceChildren(statusChip(line));
@@ -625,6 +636,20 @@
             wrapper.append(caption); parent.append(wrapper);
             return { id, wrapper, caption, help: () => { if (help) wrapper.append(element('div', help, 'form-text')); } };
         }
+        // Concepto en la cotización (solo API). Vacío o igual al del proveedor = sin editar.
+        function conceptField(parent, line, update) {
+            const box = fieldBox(parent, 'Concepto en la cotización', 'Así aparece en la tabla y en el PDF.');
+            const input = document.createElement('textarea');
+            Object.assign(input, { id: box.id, className: 'form-control form-control-sm', rows: 3, maxLength: 6000, value: shownName(line) });
+            input.dataset.field = 'edited_name';
+            input.disabled = !editable();
+            const restore = element('button', 'Usar el nombre del proveedor', 'btn btn-link btn-sm p-0 mt-1'); restore.type = 'button';
+            const sync = () => { restore.hidden = !editable() || !isEdited(line); };
+            input.addEventListener('input', () => { line.editedName = input.value; sync(); update(); });
+            input.addEventListener('blur', () => { if (!input.value.trim()) { input.value = line.name; line.editedName = ''; sync(); } });
+            restore.addEventListener('click', () => { line.editedName = ''; input.value = line.name; sync(); update(); input.focus(); });
+            box.wrapper.append(input); box.help(); box.wrapper.append(restore); sync();
+        }
         function textField(parent, label, value, onChange, { disabled = false, name = '', suffix = '', help = '', placeholder = '' } = {}) {
             const box = fieldBox(parent, label, help);
             const input = document.createElement('input');
@@ -746,7 +771,7 @@
             return { group, input, suffix: suffixNode };
         }
         // 4A: «Listo» revisa la partida y la cierra; el guardado sigue siendo uno solo («Guardar borrador»).
-        const snapshot = line => structuredClone({ name: line.name, description: line.description, quantity: line.quantity, units: line.units,
+        const snapshot = line => structuredClone({ name: line.name, editedName: line.editedName, description: line.description, quantity: line.quantity, units: line.units,
             unitMode: line.unitMode, mode: line.mode, margin: line.margin, knownCost: line.knownCost, cost: line.cost, sale: line.sale });
         function openDetail(line) {
             if (!line.expanded) {
@@ -922,7 +947,8 @@
                 const qtyCell = element('td', '', 'line-qty');
                 qtyCell.append(stepper(line, update, { label: `Cantidad de la partida ${index + 1}` }).group);
                 if (line.justMoved) { row.classList.add('line-moved'); delete line.justMoved; }
-                row.append(gripCell(line, index, row), element('td', rowLabel(line), 'line-name'),
+                const nameCell = element('td', '', 'line-name'); fillName(nameCell, line);
+                row.append(gripCell(line, index, row), nameCell,
                     element('td', line.units.sale_label || 'Pendiente', 'line-unit'), qtyCell,
                     element('td', '—', 'sale-unit'), element('td', '—', 'sale-amount'), element('td', '', 'line-status'));
                 const actions = element('td', '', 'text-nowrap');
@@ -950,9 +976,13 @@
 
                 if (line.kind === 'API') {
                     source.append(element('h6', 'Del proveedor', 'fw-bold'));
+                    conceptField(source, line, update);
                     const box = element('div', '', 'line-source-box small mb-3');
                     const fact = (label, value) => { const r = element('div', '', 'd-flex justify-content-between gap-2 mb-1'); r.append(element('span', label, 'text-muted'), element('strong', value, 'text-end')); box.append(r); };
                     fact('Proveedor', line.provider || '—');
+                    const original = element('div', '', 'mb-1');
+                    original.append(element('div', 'Nombre del proveedor', 'text-muted'), element('div', line.name || '—'));
+                    box.append(original);
                     fact('Marca · Modelo', `${line.brand || '—'} · ${line.model || '—'}`);
                     fact('Precio', `${money(trimZeros(line.originalPrice))} ${line.originalCurrency} · ${line.originalVat === null ? 'sin IVA' : 'incluye IVA ' + safePercent(line.originalVat) + '%'}`);
                     box.append(element('div', 'Estos datos vienen del proveedor y no se pueden editar.', 'text-muted mt-2'));
@@ -1035,7 +1065,7 @@
             if (state.readonly && state.loadedDetail?.schema_version === 2) sealedSummary(state.loadedDetail);
         }
         function blankLine() {
-            return { key: crypto.randomUUID(), kind: 'MANUAL', persisted: false, name: '', provider: '', description: '', quantity: '1',
+            return { key: crypto.randomUUID(), kind: 'MANUAL', persisted: false, name: '', editedName: '', provider: '', description: '', quantity: '1',
                 units: { source_label: '', sale_label: '', conversion_factor: '1', confirmed: false }, mode: 'MANUAL', margin: '35',
                 knownCost: false, cost: { amount: '', currency: 'MXN', vat_basis: 'NET', vat_rate: initialTaxFraction },
                 sale: { amount: '', currency: 'MXN', vat_basis: 'NET', vat_rate: initialTaxFraction }, expanded: true };
@@ -1148,7 +1178,7 @@
         }
         function replaceWithOffer(line, offer) {
             const fresh = lineFromOffer(offer, line.quantity);
-            Object.assign(fresh, { description: line.description, units: { ...line.units, confirmed: true }, mode: line.mode,
+            Object.assign(fresh, { description: line.description, editedName: line.editedName, units: { ...line.units, confirmed: true }, mode: line.mode,
                 margin: line.margin, sale: { ...line.sale }, expanded: false, trayKey: line.trayKey });
             const index = state.lines.indexOf(line);
             if (index >= 0) state.lines.splice(index, 1, fresh);
@@ -1171,7 +1201,7 @@
             for (const r of rows) {
                 const row = element('li', '', 'price-review-row');
                 const info = element('div', '', 'flex-grow-1');
-                info.append(element('strong', r.line.name), element('div', `${r.line.provider} · ${r.line.quantity} ${r.line.units.sale_label || 'pzas'}`, 'small text-muted'));
+                info.append(element('strong', shownName(r.line)), element('div', `${r.line.provider} · ${r.line.quantity} ${r.line.units.sale_label || 'pzas'}`, 'small text-muted'));
                 if (r.kind === 'changed' && r.line.mode === 'MANUAL') info.append(element('div', 'Precio de venta fijo: solo cambiaría el costo; revisa el margen.', 'small text-warning-emphasis'));
                 const saved = element('span', shownPrice(r.line.originalPrice, r.line.originalCurrency), 'price-review-col');
                 const today = element('span', r.offer ? shownPrice(r.offer.price_original, r.offer.currency) : '—', 'price-review-col fw-semibold');
@@ -1445,7 +1475,7 @@
         function loadLine(snapshot) {
             const line = blankLine();
             Object.assign(line, { key: snapshot.line_key, persisted: true, kind: snapshot.source_kind,
-                name: snapshot.name, provider: snapshot.provider_name, brand: snapshot.brand, model: snapshot.model,
+                name: snapshot.name, editedName: snapshot.edited_name || '', provider: snapshot.provider_name, brand: snapshot.brand, model: snapshot.model,
                 providerCode: snapshot.provider_code, externalId: snapshot.external_id, capturedAt: snapshot.captured_at,
                 description: snapshot.description, quantity: String(storedInteger(snapshot.quantity)),
                 originalPrice: snapshot.source_unit_price, originalCurrency: snapshot.source_currency,
