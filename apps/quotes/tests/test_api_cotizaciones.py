@@ -686,15 +686,15 @@ class CommercialAPITests(CommercialFixtures, TestCase):
 
     def test_logo_del_pdf_segun_la_empresa(self):
         from apps.quotes import pdf
-        self.assertTrue(str(pdf._logo_path("cconor")).endswith("static/img/logo.png"))
-        self.assertTrue(str(pdf._logo_path(None)).endswith("static/img/logo.png"))
+        self.assertTrue(Path(pdf._logo_path("cconor")).as_posix().endswith("static/img/logo.png"))
+        self.assertTrue(Path(pdf._logo_path(None)).as_posix().endswith("static/img/logo.png"))
         with override_settings(TORVA_EMPRESA=self.TORVA_QA):
             self.assertIsNone(pdf._logo_path("torva"))        # sin logo todavía
         for logo in ("../settings.py", "/etc/passwd"):
             with self.subTest(logo=logo), override_settings(TORVA_EMPRESA={**self.TORVA_QA, "logo": logo}):
                 self.assertIsNone(pdf._logo_path("torva"))
         with override_settings(TORVA_EMPRESA={**self.TORVA_QA, "logo": "img/torva.png"}):
-            self.assertTrue(str(pdf._logo_path("torva")).endswith("static/img/torva.png"))
+            self.assertTrue(Path(pdf._logo_path("torva")).as_posix().endswith("static/img/torva.png"))
 
     def test_reordenar_partidas_guarda_el_nuevo_orden(self):
         # 7A: arrastrar partidas en el cotizador solo cambia el orden de items al guardar.
