@@ -131,6 +131,25 @@ class ApiCotizacionesTests(TestCase):
             ("alfa", "Alfa", "7", Decimal("10.25"), "USD", Decimal("2"), True),
         )
 
+    async def test_c1b_v1_sin_permiso_de_tipo_de_cambio_no_guarda_uno_a_mano(self):
+        """Pista 6 de la auditoría: ofertas con tipo de cambio a mano en la sesión (p. ej. de antes de perder
+        el permiso) no entran a una cotización v1; uno de SYSCOM o en pesos sigue sin pedir ese permiso."""
+        fx = await Permission.objects.aget(content_type__app_label="quotes", codename=FX)
+        await self.asesor.user_permissions.aremove(fx)
+        respuesta, _ = await self.alta()
+        self.assertEqual(respuesta.status_code, 403)
+        self.assertFalse(await QuoteRevision.objects.filter(quote__advisor=self.asesor).aexists())
+        sesion = await self.async_client.asession()
+        ofertas = dict(await sesion.aget(api.CLAVE_OFERTAS))
+        ofertas["alfa:8"] = oferta_guardada("alfa", "8", "3.00", tipo={**TIPO, "origen": "syscom"})
+        await sesion.aset(api.CLAVE_OFERTAS, ofertas)
+        await sesion.asave()
+        for partida in ({"provider": "beta", "external_id": "9", "quantity": "1"},
+                        {"provider": "alfa", "external_id": "8", "quantity": "1"}):
+            with self.subTest(partida=partida):
+                respuesta, _ = await self.alta(items=[partida])
+                self.assertEqual(respuesta.status_code, 201)
+
     async def test_c2_el_navegador_no_puede_mandar_precio_ni_margen(self):
         for item in ({"provider": "alfa", "external_id": "7", "quantity": "1", "costo_mxn": "1.00"},
                      {"provider": "alfa", "external_id": "7", "quantity": "1", "margen": "20"}):
