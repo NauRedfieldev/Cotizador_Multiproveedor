@@ -42,7 +42,17 @@ if SECRET_KEY.strip() in _SECRET_KEY_PLACEHOLDERS:
 # DEBUG solo si se declara explícitamente en .env o en el entorno (por defecto False).
 DEBUG = env.bool('DEBUG', default=False)
 
-ALLOWED_HOSTS = []
+# Dominios o IPs por los que se entra al servidor, separados por coma en .env. Vacío = solo desarrollo
+# (con DEBUG=True Django acepta localhost); con DEBUG=False hay que listarlos o toda petición da 400.
+ALLOWED_HOSTS = [host.strip() for host in env.list('ALLOWED_HOSTS', default=[]) if host.strip()]
+
+# USE_HTTPS=True en un servidor con HTTPS: cookies de sesión y CSRF solo por HTTPS, redirección de http a
+# https y HSTS (1 hora para empezar; subir SECURE_HSTS_SECONDS cuando todo funcione por HTTPS).
+# Detrás de un proxy, uvicorn debe correr con --proxy-headers y --forwarded-allow-ips=<IP del proxy>;
+# si no, Django cree que todo llega por http y la redirección no termina. En local (http) va en False.
+USE_HTTPS = env.bool('USE_HTTPS', default=False)
+SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = SECURE_SSL_REDIRECT = USE_HTTPS
+SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=3600) if USE_HTTPS else 0
 
 # Application definition
 
