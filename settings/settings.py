@@ -27,9 +27,17 @@ _missing_db_vars = [
 ]
 USE_SQLITE = env.bool('USE_SQLITE', default=False)
 
-# Clave por defecto SOLO para desarrollo local; en producción SIEMPRE
-# definir una SECRET_KEY real en el .env o en variables de entorno.
-SECRET_KEY = env('SECRET_KEY', default='django-insecure-solo-desarrollo-local')
+# Sin valor por defecto: con una llave pública cualquiera puede falsificar lo que
+# Django firma (cookie de mensajes, enlaces para elegir contraseña). Las llaves de
+# ejemplo que han estado en el repo cuentan como faltantes.
+_SECRET_KEY_PLACEHOLDERS = {'', 'django-insecure-Example', 'django-insecure-solo-desarrollo-local'}
+SECRET_KEY = env('SECRET_KEY', default='')
+if SECRET_KEY.strip() in _SECRET_KEY_PLACEHOLDERS:
+    raise ImproperlyConfigured(
+        'Falta SECRET_KEY en .env (o tiene el valor de ejemplo). Genera una propia con: '
+        'python -c "from django.core.management.utils import get_random_secret_key; '
+        'print(get_random_secret_key())"'
+    )
 
 # DEBUG solo si se declara explícitamente en .env o en el entorno (por defecto False).
 DEBUG = env.bool('DEBUG', default=False)
