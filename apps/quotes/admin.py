@@ -3,6 +3,10 @@ from django.core.exceptions import PermissionDenied
 
 from .models import DefaultCommercialCondition, QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
 from .permissions import require_commercial_permission
+from .usuarios import FormularioCambiarContrasenaAdmin
+
+# Cambiar contraseña en /admin/ guarda solo la contraseña y respeta una revocación simultánea.
+admin.site.password_change_form = FormularioCambiarContrasenaAdmin
 
 
 class SnapshotReadOnlyAdmin(admin.ModelAdmin):
