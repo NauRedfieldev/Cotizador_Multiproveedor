@@ -666,6 +666,25 @@ class VistaCotizacionTests(TestCase):
         self.assertNotContains(respuesta, "Capturado otro día")
         self.assertContains(respuesta, 'capturado a mano <span title="20 oct 2026, 16:30">hace 2 horas</span>')
 
+    async def test_v31a_un_enlace_de_otro_sitio_no_cambia_el_tipo_de_cambio(self):
+        """Pista 7 de la auditoría: un GET desde otro sitio (sin CSRF) no escribe, confirma ni reinicia el tipo de cambio."""
+        ayer = (timezone.now() - timedelta(days=1)).isoformat()
+        guardado = {"valor": "17.50", "fecha": ayer, "origen": "manual"}
+        await self.guardar_tipo_cambio(**guardado)
+        adaptadores = [adaptador("alfa", mxn("1", "100.00")), adaptador("beta")]
+        for parametros in ({"tipo_cambio": "1"}, {"tipo_cambio": "17.50", "usar_tipo_cambio": "confirmar"},
+                           {"usar_tipo_cambio": "syscom"}):
+            with self.subTest(parametros=parametros), adaptadores_registrados(*adaptadores), sin_red():
+                respuesta = await self.async_client.get(reverse("cotizar_productos"), {"q": "camara ip", **parametros},
+                                                        headers={"Sec-Fetch-Site": "cross-site"})
+                self.assertEqual(respuesta.status_code, 200)
+                self.assertEqual(await (await self.async_client.asession()).aget(CLAVE_TIPO_CAMBIO), guardado)
+        # Desde el propio comparador (mismo origen) sí cambia.
+        with adaptadores_registrados(*adaptadores), sin_red():
+            await self.async_client.get(reverse("cotizar_productos"), {"q": "camara ip", "tipo_cambio": "18.00"},
+                                        headers={"Sec-Fetch-Site": "same-origin"})
+        self.assertEqual((await (await self.async_client.asession()).aget(CLAVE_TIPO_CAMBIO))["valor"], "18.00")
+
     async def test_v31b_personal_ve_el_de_syscom_y_no_lo_puede_cambiar(self):
         """Lienzo fila 13: sin permiso de tipo de cambio se ignora lo escrito y no hay campo para escribirlo."""
         personal = await sync_to_async(crear_asesor)("personal_tc", tipo_cambio=False)

@@ -333,6 +333,14 @@ async def cotizar_productos(request):
     """
     # Los precios del comparador son costos de proveedor: mismo permiso que la API de búsqueda (403 sin él).
     await sync_to_async(require_commercial_permission, thread_sensitive=True)(await request.auser())
+    if request.headers.get("Sec-Fetch-Site", "none") not in ("same-origin", "none"):
+        # Un enlace o una página de otro sitio no cambia ni confirma el tipo de cambio de la sesión (un GET
+        # no lleva CSRF): se ignoran esos parámetros y queda el que el usuario ya tenía. Escrito a mano o
+        # desde un marcador llega como «none»; sin el encabezado (navegador antiguo) se comporta como siempre.
+        limpios = request.GET.copy()
+        for clave in ("tipo_cambio", "usar_tipo_cambio"):
+            limpios.pop(clave, None)
+        request.GET = limpios
     # 22A: al volver al comparador sin parámetros (menú) se muestra la última búsqueda de la sesión.
     ultima = await request.session.aget(CLAVE_ULTIMA_BUSQUEDA)
     if not request.GET and ultima:
