@@ -5,6 +5,7 @@ así que no se toca ni se lee el .env de nadie.
 """
 import json
 import os
+import secrets
 from pathlib import Path
 import subprocess
 import sys
@@ -44,8 +45,12 @@ class SecretKeyTests(SimpleTestCase):
                 self.assertIn("Falta SECRET_KEY", resultado.stderr)
 
     def test_con_una_llave_propia_arranca(self):
-        resultado = importar_settings(SECRET_KEY=get_random_secret_key())
-        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+        # Una llave que empieza con $ es válida (env() la tomaría por el nombre de otra variable).
+        for valor in (get_random_secret_key(), "$" + get_random_secret_key()[1:], secrets.token_urlsafe(50)):
+            with self.subTest(valor=valor[:1]):
+                resultado = ejecutar(["-c", "import settings.settings as s, sys; sys.exit(s.SECRET_KEY != sys.argv[1])", valor],
+                                     SECRET_KEY=valor)
+                self.assertEqual(resultado.returncode, 0, resultado.stderr)
 
 
 class ServidorTests(SimpleTestCase):
