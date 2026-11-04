@@ -6,6 +6,7 @@ ofertas guardadas en sesión. El modo degradado en sí ya lo cubren V1–V16.
 import json
 
 import httpx
+from asgiref.sync import sync_to_async
 from decimal import Decimal
 from unittest import mock
 
@@ -114,6 +115,19 @@ class ApiBusquedaTests(TestCase):
         await self.buscar([adaptador("alfa", usd("7", "10.25")), adaptador("beta")], tipo_cambio="17.50")
         sesion = await self.async_client.asession()
         self.assertIsNone(await sesion.aget(CLAVE_TIPO_CAMBIO))
+
+    async def test_a1b_v1_sin_permiso_de_tipo_de_cambio_no_acepta_uno_a_mano(self):
+        """Pista 6 de la auditoría: como en v2, escribir el tipo de cambio exige el permiso de tipo de cambio."""
+        personal = await sync_to_async(crear_asesor)("personal_v1", tipo_cambio=False)
+        await self.async_client.aforce_login(personal)
+        llamadas = []
+        respuesta, cuerpo = await self.buscar([adaptador("alfa", usd("7", "10.25"), llamadas=llamadas), adaptador("beta")],
+                                              tipo_cambio="17.50")
+        self.assertEqual((respuesta.status_code, cuerpo["success"]), (403, False))
+        self.assertEqual(llamadas, [])
+        self.assertEqual(await self.ofertas_en_sesion(), {})
+        sin_tipo, _ = await self.buscar([adaptador("alfa", mxn("9", "200.00")), adaptador("beta")])
+        self.assertEqual(sin_tipo.status_code, 200)
 
     async def test_a2_auto_match_incluye_el_canonico(self):
         categoria = await Category.objects.acreate(name="Redes sintéticas")
