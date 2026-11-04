@@ -21,7 +21,9 @@ from django.contrib.admin.models import ADDITION, CHANGE, LogEntry
 from django.contrib.auth import get_user_model
 from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.forms import PasswordResetForm
+from django.contrib.admin.forms import AdminPasswordChangeForm
+from django.contrib.auth import password_validation
+from django.contrib.auth.forms import PasswordResetForm, SetPasswordForm
 from django.contrib.auth.models import Group, Permission
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.contenttypes.models import ContentType
@@ -515,10 +517,51 @@ def recuperar_contrasena(request):
                   {"enviado": request.GET.get("enviado") == "1", "invalido": invalido})
 
 
+def _guardar_solo_contrasena(usuario, contrasena, *, exige_staff=False):
+    """Escribe solo la contraseña, sobre la fila actual y bloqueada.
+
+    Django guarda la fila completa que leyó al inicio de la petición: si mientras se calculaba el hash
+    un administrador desactivó la cuenta o le quitó staff/superusuario, ese guardado lo deshacía.
+    Aquí la revocación gana: cuenta revocada → 403 y nada se escribe. El hash (lento) ya viene en
+    usuario.password, así que el bloqueo dura solo la escritura.
+    """
+    with transaction.atomic():
+        fila = get_user_model().objects.select_for_update().get(pk=usuario.pk)
+        if not fila.is_active or (exige_staff and not fila.is_staff):
+            raise PermissionDenied("La cuenta ya no tiene acceso.")
+        fila.password = usuario.password
+        fila.save(update_fields=["password"])
+    password_validation.password_changed(contrasena, fila)
+
+
+class _SoloContrasena:
+    """save() de los formularios de contraseña sin el guardado de fila completa de Django."""
+
+    exige_staff = False
+
+    def save(self, commit=True):
+        contrasena = self.cleaned_data["new_password1"]
+        self.user.set_password(contrasena)
+        if commit:
+            _guardar_solo_contrasena(self.user, contrasena, exige_staff=self.exige_staff)
+        return self.user
+
+
+class FormularioElegirContrasena(_SoloContrasena, SetPasswordForm):
+    pass
+
+
+class FormularioCambiarContrasenaAdmin(_SoloContrasena, AdminPasswordChangeForm):
+    """admin/password_change/ (se instala en apps/quotes/admin.py): el admin exige staff además de activo."""
+
+    exige_staff = True
+
+
 class ElegirContrasena(auth_views.PasswordResetConfirmView):
     """Enlace de invitación o de restablecer: un solo uso, caduca en PASSWORD_RESET_TIMEOUT y entra al guardar."""
 
     template_name = "registration/elegir_contrasena.html"
+    form_class = FormularioElegirContrasena
     post_reset_login = True
     success_url = reverse_lazy("inicio")
 

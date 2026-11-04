@@ -359,3 +359,81 @@ class ContrasenaTests(UsuariosBase):
         self.assertEqual(self.api("post", reverse("api_enlace_contrasena", args=[self.personal.pk])).status_code, 400)
         self.client.force_login(self.asesor)
         self.assertEqual(self.api("post", reverse("api_enlace_contrasena", args=[self.personal.pk])).status_code, 403)
+
+
+class RevocarDuranteLaValidacion:
+    """Validador de prueba: corre después de leer al usuario y antes de guardar, la ventana de la carrera."""
+
+    accion = None
+
+    def validate(self, password, user=None):
+        if RevocarDuranteLaValidacion.accion:
+            accion, RevocarDuranteLaValidacion.accion = RevocarDuranteLaValidacion.accion, None
+            accion()
+
+    def get_help_text(self):
+        return ""
+
+
+CON_REVOCACION = override_settings(AUTH_PASSWORD_VALIDATORS=[
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": f"{__name__}.RevocarDuranteLaValidacion"},
+])
+
+
+@CON_REVOCACION
+class RevocacionDuranteContrasenaTests(UsuariosBase):
+    """Pista 3 de la auditoría: elegir/cambiar contraseña no deshace una revocación hecha a la mitad."""
+
+    def tearDown(self):
+        RevocarDuranteLaValidacion.accion = None
+
+    def formulario_de_enlace(self, cliente, usuario):
+        cliente.post(reverse("recuperar_contrasena"), {"email": usuario.email})
+        return cliente.get(ENLACE.search(mail.outbox[-1].body).group(1))["Location"]
+
+    def test_desactivar_en_el_portal_mientras_elige_contrasena(self):
+        anonimo = self.client_class()
+        formulario = self.formulario_de_enlace(anonimo, self.asesor)
+        RevocarDuranteLaValidacion.accion = lambda: self.assertEqual(self.patch(self.asesor, {"is_active": False}).status_code, 200)
+        respuesta = anonimo.post(formulario, {"new_password1": "Otra-Clave-Nueva-9", "new_password2": "Otra-Clave-Nueva-9"})
+        self.assertEqual(respuesta.status_code, 403)
+        fresco = get_user_model().objects.get(pk=self.asesor.pk)
+        self.assertFalse(fresco.is_active)
+        self.assertTrue(fresco.check_password("Clave-Qa-2026!"))
+        self.assertNotIn("_auth_user_id", anonimo.session)
+
+    def test_quitar_superusuario_mientras_elige_contrasena_no_se_revierte(self):
+        jefe = self.usuario("jefe1", is_staff=True, is_superuser=True)
+        anonimo = self.client_class()
+        formulario = self.formulario_de_enlace(anonimo, jefe)
+        quitar = lambda: get_user_model().objects.filter(pk=jefe.pk).update(is_staff=False, is_superuser=False)
+        RevocarDuranteLaValidacion.accion = quitar
+        respuesta = anonimo.post(formulario, {"new_password1": "Otra-Clave-Nueva-9", "new_password2": "Otra-Clave-Nueva-9"})
+        self.assertRedirects(respuesta, reverse("inicio"), fetch_redirect_response=False)
+        fresco = get_user_model().objects.get(pk=jefe.pk)
+        self.assertTrue(fresco.check_password("Otra-Clave-Nueva-9"))
+        self.assertFalse(fresco.is_staff or fresco.is_superuser)
+
+    def cambiar_en_admin(self, cliente, nueva="Otra-Clave-Nueva-9"):
+        return cliente.post(reverse("admin:password_change"), {
+            "old_password": "Clave-Qa-2026!", "new_password1": nueva, "new_password2": nueva})
+
+    def test_quitar_staff_mientras_cambia_contrasena_en_admin(self):
+        staff = self.usuario("staff1", is_staff=True)
+        cliente = self.client_class()
+        cliente.force_login(staff)
+        RevocarDuranteLaValidacion.accion = lambda: get_user_model().objects.filter(pk=staff.pk).update(is_staff=False)
+        self.assertEqual(self.cambiar_en_admin(cliente).status_code, 403)
+        fresco = get_user_model().objects.get(pk=staff.pk)
+        self.assertFalse(fresco.is_staff)
+        self.assertTrue(fresco.check_password("Clave-Qa-2026!"))
+        self.assertEqual(cliente.get(reverse("admin:index")).status_code, 302)   # sin staff, el admin manda al login
+
+    def test_sin_revocacion_el_cambio_en_admin_sigue_igual(self):
+        staff = self.usuario("staff1", is_staff=True)
+        cliente = self.client_class()
+        cliente.force_login(staff)
+        self.assertRedirects(self.cambiar_en_admin(cliente), reverse("admin:password_change_done"))
+        self.assertTrue(get_user_model().objects.get(pk=staff.pk).check_password("Otra-Clave-Nueva-9"))
+        self.assertEqual(cliente.get(reverse("admin:index")).status_code, 200)   # la sesión sigue viva
