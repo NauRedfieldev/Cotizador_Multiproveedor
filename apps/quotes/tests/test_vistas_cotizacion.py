@@ -292,7 +292,7 @@ class VistaCotizacionTests(TestCase):
         for _ in range(LIMITE_COTIZACIONES):
             self.assertEqual((await self.buscar(adaptadores)).status_code, 200)
         self.assertEqual((await self.buscar(adaptadores)).status_code, 429)
-        await self.async_client.aforce_login(await get_user_model().objects.acreate_user("asesor_dos"))    # misma IP (127.0.0.1)
+        await self.async_client.aforce_login(await sync_to_async(crear_asesor)("asesor_dos"))    # misma IP (127.0.0.1)
         self.assertEqual((await self.buscar(adaptadores)).status_code, 200)
         self.assertEqual(LIMITE_COTIZACIONES, 20)
 
@@ -962,6 +962,33 @@ class ProteccionTests(TestCase):
     def test_p6_un_usuario_inactivo_no_tiene_sesion(self):
         self.client.force_login(crear_asesor("baja", is_active=False))
         self.assertEqual(self.client.get(reverse("comparador")).status_code, 302)
+
+    def test_p6b_sin_rol_el_comparador_no_muestra_costos_ni_consulta(self):
+        """«Sin acceso» (sin view_commercial_costs): 403 como la API, sin llamar proveedores ni contar el límite."""
+        sin_rol = get_user_model().objects.create_user("sin_rol")
+        self.client.force_login(sin_rol)
+        llamadas = []
+        with adaptadores_registrados(adaptador("alfa", mxn("1", "1.00"), llamadas=llamadas)), sin_red():
+            respuesta = self.client.get(reverse("comparador"), {"q": "camara"})
+        self.assertEqual(respuesta.status_code, 403)
+        self.assertEqual(llamadas, [])
+        self.assertIsNone(cache.get(clave_limite(sin_rol)))
+
+    def test_p6c_sin_rol_los_diferidos_dan_403_y_no_consumen_el_pendiente(self):
+        """Un pendiente guardado antes de quitarle el rol no se sirve ni se gasta."""
+        sin_rol = get_user_model().objects.create_user("sin_rol")
+        self.client.force_login(sin_rol)
+        sesion = self.client.session
+        sesion[CLAVE_PENDIENTES] = {"abc": {"params": {"q": "camara", "sku": "", "categoria": ""},
+                                            "tipo_cambio": None, "codes": ["alfa"]}}
+        sesion.save()
+        llamadas = []
+        with adaptadores_registrados(adaptador("alfa", mxn("1", "1.00"), llamadas=llamadas)), sin_red():
+            respuesta = self.client.get(reverse("comparador_diferidos", args=["abc"]))
+        self.assertEqual(respuesta.status_code, 403)
+        self.assertEqual(json.loads(respuesta.content)["html"], "")
+        self.assertEqual(llamadas, [])
+        self.assertIn("abc", self.client.session[CLAVE_PENDIENTES])
 
     def test_p7_sin_sesion_no_hay_menu_ni_pie_y_con_sesion_menu_de_usuario(self):
         """13C: el acceso no muestra nada del sistema. 13B: iniciales y nombre que despliegan «Cerrar sesión»."""
