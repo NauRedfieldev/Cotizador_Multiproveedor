@@ -41,6 +41,7 @@ from apps.providers.service import search_all
 from .comparison import NIVEL_SIN_COINCIDENCIA, TipoCambio, comparar_configurado, tipo_cambio_manual
 from .models import DefaultCommercialCondition, Quote, QuoteRevision
 from .pdf import build_demo_quote, colores_marca, generate_quote_pdf, money, safe_filename
+from .permissions import require_commercial_permission
 from .snapshots import ArchivedPDFError, RevisionConflict, obtener_documento
 from .taxes import TASA_IVA_INICIAL
 
@@ -330,6 +331,8 @@ async def cotizar_productos(request):
     tiene su propio contexto con permisos) y se usa mientras no se envíe otro. Enviarlo vacío lo
     olvida; cerrar sesión también.
     """
+    # Los precios del comparador son costos de proveedor: mismo permiso que la API de búsqueda (403 sin él).
+    await sync_to_async(require_commercial_permission, thread_sensitive=True)(await request.auser())
     # 22A: al volver al comparador sin parámetros (menú) se muestra la última búsqueda de la sesión.
     ultima = await request.session.aget(CLAVE_ULTIMA_BUSQUEDA)
     if not request.GET and ultima:
@@ -424,6 +427,11 @@ async def comparador_diferidos(request, ident):
     De un solo uso: el pendiente sale de la sesión. Usa los parámetros y el tipo de cambio que guardó la
     página (no los del navegador) y no suma en el límite de búsquedas, que ya contó la página.
     """
+    try:
+        await sync_to_async(require_commercial_permission, thread_sensitive=True)(await request.auser())
+    except PermissionDenied:
+        return JsonResponse({"html": "", "ofertas": 0, "caidos": [],
+                             "error": "No tienes permiso para ver costos de proveedores."}, status=403)
     pendientes = dict(await request.session.aget(CLAVE_PENDIENTES, {}))
     pendiente = pendientes.pop(ident, None)
     if pendiente is None:
