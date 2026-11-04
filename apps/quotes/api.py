@@ -99,6 +99,9 @@ async def buscar_productos(request):
                 valor, _ = await tipo_cambio_sugerido()
                 if valor is not None:
                     fijo = TipoCambio(valor, "syscom", timezone.now())
+        elif request.GET.get("tipo_cambio", "").strip():
+            # v1 también: un tipo de cambio escrito a mano exige el permiso de tipo de cambio.
+            await sync_to_async(require_commercial_permission, thread_sensitive=True)(actor, FX)
     except Exception as exc:
         return _respuesta_de_error(exc)
     if not request.GET.get("q", "").strip() and not request.GET.get("sku", "").strip():
@@ -319,6 +322,9 @@ async def crear_cotizacion(request):
     request_id = _uuid(datos.get("request_id"))
     cliente = _cliente(datos)
     partidas, tipo_cambio = _partidas(datos.get("items"), await request.session.aget(CLAVE_OFERTAS, {}))
+    if tipo_cambio is not None and tipo_cambio.origen != "syscom":
+        # Precios de una búsqueda con tipo de cambio a mano: el permiso se revisa otra vez al guardar.
+        await sync_to_async(require_commercial_permission, thread_sensitive=True)(await request.auser(), FX)
     revision = await sync_to_async(_crear_cotizacion, thread_sensitive=True)(
         await request.auser(), empresa, cliente, partidas, tipo_cambio, request_id,
     )
