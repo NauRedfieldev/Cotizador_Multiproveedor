@@ -10,6 +10,7 @@ from django.core import mail
 from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.quotes.permissions import (
     ADMIN_GROUP, ASESOR_GROUP, DISCOUNT, FX, INTERNAL_GROUP, MANAGE, MANUAL_SALE, MARGIN, TAX, VIEW_COSTS,
@@ -183,6 +184,43 @@ class RolesTests(UsuariosBase):
         # Reactivar no revive la sesión anterior: tiene que volver a entrar.
         self.assertEqual(otro.get(reverse("api_capacidades_comerciales")).status_code, 401)
         self.assertTrue(LogEntry.objects.filter(object_id=str(self.asesor.pk), change_message__contains="cuenta desactivada").exists())
+
+    def guardar_en_admin(self, cliente, usuario, activo):
+        """POST del formulario de usuario de /admin/ con los datos actuales; solo cambia is_active."""
+        usuario.refresh_from_db()
+        local = lambda fecha: timezone.localtime(fecha)
+        datos = {"username": usuario.username, "first_name": usuario.first_name, "last_name": usuario.last_name,
+                 "email": usuario.email, "groups": list(usuario.groups.values_list("pk", flat=True)),
+                 "date_joined_0": local(usuario.date_joined).strftime("%Y-%m-%d"),
+                 "date_joined_1": local(usuario.date_joined).strftime("%H:%M:%S")}
+        if usuario.last_login:
+            datos |= {"last_login_0": local(usuario.last_login).strftime("%Y-%m-%d"),
+                      "last_login_1": local(usuario.last_login).strftime("%H:%M:%S")}
+        if activo:
+            datos["is_active"] = "on"
+        return cliente.post(reverse("admin:auth_user_change", args=[usuario.pk]), datos)
+
+    def test_desactivar_en_admin_tambien_cierra_la_sesion(self):
+        """Pista 4 de la auditoría: /admin/ cumple la misma regla que el portal."""
+        otro = self.client_class()
+        otro.force_login(self.asesor)
+        self.assertEqual(otro.get(reverse("api_capacidades_comerciales")).status_code, 200)
+        dueno = self.client_class()
+        dueno.force_login(self.root)
+        self.assertRedirects(self.guardar_en_admin(dueno, self.asesor, activo=False), reverse("admin:auth_user_changelist"))
+        self.assertFalse(get_user_model().objects.get(pk=self.asesor.pk).is_active)
+        self.assertRedirects(self.guardar_en_admin(dueno, self.asesor, activo=True), reverse("admin:auth_user_changelist"))
+        self.assertTrue(get_user_model().objects.get(pk=self.asesor.pk).is_active)
+        # Reactivar no revive la sesión anterior: tiene que volver a entrar.
+        self.assertEqual(otro.get(reverse("api_capacidades_comerciales")).status_code, 401)
+
+    def test_editar_en_admin_sin_desactivar_no_cierra_la_sesion(self):
+        otro = self.client_class()
+        otro.force_login(self.asesor)
+        dueno = self.client_class()
+        dueno.force_login(self.root)
+        self.assertRedirects(self.guardar_en_admin(dueno, self.asesor, activo=True), reverse("admin:auth_user_changelist"))
+        self.assertEqual(otro.get(reverse("api_capacidades_comerciales")).status_code, 200)
 
     def test_entradas_invalidas(self):
         for datos in ({}, {"role": "owner"}, {"role": "root"}, {"is_active": "no"}, {"extras": "descuentos"},
