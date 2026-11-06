@@ -9,6 +9,7 @@
 """
 
 import logging
+import threading
 from datetime import timedelta
 from email.utils import formataddr
 from functools import wraps
@@ -376,6 +377,11 @@ def _correo_sistemas():
 
 def _enviar_acceso(usuario, request, tipo, invito=None):
     """Devuelve «sent» (salió por SMTP), «console» (sin SISTEMAS_SMTP_HOST) o «failed»."""
+    return _enviar(*_correo_de_acceso(usuario, request, tipo, invito), usuario.pk)
+
+
+def _correo_de_acceso(usuario, request, tipo, invito=None):
+    """Arma el correo (lee la BD aquí, en la petición); _enviar solo lo manda."""
     real, remitente = _correo_sistemas()
     empresa = (settings.CCONOR_EMPRESA.get("name") or "CCONOR").strip()
     nombre, _, resto = empresa.partition(" ")
@@ -396,11 +402,15 @@ def _enviar_acceso(usuario, request, tipo, invito=None):
     mensaje = EmailMultiAlternatives(asunto, render_to_string("registration/correo_acceso.txt", contexto),
                                      formataddr((empresa, remitente)), [usuario.email])
     mensaje.attach_alternative(render_to_string("registration/correo_acceso.html", contexto), "text/html")
+    return mensaje, real
+
+
+def _enviar(mensaje, real, usuario_pk):
     try:
         if mensaje.send(using="sistemas") != 1:
             return "failed"
     except Exception:
-        logger.exception("B6: no se pudo enviar el correo de acceso al usuario %s.", usuario.pk)
+        logger.exception("B6: no se pudo enviar el correo de acceso al usuario %s.", usuario_pk)
         return "failed"
     return "sent" if real else "console"
 
@@ -546,9 +556,20 @@ class FormularioLoginAdmin(_LimiteDeIntentos, AdminAuthenticationForm):
     """admin/login/ (se instala en apps/quotes/admin.py)."""
 
 
+def _en_segundo_plano(funcion, *args):
+    """Corre funcion en un hilo aparte y no espera. No debe tocar la BD (el hilo no tiene su conexión)."""
+    hilo = threading.Thread(target=funcion, args=args, name="correo-restablecer")
+    hilo.start()
+    return hilo
+
+
 @require_http_methods(["GET", "POST"])
 def recuperar_contrasena(request):
-    """Mismo mensaje exista o no el correo: no revela quién tiene cuenta."""
+    """Mismo mensaje exista o no el correo: no revela quién tiene cuenta.
+
+    El correo sale en segundo plano: si la página esperara al SMTP, tardaría más cuando el correo
+    tiene cuenta y eso delataría quién la tiene.
+    """
     invalido = False
     if request.method == "POST":
         form = PasswordResetForm(request.POST)
@@ -562,7 +583,7 @@ def recuperar_contrasena(request):
                         continue
                     try:
                         _registrar(usuario, usuario, CHANGE, "enlace para restablecer contraseña pedido desde el inicio de sesión")
-                        _enviar_acceso(usuario, request, "restablecer")
+                        _en_segundo_plano(_enviar, *_correo_de_acceso(usuario, request, "restablecer"), usuario.pk)
                     except _RemitenteSistemasSinConfigurar:
                         logger.error("B6: falta SISTEMAS_SMTP_FROM; no se envió el enlace para restablecer.")
             return HttpResponseRedirect(reverse("recuperar_contrasena") + "?enviado=1")
