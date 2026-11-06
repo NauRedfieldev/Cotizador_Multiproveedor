@@ -11,14 +11,13 @@ from pathlib import Path
 from unittest import mock
 from uuid import uuid4
 
-from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.contrib.auth.models import Permission
 from asgiref.sync import sync_to_async
 from django.test import AsyncClient, TestCase, TransactionTestCase, override_settings, tag
 from django.urls import reverse
 
-from apps.providers.tests.soporte import adaptadores_registrados, crear_proveedor, ejecutar_en_hilos, sin_red
+from apps.providers.tests.soporte import adaptadores_registrados, crear_proveedor, ejecutar_en_hilos, limpiar_caches, sin_red
 from apps.quotes import api
 from apps.quotes.models import Quote, QuoteRevision
 from apps.quotes.snapshots import ArchivedPDFError
@@ -70,7 +69,7 @@ def cuerpo_edicion(edit_version=1, **cambios):
 @tag("django_db")
 class ApiCotizacionesTests(TestCase):
     def setUp(self):
-        cache.clear()
+        limpiar_caches()
         tmp = tempfile.TemporaryDirectory(prefix="m7a-")
         self.addCleanup(tmp.cleanup)
         self.pdfs = Path(tmp.name)
