@@ -15,7 +15,7 @@
         <div class="panel-head">
             <h1 id="panelGreeting" class="panel-greeting">Hola, {{ user.first_name|default:user.get_username }}</h1>
             <div class="panel-head-actions">
-                <a href="{% url 'comparador' %}" class="btn btn-outline-primary">Buscar productos</a>
+                {% if perms.quotes.view_commercial_costs %}<a href="{% url 'comparador' %}" class="btn btn-outline-primary">Buscar productos</a>{% endif %}
                 <a href="{% url 'cotizador' %}" class="btn btn-cconor-primary">+ Nueva cotización</a>
             </div>
         </div>
