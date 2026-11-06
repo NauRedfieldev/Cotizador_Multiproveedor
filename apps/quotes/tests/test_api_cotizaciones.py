@@ -11,13 +11,14 @@ from pathlib import Path
 from unittest import mock
 from uuid import uuid4
 
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.contrib.auth.models import Permission
 from asgiref.sync import sync_to_async
 from django.test import AsyncClient, TestCase, TransactionTestCase, override_settings, tag
 from django.urls import reverse
 
-from apps.providers.tests.soporte import adaptadores_registrados, crear_proveedor, ejecutar_en_hilos, limpiar_caches, sin_red
+from apps.providers.tests.soporte import adaptadores_registrados, crear_proveedor, ejecutar_en_hilos, sin_red
 from apps.quotes import api
 from apps.quotes.models import Quote, QuoteRevision
 from apps.quotes.snapshots import ArchivedPDFError
@@ -69,7 +70,7 @@ def cuerpo_edicion(edit_version=1, **cambios):
 @tag("django_db")
 class ApiCotizacionesTests(TestCase):
     def setUp(self):
-        limpiar_caches()
+        cache.clear()
         tmp = tempfile.TemporaryDirectory(prefix="m7a-")
         self.addCleanup(tmp.cleanup)
         self.pdfs = Path(tmp.name)
@@ -129,25 +130,6 @@ class ApiCotizacionesTests(TestCase):
              partida.source_currency, partida.quantity, partida.es_mejor_precio),
             ("alfa", "Alfa", "7", Decimal("10.25"), "USD", Decimal("2"), True),
         )
-
-    async def test_c1b_v1_sin_permiso_de_tipo_de_cambio_no_guarda_uno_a_mano(self):
-        """Pista 6 de la auditoría: ofertas con tipo de cambio a mano en la sesión (p. ej. de antes de perder
-        el permiso) no entran a una cotización v1; uno de SYSCOM o en pesos sigue sin pedir ese permiso."""
-        fx = await Permission.objects.aget(content_type__app_label="quotes", codename=FX)
-        await self.asesor.user_permissions.aremove(fx)
-        respuesta, _ = await self.alta()
-        self.assertEqual(respuesta.status_code, 403)
-        self.assertFalse(await QuoteRevision.objects.filter(quote__advisor=self.asesor).aexists())
-        sesion = await self.async_client.asession()
-        ofertas = dict(await sesion.aget(api.CLAVE_OFERTAS))
-        ofertas["alfa:8"] = oferta_guardada("alfa", "8", "3.00", tipo={**TIPO, "origen": "syscom"})
-        await sesion.aset(api.CLAVE_OFERTAS, ofertas)
-        await sesion.asave()
-        for partida in ({"provider": "beta", "external_id": "9", "quantity": "1"},
-                        {"provider": "alfa", "external_id": "8", "quantity": "1"}):
-            with self.subTest(partida=partida):
-                respuesta, _ = await self.alta(items=[partida])
-                self.assertEqual(respuesta.status_code, 201)
 
     async def test_c2_el_navegador_no_puede_mandar_precio_ni_margen(self):
         for item in ({"provider": "alfa", "external_id": "7", "quantity": "1", "costo_mxn": "1.00"},

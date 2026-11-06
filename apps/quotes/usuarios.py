@@ -8,9 +8,8 @@
 - Cada cambio queda en el historial de Django (LogEntry) con quién y cuándo; no hay tablas nuevas.
 """
 
-import ipaddress
+import hashlib
 import logging
-import threading
 from datetime import timedelta
 from email.utils import formataddr
 from functools import wraps
@@ -22,13 +21,11 @@ from django.contrib.admin.models import ADDITION, CHANGE, LogEntry
 from django.contrib.auth import get_user_model
 from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import login_required
-from django.contrib.admin.forms import AdminAuthenticationForm, AdminPasswordChangeForm
-from django.contrib.auth import password_validation
-from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm, SetPasswordForm
+from django.contrib.auth.forms import PasswordResetForm
 from django.contrib.auth.models import Group, Permission
-from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.contrib.auth.tokens import default_token_generator
 from django.contrib.contenttypes.models import ContentType
-from django.core.cache import caches
+from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied, ValidationError
 from django.core.mail import EmailMultiAlternatives
 from django.core.validators import validate_email
@@ -40,7 +37,7 @@ from django.template.loader import render_to_string
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone, translation
 from django.utils.encoding import force_bytes
-from django.utils.http import base36_to_int, urlsafe_base64_encode
+from django.utils.http import urlsafe_base64_encode
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
@@ -62,13 +59,8 @@ NOMBRE_EXTRA = {FX: "tipo de cambio", MANUAL_SALE: "manuales", MARGIN: "margen",
 TODOS = ADJUSTMENTS | {VIEW_COSTS, MANAGE}
 PREFIJO_LOG = "B6: "
 LOG_INVITACION = PREFIJO_LOG + "invitación"
-# «¿Olvidaste tu contraseña?»: máximo 10 pedidos por hora por IP y 3 enlaces por hora para cada cuenta.
-LIMITE_POR_CUENTA, LIMITE_POR_IP, VENTANA_RECUPERAR = 3, 10, 3600
-# El enlace para restablecer dura 1 hora; el de invitación, PASSWORD_RESET_TIMEOUT (3 días por defecto).
-DURACION_RESTABLECER = 3600
-# Iniciar sesión: máximo 20 intentos fallidos cada 15 minutos por IP (los correctos no cuentan).
-LIMITE_LOGIN_POR_IP, VENTANA_LOGIN = 20, 900
-DEMASIADOS_INTENTOS = "Demasiados intentos fallidos desde esta red. Espera 15 minutos e intenta de nuevo."
+# «¿Olvidaste tu contraseña?»: máximo 3 enlaces por hora para un mismo correo (y 10 por IP).
+LIMITE_POR_CORREO, LIMITE_POR_IP, VENTANA_RECUPERAR = 3, 10, 3600
 
 
 class _RolesSinConfigurar(Exception):
@@ -378,24 +370,18 @@ def _correo_sistemas():
 
 def _enviar_acceso(usuario, request, tipo, invito=None):
     """Devuelve «sent» (salió por SMTP), «console» (sin SISTEMAS_SMTP_HOST) o «failed»."""
-    return _enviar(*_correo_de_acceso(usuario, request, tipo, invito), usuario.pk)
-
-
-def _correo_de_acceso(usuario, request, tipo, invito=None):
-    """Arma el correo (lee la BD aquí, en la petición); _enviar solo lo manda."""
     real, remitente = _correo_sistemas()
     empresa = (settings.CCONOR_EMPRESA.get("name") or "CCONOR").strip()
     nombre, _, resto = empresa.partition(" ")
     marca = colores_marca("cconor")
     enlace = request.build_absolute_uri(reverse("elegir_contrasena", args=[
-        urlsafe_base64_encode(force_bytes(usuario.pk)), generador_de_enlaces.make_token(usuario)]))
+        urlsafe_base64_encode(force_bytes(usuario.pk)), default_token_generator.make_token(usuario)]))
     invitacion = tipo == "invitacion"
     rol = _rol(usuario, {g.name for g in usuario.groups.all()})
     contexto = {
         "invitacion": invitacion, "usuario": usuario, "nombre": usuario.first_name or usuario.get_username(),
         "invito": _nombre(invito) if invito and invitacion else "", "rol": NOMBRE_ROL[rol], "enlace": enlace,
-        "caduca": timezone.localtime(timezone.now() + timedelta(
-            seconds=settings.PASSWORD_RESET_TIMEOUT if invitacion else DURACION_RESTABLECER)),
+        "caduca": timezone.localtime(timezone.now() + timedelta(seconds=settings.PASSWORD_RESET_TIMEOUT)),
         "empresa": empresa, "marca": {"barra": marca["color"], "subtitulo": marca["tint"], "nombre": nombre, "resto": resto},
     }
     asunto = (f"Tu acceso al Portal de Cotización de {nombre}" if invitacion
@@ -403,15 +389,11 @@ def _correo_de_acceso(usuario, request, tipo, invito=None):
     mensaje = EmailMultiAlternatives(asunto, render_to_string("registration/correo_acceso.txt", contexto),
                                      formataddr((empresa, remitente)), [usuario.email])
     mensaje.attach_alternative(render_to_string("registration/correo_acceso.html", contexto), "text/html")
-    return mensaje, real
-
-
-def _enviar(mensaje, real, usuario_pk):
     try:
         if mensaje.send(using="sistemas") != 1:
             return "failed"
     except Exception:
-        logger.exception("B6: no se pudo enviar el correo de acceso al usuario %s.", usuario_pk)
+        logger.exception("B6: no se pudo enviar el correo de acceso al usuario %s.", usuario.pk)
         return "failed"
     return "sent" if real else "console"
 
@@ -496,114 +478,35 @@ async def api_enlace_contrasena(request, user_id):
 # «¿Olvidaste tu contraseña?» y «Elige tu contraseña»
 # ---------------------------------------------------------------------------
 
-def _ip_para_limites(request):
-    """La IP de la petición como clave de los límites de login y recuperar contraseña.
-
-    Con algunos proxies la IP sale de X-Forwarded-For, que escribe el navegador (pista 13): un texto
-    que no es IP cae en un solo contador compartido, para que inventar uno nuevo en cada petición no
-    sirva. IPv6 se agrupa por /64, porque una casa u oficina tiene millones de direcciones en el mismo.
-    """
-    try:
-        ip = ipaddress.ip_address(request.META.get("REMOTE_ADDR", "") if request else "")
-    except ValueError:
-        return "no-es-ip"
-    if ip.version == 4:
-        return str(ip)
-    if ip.ipv4_mapped:
-        return str(ip.ipv4_mapped)
-    return str(ipaddress.IPv6Network((int(ip) >> 64 << 64, 64)))
-
-
-def _sumar(clave, ventana):
-    """Suma 1 al contador de la clave (vive `ventana` segundos desde el primero) y devuelve la cuenta."""
-    limites = caches["limites"]
-    limites.add(clave, 0, ventana)
-    try:
-        return limites.incr(clave)
-    except ValueError:  # caducó entre add e incr
-        limites.set(clave, 1, ventana)
-        return 1
-
-
-class _GeneradorDeEnlaces(PasswordResetTokenGenerator):
-    """Enlaces de «Elige tu contraseña»: de un solo uso (al cambiar la contraseña dejan de servir).
-
-    Restablecer caduca en DURACION_RESTABLECER; la invitación (cuenta pendiente) conserva
-    PASSWORD_RESET_TIMEOUT, porque quien es nuevo puede abrir el correo al día siguiente.
-    """
-
-    def check_token(self, user, token):
-        if not super().check_token(user, token):
-            return False
-        if _pendiente(user):
-            return True
-        return self._num_seconds(self._now()) - base36_to_int(token.partition("-")[0]) <= DURACION_RESTABLECER
-
-
-generador_de_enlaces = _GeneradorDeEnlaces()
-
-
-class _LimiteDeIntentos:
-    """Login con límite de intentos fallidos por IP, revisado ANTES de comprobar la contraseña.
-
-    Cada comprobación cuesta un hash lento (PBKDF2), exista o no el usuario: sin límite, cualquiera
-    podía mandar intentos sin fin y ocupar la CPU del servidor. El intento se cuenta antes de
-    comprobar (así varios a la vez no se cuelan) y, si la contraseña era correcta, se devuelve.
-    """
-
-    limitado = False
-
-    def clean(self):
-        if self.cleaned_data.get("username") is None or not self.cleaned_data.get("password"):
-            return super().clean()  # Django no comprueba nada sin usuario y contraseña
-        clave = f"login:ip:{_ip_para_limites(self.request)}"
-        if _sumar(clave, VENTANA_LOGIN) > LIMITE_LOGIN_POR_IP:
-            self.limitado = True
-            raise ValidationError(DEMASIADOS_INTENTOS, code="demasiados_intentos")
-        datos = super().clean()  # si la contraseña no coincide, lanza ValidationError y el intento queda contado
+def _dentro_del_limite(correo, ip):
+    claves = [(f"recuperar:correo:{hashlib.sha256(correo.lower().encode()).hexdigest()}", LIMITE_POR_CORREO),
+              (f"recuperar:ip:{ip}", LIMITE_POR_IP)]
+    dentro = True
+    for clave, limite in claves:
+        cache.add(clave, 0, VENTANA_RECUPERAR)
         try:
-            caches["limites"].decr(clave)
-        except ValueError:  # la ventana caducó mientras tanto
-            pass
-        return datos
-
-
-class FormularioLogin(_LimiteDeIntentos, AuthenticationForm):
-    pass
-
-
-class FormularioLoginAdmin(_LimiteDeIntentos, AdminAuthenticationForm):
-    """admin/login/ (se instala en apps/quotes/admin.py)."""
-
-
-def _en_segundo_plano(funcion, *args):
-    """Corre funcion en un hilo aparte y no espera. No debe tocar la BD (el hilo no tiene su conexión)."""
-    hilo = threading.Thread(target=funcion, args=args, name="correo-restablecer")
-    hilo.start()
-    return hilo
+            cuenta = cache.incr(clave)
+        except ValueError:  # caducó entre add e incr
+            cache.set(clave, 1, VENTANA_RECUPERAR)
+            cuenta = 1
+        dentro = dentro and cuenta <= limite
+    return dentro
 
 
 @require_http_methods(["GET", "POST"])
 def recuperar_contrasena(request):
-    """Mismo mensaje exista o no el correo: no revela quién tiene cuenta.
-
-    El correo sale en segundo plano: si la página esperara al SMTP, tardaría más cuando el correo
-    tiene cuenta y eso delataría quién la tiene.
-    """
+    """Mismo mensaje exista o no el correo: no revela quién tiene cuenta."""
     invalido = False
     if request.method == "POST":
         form = PasswordResetForm(request.POST)
         if form.is_valid():
-            # Primero la IP; una IP pasada del límite no gasta los envíos de nadie.
-            if _sumar(f"recuperar:ip:{_ip_para_limites(request)}", VENTANA_RECUPERAR) <= LIMITE_POR_IP:
+            correo = form.cleaned_data["email"]
+            if _dentro_del_limite(correo, request.META.get("REMOTE_ADDR", "")):
                 # get_users: solo cuentas activas que ya eligieron contraseña (no invitaciones pendientes).
-                # Se cuentan los envíos de cada cuenta, no los pedidos: un correo sin cuenta no gasta nada.
-                for usuario in form.get_users(form.cleaned_data["email"]):
-                    if _sumar(f"recuperar:cuenta:{usuario.pk}", VENTANA_RECUPERAR) > LIMITE_POR_CUENTA:
-                        continue
+                for usuario in form.get_users(correo):
                     try:
                         _registrar(usuario, usuario, CHANGE, "enlace para restablecer contraseña pedido desde el inicio de sesión")
-                        _en_segundo_plano(_enviar, *_correo_de_acceso(usuario, request, "restablecer"), usuario.pk)
+                        _enviar_acceso(usuario, request, "restablecer")
                     except _RemitenteSistemasSinConfigurar:
                         logger.error("B6: falta SISTEMAS_SMTP_FROM; no se envió el enlace para restablecer.")
             return HttpResponseRedirect(reverse("recuperar_contrasena") + "?enviado=1")
@@ -612,52 +515,10 @@ def recuperar_contrasena(request):
                   {"enviado": request.GET.get("enviado") == "1", "invalido": invalido})
 
 
-def _guardar_solo_contrasena(usuario, contrasena, *, exige_staff=False):
-    """Escribe solo la contraseña, sobre la fila actual y bloqueada.
-
-    Django guarda la fila completa que leyó al inicio de la petición: si mientras se calculaba el hash
-    un administrador desactivó la cuenta o le quitó staff/superusuario, ese guardado lo deshacía.
-    Aquí la revocación gana: cuenta revocada → 403 y nada se escribe. El hash (lento) ya viene en
-    usuario.password, así que el bloqueo dura solo la escritura.
-    """
-    with transaction.atomic():
-        fila = get_user_model().objects.select_for_update().get(pk=usuario.pk)
-        if not fila.is_active or (exige_staff and not fila.is_staff):
-            raise PermissionDenied("La cuenta ya no tiene acceso.")
-        fila.password = usuario.password
-        fila.save(update_fields=["password"])
-    password_validation.password_changed(contrasena, fila)
-
-
-class _SoloContrasena:
-    """save() de los formularios de contraseña sin el guardado de fila completa de Django."""
-
-    exige_staff = False
-
-    def save(self, commit=True):
-        contrasena = self.cleaned_data["new_password1"]
-        self.user.set_password(contrasena)
-        if commit:
-            _guardar_solo_contrasena(self.user, contrasena, exige_staff=self.exige_staff)
-        return self.user
-
-
-class FormularioElegirContrasena(_SoloContrasena, SetPasswordForm):
-    pass
-
-
-class FormularioCambiarContrasenaAdmin(_SoloContrasena, AdminPasswordChangeForm):
-    """admin/password_change/ (se instala en apps/quotes/admin.py): el admin exige staff además de activo."""
-
-    exige_staff = True
-
-
 class ElegirContrasena(auth_views.PasswordResetConfirmView):
-    """Enlace de invitación o de restablecer: un solo uso, caduca según _GeneradorDeEnlaces y entra al guardar."""
+    """Enlace de invitación o de restablecer: un solo uso, caduca en PASSWORD_RESET_TIMEOUT y entra al guardar."""
 
     template_name = "registration/elegir_contrasena.html"
-    token_generator = generador_de_enlaces
-    form_class = FormularioElegirContrasena
     post_reset_login = True
     success_url = reverse_lazy("inicio")
 

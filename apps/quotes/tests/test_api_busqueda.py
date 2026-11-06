@@ -6,18 +6,17 @@ ofertas guardadas en sesión. El modo degradado en sí ya lo cubren V1–V16.
 import json
 
 import httpx
-from asgiref.sync import sync_to_async
 from decimal import Decimal
 from unittest import mock
 
-from django.core.cache import caches
+from django.core.cache import cache
 from django.contrib.auth.models import Permission
 from django.test import TestCase, override_settings, tag
 from django.urls import reverse
 
 from apps.catalog.models import Category, ProductoCanonico
 from apps.providers.models import Provider
-from apps.providers.tests.soporte import adaptadores_registrados, crear_proveedor, limpiar_caches, sin_red
+from apps.providers.tests.soporte import adaptadores_registrados, crear_proveedor, sin_red
 from apps.quotes import api
 from apps.quotes.tests.test_vistas_cotizacion import adaptador, crear_asesor, mxn, usd
 from apps.quotes.views import CLAVE_OFERTAS_VISTAS, CLAVE_TIPO_CAMBIO, LIMITE_COTIZACIONES, clave_limite
@@ -31,7 +30,7 @@ from uuid import uuid4
 @override_settings(OFERTAS_POR_PROVEEDOR=3)
 class ApiBusquedaTests(TestCase):
     def setUp(self):
-        limpiar_caches()
+        cache.clear()
         crear_proveedor("alfa")
         crear_proveedor("beta")
         self.url = reverse("api_buscar_productos")
@@ -115,19 +114,6 @@ class ApiBusquedaTests(TestCase):
         await self.buscar([adaptador("alfa", usd("7", "10.25")), adaptador("beta")], tipo_cambio="17.50")
         sesion = await self.async_client.asession()
         self.assertIsNone(await sesion.aget(CLAVE_TIPO_CAMBIO))
-
-    async def test_a1b_v1_sin_permiso_de_tipo_de_cambio_no_acepta_uno_a_mano(self):
-        """Pista 6 de la auditoría: como en v2, escribir el tipo de cambio exige el permiso de tipo de cambio."""
-        personal = await sync_to_async(crear_asesor)("personal_v1", tipo_cambio=False)
-        await self.async_client.aforce_login(personal)
-        llamadas = []
-        respuesta, cuerpo = await self.buscar([adaptador("alfa", usd("7", "10.25"), llamadas=llamadas), adaptador("beta")],
-                                              tipo_cambio="17.50")
-        self.assertEqual((respuesta.status_code, cuerpo["success"]), (403, False))
-        self.assertEqual(llamadas, [])
-        self.assertEqual(await self.ofertas_en_sesion(), {})
-        sin_tipo, _ = await self.buscar([adaptador("alfa", mxn("9", "200.00")), adaptador("beta")])
-        self.assertEqual(sin_tipo.status_code, 200)
 
     async def test_a2_auto_match_incluye_el_canonico(self):
         categoria = await Category.objects.acreate(name="Redes sintéticas")
@@ -232,7 +218,7 @@ class ApiBusquedaTests(TestCase):
         self.assertEqual(cuerpo, {"success": False, "error": "Inicia sesión para continuar.",
                                 "code": "UNAUTHENTICATED", "details": {}})
         self.assertEqual(llamadas, [])
-        self.assertIsNone(await caches["limites"].aget("cotizar:ip:127.0.0.1"))
+        self.assertIsNone(await cache.aget("cotizar:ip:127.0.0.1"))
 
     # 15A/16A: tipo de cambio de la sesión, uno solo para el chip del menú, el comparador y el cotizador.
     async def tc(self, metodo="get", cuerpo=None, consulta=None):
@@ -285,7 +271,7 @@ class ApiBusquedaTests(TestCase):
     async def test_a15_si_syscom_no_responde_no_cambia_nada(self):
         await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
         await self.tc("put", {"value": "18.70"})
-        limpiar_caches()
+        await cache.aclear()
         falla = mock.AsyncMock(side_effect=httpx.ConnectError("sin red"))
         respuesta, cuerpo = await self.tc("put", {"use_syscom": True}, consulta=falla)
         self.assertEqual(respuesta.status_code, 503)
@@ -416,7 +402,7 @@ class ApiBusquedaTests(TestCase):
 class CommercialSearchTests(CommercialFixtures, TestCase):
     def setUp(self):
         super().setUp()
-        limpiar_caches()
+        cache.clear()
         crear_proveedor("alfa")
         self.client.force_login(self.actor)
 
@@ -578,7 +564,7 @@ class TipoCambioPorRolTests(CommercialFixtures, TestCase):
 
     def setUp(self):
         super().setUp()
-        limpiar_caches()
+        cache.clear()
         crear_proveedor("alfa")
         Provider.objects.create(code="syscom", name="SYSCOM", base_url="https://syscom.example.com")
         self.consulta = mock.AsyncMock(return_value=Decimal("18.54"))
@@ -626,7 +612,7 @@ class TipoCambioPorRolTests(CommercialFixtures, TestCase):
         self.assertEqual((fx["value"], fx["source"]), ("18.54000000", "syscom"))
         self.contexto_fx(403, value="18.60")
         self.contexto_fx(400, use_syscom=True, value="18.60")
-        limpiar_caches()
+        cache.clear()
         self.consulta.side_effect = httpx.ConnectError("sin red")
         with self.assertLogs("apps.quotes.views", "WARNING"):
             error = self.contexto_fx(503, use_syscom=True)

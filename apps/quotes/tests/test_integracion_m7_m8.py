@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import httpx
 from django.core import mail
+from django.core.cache import cache
 from django.test import TestCase, override_settings, tag
 from django.urls import reverse
 
@@ -25,7 +26,6 @@ from apps.providers.tests.soporte import (
     ApiFalsa,
     credenciales_de_prueba,
     exigir_bd_de_pruebas,
-    limpiar_caches,
     respuesta_json,
     sin_red,
 )
@@ -72,7 +72,7 @@ class Q4Base(CommercialFixtures, TestCase):
     def setUp(self):
         super().setUp()
         exigir_bd_de_pruebas()
-        limpiar_caches()  # el límite de búsquedas vive en la LocMemCache, que dura toda la suite
+        cache.clear()  # el límite de búsquedas vive en la LocMemCache, que dura toda la suite
         self.enterContext(sin_red())
         self.enterContext(credenciales_de_prueba("syscom", CLIENT_ID=CLIENT_ID_FALSO,
                                                  CLIENT_SECRET=CENTINELA_SECRETO))

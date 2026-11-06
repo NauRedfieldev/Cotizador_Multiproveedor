@@ -103,10 +103,8 @@ Al integrar un proveedor nuevo (docs/20), su declaración se añade aquí junto 
   entre las dos llamadas, cuenta como la primera petición.
 - El límite se comprueba antes de consultar a nadie, así que también protege los límites de peticiones de
   SYSCOM.
-- El contador vive en la caché `limites` (`LocMemCache` de 10,000 entradas), aparte de la caché general de
-  Exel y del tipo de cambio: compartían 300 entradas y las búsquedas normales borraban los contadores.
-- **Limitación:** la `LocMemCache` cuenta por proceso. Con varios workers de Uvicorn, el límite real se
-  multiplica por el número de workers.
+- **Limitación:** no hay `CACHES` configurado, así que se usa la `LocMemCache`, que cuenta por proceso. Con
+  varios workers de Uvicorn, el límite real se multiplica por el número de workers.
 
 ## 7. Pruebas
 

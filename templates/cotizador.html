@@ -99,7 +99,7 @@
         <div id="trayNotice" class="tray-notice d-none" role="status"><i class="bi bi-basket2" aria-hidden="true" style="color: var(--cconor-eleccion);"></i>
             <span id="trayNoticeText"></span>
             <span class="ms-auto d-flex flex-wrap gap-2"><button type="button" id="trayBringBtn" class="btn btn-sm btn-cconor-primary">Traer a esta cotización</button>
-                {% if perms.quotes.view_commercial_costs %}<a class="btn btn-sm btn-outline-primary d-inline-flex align-items-center" href="{% url 'comparador' %}">Ver bandeja</a>{% endif %}</span></div>
+                <a class="btn btn-sm btn-outline-primary d-inline-flex align-items-center" href="{% url 'comparador' %}">Ver bandeja</a></span></div>
         <div id="trayResults" class="tray-results d-none" aria-live="polite"></div>
         <!-- 23A: de cuándo son los precios de proveedor y «Revisar precios» (nada cambia solo). -->
         <div id="priceAge" class="price-age d-none"><i class="bi bi-clock-history" aria-hidden="true"></i><span id="priceAgeText"></span>

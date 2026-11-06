@@ -12,8 +12,6 @@ from unittest import mock
 
 import httpx
 from asgiref.sync import async_to_sync
-from django.conf import settings
-from django.core.cache import caches
 from django.db import connection, connections
 
 from apps.providers import registry
@@ -252,9 +250,3 @@ def credenciales_de_prueba(code, **valores):
             del os.environ[nombre]
         os.environ.update({f"PROVIDER_{marca}_{clave}": valor for clave, valor in valores.items()})
         yield
-
-
-def limpiar_caches():
-    """Vacía todas las cachés (la general y la de límites): la LocMem dura toda la suite."""
-    for alias in settings.CACHES:
-        caches[alias].clear()

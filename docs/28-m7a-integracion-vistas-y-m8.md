@@ -971,7 +971,7 @@ Solo navegador (`static/js/main.js`, `static/js/cotizador.js`, `templates/compar
   (`PASSWORD_RESET_TIMEOUT`, 3 días). «Reenviar invitación» invalida el enlace anterior. Invitación pendiente =
   nunca ha entrado y sin contraseña. Usuario y correo no se repiten (sin distinguir mayúsculas).
 - **Contraseñas:** «¿Olvidaste tu contraseña?» en el inicio de sesión (`/recuperar-contrasena/`): mismo mensaje
-  exista o no el correo, máximo 10 pedidos por hora por IP y 3 enlaces por hora para cada cuenta (el de restablecer dura 1 hora; el de invitación, 3 días; sale en segundo plano para que la página tarde lo mismo exista o no la cuenta), sin enlace a cuentas desactivadas o
+  exista o no el correo, máximo 3 enlaces por hora por correo (10 por IP), sin enlace a cuentas desactivadas o
   invitaciones pendientes. El administrador también puede enviar el enlace desde el panel. `/elegir-contrasena/…`
   (vista de Django) valida en español, entra al guardar y cierra las sesiones con la contraseña anterior.
 - **Correo de sistemas:** invitaciones y enlaces salen de `MAILERS["sistemas"]` (`SISTEMAS_SMTP_FROM`, `_HOST`,

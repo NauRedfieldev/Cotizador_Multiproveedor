@@ -21,7 +21,7 @@ from django.urls import include, path
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.generic import TemplateView
 
-from apps.quotes.usuarios import ElegirContrasena, FormularioLogin, recuperar_contrasena
+from apps.quotes.usuarios import ElegirContrasena, recuperar_contrasena
 from apps.quotes.views import cotizador_comercial
 
 urlpatterns = [
@@ -31,8 +31,7 @@ urlpatterns = [
     # Plataforma interna: sin sesión no se muestra nada; Inicio también lleva al login (13C).
     path('', login_required(TemplateView.as_view(template_name='inicio.html')), name='inicio'),
     # M7a: login real (LOGIN_URL). Logout solo por POST, como exige Django.
-    # FormularioLogin: límite de intentos fallidos por IP antes de comprobar la contraseña.
-    path('login/', auth_views.LoginView.as_view(authentication_form=FormularioLogin), name='login'),
+    path('login/', auth_views.LoginView.as_view(), name='login'),
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),
     # B6: «¿Olvidaste tu contraseña?» y el enlace (invitación o restablecer) para elegir contraseña.
     path('recuperar-contrasena/', recuperar_contrasena, name='recuperar_contrasena'),
