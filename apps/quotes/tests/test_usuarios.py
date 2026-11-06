@@ -2,9 +2,10 @@
 
 import json
 import re
+from unittest import mock
 
 from django.contrib.admin.models import LogEntry
-from django.contrib.auth import get_user_model
+from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.models import Group
 from django.core import mail
 from django.core.cache import cache
@@ -16,6 +17,7 @@ from apps.quotes.permissions import (
     ADMIN_GROUP, ASESOR_GROUP, DISCOUNT, FX, INTERNAL_GROUP, MANAGE, MANUAL_SALE, MARGIN, TAX, VIEW_COSTS,
     configure_commercial_groups,
 )
+from apps.quotes.usuarios import LIMITE_LOGIN_POR_IP
 
 LOCMEM = {"BACKEND": "django.core.mail.backends.locmem.EmailBackend"}
 DUMMY = {"BACKEND": "django.core.mail.backends.dummy.EmailBackend"}
@@ -397,6 +399,58 @@ class ContrasenaTests(UsuariosBase):
         self.assertEqual(self.api("post", reverse("api_enlace_contrasena", args=[self.personal.pk])).status_code, 400)
         self.client.force_login(self.asesor)
         self.assertEqual(self.api("post", reverse("api_enlace_contrasena", args=[self.personal.pk])).status_code, 403)
+
+
+@override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])  # solo para que corra rápido
+class LimiteDeLoginTests(UsuariosBase):
+    """Pista 10 de la auditoría: login/ y admin/login/ tienen límite de intentos fallidos por IP."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.logout()
+
+    def entrar(self, contrasena, ruta="login", ip="127.0.0.1", usuario="asesor1"):
+        return self.client.post(reverse(ruta), {"username": usuario, "password": contrasena}, REMOTE_ADDR=ip)
+
+    def fallar(self, veces, **kwargs):
+        for _ in range(veces):
+            self.assertContains(self.entrar("mala", **kwargs), "Usuario o contraseña incorrectos.")
+
+    def test_al_pasar_el_limite_no_comprueba_la_contrasena(self):
+        self.fallar(LIMITE_LOGIN_POR_IP)
+        with mock.patch("django.contrib.auth.forms.authenticate", wraps=authenticate) as comprobar:
+            for contrasena in ("mala", "Clave-Qa-2026!"):  # ni la correcta entra mientras dura el bloqueo
+                with self.subTest(contrasena=contrasena):
+                    respuesta = self.entrar(contrasena)
+                    self.assertContains(respuesta, "Demasiados intentos fallidos")
+                    self.assertNotContains(respuesta, "Usuario o contraseña incorrectos.")
+                    self.assertNotIn("_auth_user_id", self.client.session)
+        comprobar.assert_not_called()
+
+    def test_los_inicios_correctos_no_gastan_intentos(self):
+        self.fallar(LIMITE_LOGIN_POR_IP - 1)
+        for _ in range(5):
+            self.assertRedirects(self.entrar("Clave-Qa-2026!"), reverse("inicio"), fetch_redirect_response=False)
+            self.client.logout()
+        self.fallar(1)
+        self.assertContains(self.entrar("mala"), "Demasiados intentos fallidos")
+
+    def test_el_admin_comparte_el_limite(self):
+        self.fallar(LIMITE_LOGIN_POR_IP)
+        with mock.patch("django.contrib.auth.forms.authenticate", wraps=authenticate) as comprobar:
+            respuesta = self.entrar("Dueno-Qa-2026!", ruta="admin:login", usuario="dueno")
+        self.assertContains(respuesta, "Demasiados intentos fallidos")
+        comprobar.assert_not_called()
+
+    def test_otra_ip_no_queda_bloqueada(self):
+        self.fallar(LIMITE_LOGIN_POR_IP)
+        self.assertContains(self.entrar("Clave-Qa-2026!"), "Demasiados intentos fallidos")
+        self.assertRedirects(self.entrar("Clave-Qa-2026!", ip="10.0.0.9"), reverse("inicio"), fetch_redirect_response=False)
+
+    def test_sin_contrasena_no_cuenta(self):
+        for _ in range(LIMITE_LOGIN_POR_IP + 1):
+            self.entrar("")
+        self.assertRedirects(self.entrar("Clave-Qa-2026!"), reverse("inicio"), fetch_redirect_response=False)
 
 
 class RevocarDuranteLaValidacion:

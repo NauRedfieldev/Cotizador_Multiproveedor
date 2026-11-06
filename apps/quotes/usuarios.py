@@ -21,9 +21,9 @@ from django.contrib.admin.models import ADDITION, CHANGE, LogEntry
 from django.contrib.auth import get_user_model
 from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import login_required
-from django.contrib.admin.forms import AdminPasswordChangeForm
+from django.contrib.admin.forms import AdminAuthenticationForm, AdminPasswordChangeForm
 from django.contrib.auth import password_validation
-from django.contrib.auth.forms import PasswordResetForm, SetPasswordForm
+from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm, SetPasswordForm
 from django.contrib.auth.models import Group, Permission
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.contenttypes.models import ContentType
@@ -63,6 +63,9 @@ PREFIJO_LOG = "B6: "
 LOG_INVITACION = PREFIJO_LOG + "invitación"
 # «¿Olvidaste tu contraseña?»: máximo 3 enlaces por hora para un mismo correo (y 10 por IP).
 LIMITE_POR_CORREO, LIMITE_POR_IP, VENTANA_RECUPERAR = 3, 10, 3600
+# Iniciar sesión: máximo 20 intentos fallidos cada 15 minutos por IP (los correctos no cuentan).
+LIMITE_LOGIN_POR_IP, VENTANA_LOGIN = 20, 900
+DEMASIADOS_INTENTOS = "Demasiados intentos fallidos desde esta red. Espera 15 minutos e intenta de nuevo."
 
 
 class _RolesSinConfigurar(Exception):
@@ -480,19 +483,56 @@ async def api_enlace_contrasena(request, user_id):
 # «¿Olvidaste tu contraseña?» y «Elige tu contraseña»
 # ---------------------------------------------------------------------------
 
+def _sumar(clave, ventana):
+    """Suma 1 al contador de la clave (vive `ventana` segundos desde el primero) y devuelve la cuenta."""
+    cache.add(clave, 0, ventana)
+    try:
+        return cache.incr(clave)
+    except ValueError:  # caducó entre add e incr
+        cache.set(clave, 1, ventana)
+        return 1
+
+
 def _dentro_del_limite(correo, ip):
     claves = [(f"recuperar:correo:{hashlib.sha256(correo.lower().encode()).hexdigest()}", LIMITE_POR_CORREO),
               (f"recuperar:ip:{ip}", LIMITE_POR_IP)]
     dentro = True
     for clave, limite in claves:
-        cache.add(clave, 0, VENTANA_RECUPERAR)
-        try:
-            cuenta = cache.incr(clave)
-        except ValueError:  # caducó entre add e incr
-            cache.set(clave, 1, VENTANA_RECUPERAR)
-            cuenta = 1
-        dentro = dentro and cuenta <= limite
+        dentro = _sumar(clave, VENTANA_RECUPERAR) <= limite and dentro
     return dentro
+
+
+class _LimiteDeIntentos:
+    """Login con límite de intentos fallidos por IP, revisado ANTES de comprobar la contraseña.
+
+    Cada comprobación cuesta un hash lento (PBKDF2), exista o no el usuario: sin límite, cualquiera
+    podía mandar intentos sin fin y ocupar la CPU del servidor. El intento se cuenta antes de
+    comprobar (así varios a la vez no se cuelan) y, si la contraseña era correcta, se devuelve.
+    """
+
+    limitado = False
+
+    def clean(self):
+        if self.cleaned_data.get("username") is None or not self.cleaned_data.get("password"):
+            return super().clean()  # Django no comprueba nada sin usuario y contraseña
+        clave = f"login:ip:{self.request.META.get('REMOTE_ADDR', '') if self.request else ''}"
+        if _sumar(clave, VENTANA_LOGIN) > LIMITE_LOGIN_POR_IP:
+            self.limitado = True
+            raise ValidationError(DEMASIADOS_INTENTOS, code="demasiados_intentos")
+        datos = super().clean()  # si la contraseña no coincide, lanza ValidationError y el intento queda contado
+        try:
+            cache.decr(clave)
+        except ValueError:  # la ventana caducó mientras tanto
+            pass
+        return datos
+
+
+class FormularioLogin(_LimiteDeIntentos, AuthenticationForm):
+    pass
+
+
+class FormularioLoginAdmin(_LimiteDeIntentos, AdminAuthenticationForm):
+    """admin/login/ (se instala en apps/quotes/admin.py)."""
 
 
 @require_http_methods(["GET", "POST"])
