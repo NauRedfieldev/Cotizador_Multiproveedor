@@ -52,11 +52,14 @@
                             <i class="bi bi-file-earmark-text-fill me-1"></i> COTIZADOR
                         </a>
                     </li>
+                    {# «Sin acceso» no ve costos de proveedores: el comparador le daría 403. #}
+                    {% if perms.quotes.view_commercial_costs %}
                     <li class="nav-item">
                         <a class="nav-link cconor-nav-link {% if request.resolver_match.url_name == 'comparador' %}active{% endif %}" href="{% url 'comparador' %}">
                             <i class="bi bi-hdd-stack-fill me-1"></i> COMPARADOR
                         </a>
                     </li>
+                    {% endif %}
                     <li class="nav-item">
                         <a class="nav-link cconor-nav-link {% if request.resolver_match.url_name == 'resumen' %}active{% endif %}" href="{% url 'resumen' %}">
                             <i class="bi bi-list-check me-1"></i> MIS COTIZACIONES
