@@ -1,8 +1,29 @@
 from django.contrib import admin
+from django.contrib.auth import get_user_model
+from django.contrib.auth.admin import UserAdmin
 from django.core.exceptions import PermissionDenied
 
 from .models import DefaultCommercialCondition, QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
 from .permissions import require_commercial_permission
+from .usuarios import FormularioCambiarContrasenaAdmin, FormularioLoginAdmin, _cerrar_sesiones
+
+# Cambiar contraseña en /admin/ guarda solo la contraseña y respeta una revocación simultánea.
+admin.site.password_change_form = FormularioCambiarContrasenaAdmin
+# admin/login/ comparte el límite de intentos fallidos por IP con login/.
+admin.site.login_form = FormularioLoginAdmin
+
+
+class UsuarioAdmin(UserAdmin):
+    """Desactivar a alguien en /admin/ cierra sus sesiones, igual que en «Usuarios y permisos»."""
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        if change and "is_active" in form.changed_data and not obj.is_active:
+            _cerrar_sesiones(obj)
+
+
+admin.site.unregister(get_user_model())
+admin.site.register(get_user_model(), UsuarioAdmin)
 
 
 class SnapshotReadOnlyAdmin(admin.ModelAdmin):
