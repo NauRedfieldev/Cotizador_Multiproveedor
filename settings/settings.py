@@ -49,8 +49,10 @@ ALLOWED_HOSTS = [host.strip() for host in env.list('ALLOWED_HOSTS', default=[]) 
 
 # USE_HTTPS=True en un servidor con HTTPS: cookies de sesión y CSRF solo por HTTPS, redirección de http a
 # https y HSTS (1 hora para empezar; subir SECURE_HSTS_SECONDS cuando todo funcione por HTTPS).
-# Detrás de un proxy, uvicorn debe correr con --proxy-headers y --forwarded-allow-ips=<IP del proxy>;
-# si no, Django cree que todo llega por http y la redirección no termina. En local (http) va en False.
+# Detrás de un proxy, uvicorn debe correr con --proxy-headers y --forwarded-allow-ips=<IP del proxy>
+# (o la variable de entorno FORWARDED_ALLOW_IPS); si no, Django cree que todo llega por http, la
+# redirección no termina y todos comparten la IP del proxy (settings/proxy.py lo avisa en el log).
+# En local (http) va en False.
 USE_HTTPS = env.bool('USE_HTTPS', default=False)
 SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = SECURE_SSL_REDIRECT = USE_HTTPS
 SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=3600) if USE_HTTPS else 0
@@ -72,6 +74,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # Primero: avisa en el log si hay un proxy que uvicorn no reconoce (antes de redirigir a https).
+    'settings.proxy.avisar_proxy_sin_configurar',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',

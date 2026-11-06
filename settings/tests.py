@@ -11,7 +11,9 @@ import subprocess
 import sys
 
 from django.core.management.utils import get_random_secret_key
-from django.test import SimpleTestCase
+from django.test import RequestFactory, SimpleTestCase, override_settings
+
+from settings import proxy
 
 RAIZ = Path(__file__).resolve().parent.parent
 
@@ -79,3 +81,62 @@ class ServidorTests(SimpleTestCase):
         for aviso in ("W004", "W008", "W009", "W012", "W016", "W018", "W020"):
             with self.subTest(aviso=aviso):
                 self.assertNotIn(f"security.{aviso}", salida)
+
+
+class AvisoDeProxyTests(SimpleTestCase):
+    """Pista 12 de la auditoría: un proxy que uvicorn no reconoce se avisa en el log, una sola vez."""
+
+    def setUp(self):
+        proxy._avisados.clear()
+        self.addCleanup(proxy._avisados.clear)
+
+    def peticion(self, ip="172.17.0.1", seguro=False, **encabezados):
+        return RequestFactory().get("/login/", REMOTE_ADDR=ip, secure=seguro, headers=encabezados)
+
+    def test_proxy_no_reconocido_avisa_con_la_ip_que_ve(self):
+        with self.assertLogs("settings.proxy", "WARNING") as registro:
+            proxy.revisar(self.peticion(**{"X-Forwarded-For": "201.150.10.20"}))
+        self.assertIn("172.17.0.1", registro.output[0])
+        self.assertIn("FORWARDED_ALLOW_IPS", registro.output[0])
+        self.assertNotIn("201.150.10.20", registro.output[0])  # la IP de la persona no va al log
+
+    def test_proxy_reconocido_o_sin_proxy_no_avisa(self):
+        casos = [
+            self.peticion(ip="201.150.10.20", **{"X-Forwarded-For": "10.1.1.1, 201.150.10.20"}),
+            self.peticion(ip="201.150.10.20", **{"X-Forwarded-For": "201.150.10.20:51234"}),
+            self.peticion(ip="2001:db8::5", **{"X-Forwarded-For": "[2001:db8::5]:443"}),
+            self.peticion(ip="201.150.10.20"),
+        ]
+        with self.assertNoLogs("settings.proxy"):
+            for peticion in casos:
+                proxy.revisar(peticion)
+
+    def test_avisa_una_sola_vez(self):
+        with self.assertLogs("settings.proxy", "WARNING") as registro:
+            for _ in range(3):
+                proxy.revisar(self.peticion(**{"X-Forwarded-For": "201.150.10.20"}))
+        self.assertEqual(len(registro.output), 1)
+
+    @override_settings(SECURE_SSL_REDIRECT=True)
+    def test_https_no_reconocido_avisa(self):
+        with self.assertLogs("settings.proxy", "WARNING") as registro:
+            proxy.revisar(self.peticion(**{"X-Forwarded-Proto": "https"}))
+        self.assertIn("redirección a https no termina", registro.output[0])
+        proxy._avisados.clear()
+        with self.assertNoLogs("settings.proxy"):
+            proxy.revisar(self.peticion(seguro=True, **{"X-Forwarded-Proto": "https"}))
+        with override_settings(SECURE_SSL_REDIRECT=False), self.assertNoLogs("settings.proxy"):
+            proxy.revisar(self.peticion(**{"X-Forwarded-Proto": "https"}))
+
+    @override_settings(SECURE_SSL_REDIRECT=True)
+    def test_el_middleware_avisa_antes_de_redirigir(self):
+        with self.assertLogs("settings.proxy", "WARNING"):
+            respuesta = self.client.get("/login/", headers={"X-Forwarded-Proto": "https"})
+        self.assertEqual(respuesta.status_code, 301)
+        self.assertEqual(respuesta["Location"], "https://testserver/login/")
+
+    @override_settings(SECURE_SSL_REDIRECT=True)
+    async def test_el_middleware_avisa_tambien_por_asgi(self):
+        with self.assertLogs("settings.proxy", "WARNING"):
+            respuesta = await self.async_client.get("/login/", headers={"X-Forwarded-Proto": "https"})
+        self.assertEqual(respuesta.status_code, 301)
