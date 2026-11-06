@@ -2,11 +2,14 @@
 
 import json
 import re
+from datetime import datetime, timedelta
 from unittest import mock
 
+from django.conf import settings
 from django.contrib.admin.models import LogEntry
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.models import Group
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import mail
 from django.core.cache import cache
 from django.test import TestCase, override_settings
@@ -17,7 +20,7 @@ from apps.quotes.permissions import (
     ADMIN_GROUP, ASESOR_GROUP, DISCOUNT, FX, INTERNAL_GROUP, MANAGE, MANUAL_SALE, MARGIN, TAX, VIEW_COSTS,
     configure_commercial_groups,
 )
-from apps.quotes.usuarios import LIMITE_LOGIN_POR_IP
+from apps.quotes.usuarios import DURACION_RESTABLECER, LIMITE_LOGIN_POR_IP, LIMITE_POR_CUENTA, LIMITE_POR_IP
 
 LOCMEM = {"BACKEND": "django.core.mail.backends.locmem.EmailBackend"}
 DUMMY = {"BACKEND": "django.core.mail.backends.dummy.EmailBackend"}
@@ -287,6 +290,17 @@ class InvitacionTests(UsuariosBase):
         self.assertContains(self.client.get(enlace, follow=True), "Este enlace ya no sirve")
         self.assertTrue(LogEntry.objects.filter(object_id=str(nuevo.pk), change_message__contains="eligió su contraseña").exists())
 
+    def test_la_invitacion_sigue_durando_dias(self):
+        """Solo restablecer se acortó a una hora: quien es nuevo puede abrir la invitación al día siguiente."""
+        self.invitar()
+        enlace = self.enlace(mail.outbox[0])
+        self.client.logout()
+        ahora = datetime.now()
+        for segundos, texto in ((86400, "Elige tu contraseña"), (settings.PASSWORD_RESET_TIMEOUT + 60, "Este enlace ya no sirve")):
+            with self.subTest(segundos=segundos), \
+                    mock.patch.object(PasswordResetTokenGenerator, "_now", return_value=ahora + timedelta(seconds=segundos)):
+                self.assertContains(self.client.get(enlace, follow=True), texto)
+
     def test_reenviar_invalida_el_enlace_anterior(self):
         self.invitar()
         nuevo = get_user_model().objects.get(username="lperez")
@@ -332,8 +346,8 @@ class InvitacionTests(UsuariosBase):
 
 
 class ContrasenaTests(UsuariosBase):
-    def pedir(self, correo):
-        return self.client.post(reverse("recuperar_contrasena"), {"email": correo})
+    def pedir(self, correo, ip="127.0.0.1"):
+        return self.client.post(reverse("recuperar_contrasena"), {"email": correo}, REMOTE_ADDR=ip)
 
     def test_login_tiene_el_enlace_olvidaste(self):
         self.client.logout()
@@ -378,9 +392,73 @@ class ContrasenaTests(UsuariosBase):
             self.pedir("asesor1@qa.example.invalid")
         self.assertEqual(len(mail.outbox), 3)
 
+    def test_el_limite_de_la_cuenta_vale_desde_cualquier_ip(self):
+        """Nadie llena el buzón de una persona cambiando de red: 3 enlaces por hora en total."""
+        self.client.logout()
+        for ip in ("10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5"):
+            self.pedir("asesor1@qa.example.invalid", ip=ip)
+        self.assertEqual(len(mail.outbox), LIMITE_POR_CUENTA)
+
+    def test_una_ip_pasada_del_limite_no_gasta_los_envios_de_la_persona(self):
+        """Pista 11 de la auditoría: quien ya agotó su IP no deja sin enlace a nadie."""
+        self.client.logout()
+        for numero in range(LIMITE_POR_IP):
+            self.pedir(f"nadie{numero}@qa.example.invalid", ip="10.0.0.1")
+        for _ in range(LIMITE_POR_CUENTA):
+            self.pedir("asesor1@qa.example.invalid", ip="10.0.0.1")
+        self.assertEqual(mail.outbox, [])
+        self.pedir("asesor1@qa.example.invalid", ip="10.0.0.2")
+        self.assertEqual([m.to for m in mail.outbox], [["asesor1@qa.example.invalid"]])
+
+    def test_correos_sin_cuenta_no_gastan_envios(self):
+        self.client.logout()
+        for numero in range(LIMITE_POR_CUENTA + 1):
+            self.pedir(f"nadie{numero}@qa.example.invalid", ip=f"10.0.0.{numero + 1}")
+        self.pedir("asesor1@qa.example.invalid", ip="10.0.0.9")
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_limite_de_diez_por_ip(self):
+        self.client.logout()
+        for numero in range(LIMITE_POR_IP):
+            self.pedir(f"nadie{numero}@qa.example.invalid", ip="10.0.0.1")
+        self.pedir("asesor1@qa.example.invalid", ip="10.0.0.1")
+        self.assertEqual(mail.outbox, [])
+        self.pedir("asesor1@qa.example.invalid", ip="10.0.0.2")
+        self.assertEqual(len(mail.outbox), 1)
+
     def test_correo_invalido_muestra_aviso(self):
         self.client.logout()
         self.assertContains(self.pedir("no-es-correo"), "Escribe un correo válido.")
+
+    def abrir_a_los(self, enlace, segundos):
+        ahora = datetime.now()
+        with mock.patch.object(PasswordResetTokenGenerator, "_now", return_value=ahora + timedelta(seconds=segundos)):
+            return self.client.get(enlace, follow=True)
+
+    def test_el_enlace_para_restablecer_dura_una_hora(self):
+        self.client.logout()
+        self.pedir("asesor1@qa.example.invalid")
+        enlace = ENLACE.search(mail.outbox[0].body).group(1)
+        self.assertIn("caduca el", mail.outbox[0].body)
+        self.assertContains(self.abrir_a_los(enlace, DURACION_RESTABLECER + 60), "Este enlace ya no sirve")
+        self.assertContains(self.abrir_a_los(enlace, DURACION_RESTABLECER - 60), "Elige tu contraseña")
+
+    def test_el_correo_dice_cuando_caduca(self):
+        self.client.logout()
+        antes = timezone.localtime()
+        self.pedir("asesor1@qa.example.invalid")
+        caduca = timezone.localtime(antes + timedelta(seconds=DURACION_RESTABLECER))
+        posibles = {caduca.strftime("%H:%M"), (caduca + timedelta(minutes=1)).strftime("%H:%M")}  # por si cambia el minuto
+        self.assertTrue(any(f"a las {hora}" in mail.outbox[0].body for hora in posibles), mail.outbox[0].body)
+
+    def test_el_enlace_usado_ya_no_sirve(self):
+        self.client.logout()
+        self.pedir("asesor1@qa.example.invalid")
+        enlace = ENLACE.search(mail.outbox[0].body).group(1)
+        formulario = self.client.get(enlace)["Location"]
+        self.client.post(formulario, {"new_password1": "Otra-Clave-Nueva-9", "new_password2": "Otra-Clave-Nueva-9"})
+        self.client.logout()
+        self.assertContains(self.client.get(enlace, follow=True), "Este enlace ya no sirve")
 
     def test_enlace_de_cuenta_desactivada_no_sirve(self):
         self.client.logout()
