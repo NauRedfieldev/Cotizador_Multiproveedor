@@ -8,7 +8,6 @@
 - Cada cambio queda en el historial de Django (LogEntry) con quién y cuándo; no hay tablas nuevas.
 """
 
-import hashlib
 import logging
 from datetime import timedelta
 from email.utils import formataddr
@@ -25,7 +24,7 @@ from django.contrib.admin.forms import AdminAuthenticationForm, AdminPasswordCha
 from django.contrib.auth import password_validation
 from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm, SetPasswordForm
 from django.contrib.auth.models import Group, Permission
-from django.contrib.auth.tokens import default_token_generator
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.contrib.contenttypes.models import ContentType
 from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied, ValidationError
@@ -39,7 +38,7 @@ from django.template.loader import render_to_string
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone, translation
 from django.utils.encoding import force_bytes
-from django.utils.http import urlsafe_base64_encode
+from django.utils.http import base36_to_int, urlsafe_base64_encode
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
@@ -61,8 +60,10 @@ NOMBRE_EXTRA = {FX: "tipo de cambio", MANUAL_SALE: "manuales", MARGIN: "margen",
 TODOS = ADJUSTMENTS | {VIEW_COSTS, MANAGE}
 PREFIJO_LOG = "B6: "
 LOG_INVITACION = PREFIJO_LOG + "invitación"
-# «¿Olvidaste tu contraseña?»: máximo 3 enlaces por hora para un mismo correo (y 10 por IP).
-LIMITE_POR_CORREO, LIMITE_POR_IP, VENTANA_RECUPERAR = 3, 10, 3600
+# «¿Olvidaste tu contraseña?»: máximo 10 pedidos por hora por IP y 3 enlaces por hora para cada cuenta.
+LIMITE_POR_CUENTA, LIMITE_POR_IP, VENTANA_RECUPERAR = 3, 10, 3600
+# El enlace para restablecer dura 1 hora; el de invitación, PASSWORD_RESET_TIMEOUT (3 días por defecto).
+DURACION_RESTABLECER = 3600
 # Iniciar sesión: máximo 20 intentos fallidos cada 15 minutos por IP (los correctos no cuentan).
 LIMITE_LOGIN_POR_IP, VENTANA_LOGIN = 20, 900
 DEMASIADOS_INTENTOS = "Demasiados intentos fallidos desde esta red. Espera 15 minutos e intenta de nuevo."
@@ -380,13 +381,14 @@ def _enviar_acceso(usuario, request, tipo, invito=None):
     nombre, _, resto = empresa.partition(" ")
     marca = colores_marca("cconor")
     enlace = request.build_absolute_uri(reverse("elegir_contrasena", args=[
-        urlsafe_base64_encode(force_bytes(usuario.pk)), default_token_generator.make_token(usuario)]))
+        urlsafe_base64_encode(force_bytes(usuario.pk)), generador_de_enlaces.make_token(usuario)]))
     invitacion = tipo == "invitacion"
     rol = _rol(usuario, {g.name for g in usuario.groups.all()})
     contexto = {
         "invitacion": invitacion, "usuario": usuario, "nombre": usuario.first_name or usuario.get_username(),
         "invito": _nombre(invito) if invito and invitacion else "", "rol": NOMBRE_ROL[rol], "enlace": enlace,
-        "caduca": timezone.localtime(timezone.now() + timedelta(seconds=settings.PASSWORD_RESET_TIMEOUT)),
+        "caduca": timezone.localtime(timezone.now() + timedelta(
+            seconds=settings.PASSWORD_RESET_TIMEOUT if invitacion else DURACION_RESTABLECER)),
         "empresa": empresa, "marca": {"barra": marca["color"], "subtitulo": marca["tint"], "nombre": nombre, "resto": resto},
     }
     asunto = (f"Tu acceso al Portal de Cotización de {nombre}" if invitacion
@@ -493,13 +495,22 @@ def _sumar(clave, ventana):
         return 1
 
 
-def _dentro_del_limite(correo, ip):
-    claves = [(f"recuperar:correo:{hashlib.sha256(correo.lower().encode()).hexdigest()}", LIMITE_POR_CORREO),
-              (f"recuperar:ip:{ip}", LIMITE_POR_IP)]
-    dentro = True
-    for clave, limite in claves:
-        dentro = _sumar(clave, VENTANA_RECUPERAR) <= limite and dentro
-    return dentro
+class _GeneradorDeEnlaces(PasswordResetTokenGenerator):
+    """Enlaces de «Elige tu contraseña»: de un solo uso (al cambiar la contraseña dejan de servir).
+
+    Restablecer caduca en DURACION_RESTABLECER; la invitación (cuenta pendiente) conserva
+    PASSWORD_RESET_TIMEOUT, porque quien es nuevo puede abrir el correo al día siguiente.
+    """
+
+    def check_token(self, user, token):
+        if not super().check_token(user, token):
+            return False
+        if _pendiente(user):
+            return True
+        return self._num_seconds(self._now()) - base36_to_int(token.partition("-")[0]) <= DURACION_RESTABLECER
+
+
+generador_de_enlaces = _GeneradorDeEnlaces()
 
 
 class _LimiteDeIntentos:
@@ -542,10 +553,13 @@ def recuperar_contrasena(request):
     if request.method == "POST":
         form = PasswordResetForm(request.POST)
         if form.is_valid():
-            correo = form.cleaned_data["email"]
-            if _dentro_del_limite(correo, request.META.get("REMOTE_ADDR", "")):
+            # Primero la IP; una IP pasada del límite no gasta los envíos de nadie.
+            if _sumar(f"recuperar:ip:{request.META.get('REMOTE_ADDR', '')}", VENTANA_RECUPERAR) <= LIMITE_POR_IP:
                 # get_users: solo cuentas activas que ya eligieron contraseña (no invitaciones pendientes).
-                for usuario in form.get_users(correo):
+                # Se cuentan los envíos de cada cuenta, no los pedidos: un correo sin cuenta no gasta nada.
+                for usuario in form.get_users(form.cleaned_data["email"]):
+                    if _sumar(f"recuperar:cuenta:{usuario.pk}", VENTANA_RECUPERAR) > LIMITE_POR_CUENTA:
+                        continue
                     try:
                         _registrar(usuario, usuario, CHANGE, "enlace para restablecer contraseña pedido desde el inicio de sesión")
                         _enviar_acceso(usuario, request, "restablecer")
@@ -598,9 +612,10 @@ class FormularioCambiarContrasenaAdmin(_SoloContrasena, AdminPasswordChangeForm)
 
 
 class ElegirContrasena(auth_views.PasswordResetConfirmView):
-    """Enlace de invitación o de restablecer: un solo uso, caduca en PASSWORD_RESET_TIMEOUT y entra al guardar."""
+    """Enlace de invitación o de restablecer: un solo uso, caduca según _GeneradorDeEnlaces y entra al guardar."""
 
     template_name = "registration/elegir_contrasena.html"
+    token_generator = generador_de_enlaces
     form_class = FormularioElegirContrasena
     post_reset_login = True
     success_url = reverse_lazy("inicio")
