@@ -13,7 +13,7 @@ from django.contrib.auth.models import Group
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import mail
 from django.core.cache import cache
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -443,6 +443,16 @@ class ContrasenaTests(UsuariosBase):
         self.pedir("asesor1@qa.example.invalid", ip="10.0.0.2")
         self.assertEqual(len(mail.outbox), 1)
 
+    def test_un_texto_que_no_es_ip_no_da_pedidos_nuevos(self):
+        """Pista 13: con un proxy que deja pasar X-Forwarded-For, inventar un texto por petición no sirve."""
+        self.client.logout()
+        for numero in range(LIMITE_POR_IP):
+            self.pedir(f"nadie{numero}@qa.example.invalid", ip=f"k{numero}")
+        self.pedir("asesor1@qa.example.invalid", ip="otro-texto")
+        self.assertEqual(mail.outbox, [])
+        self.pedir("asesor1@qa.example.invalid", ip="10.0.0.2")
+        self.assertEqual(len(mail.outbox), 1)
+
     def test_la_pagina_responde_sin_esperar_al_correo(self):
         """Si la página esperara al SMTP, tardaría más con un correo que sí tiene cuenta."""
         self.client.logout()
@@ -557,10 +567,35 @@ class LimiteDeLoginTests(UsuariosBase):
         self.assertContains(self.entrar("Clave-Qa-2026!"), "Demasiados intentos fallidos")
         self.assertRedirects(self.entrar("Clave-Qa-2026!", ip="10.0.0.9"), reverse("inicio"), fetch_redirect_response=False)
 
+    def test_ipv6_de_la_misma_red_comparte_el_limite(self):
+        """Pista 13: cambiar de dirección dentro del mismo /64 no da intentos nuevos."""
+        for numero in range(1, LIMITE_LOGIN_POR_IP + 1):
+            self.fallar(1, ip=f"2001:db8:0:5::{numero:x}")
+        self.assertContains(self.entrar("Clave-Qa-2026!", ip="2001:db8:0:5::ffff"), "Demasiados intentos fallidos")
+        self.assertRedirects(self.entrar("Clave-Qa-2026!", ip="2001:db8:0:6::1"), reverse("inicio"), fetch_redirect_response=False)
+
     def test_sin_contrasena_no_cuenta(self):
         for _ in range(LIMITE_LOGIN_POR_IP + 1):
             self.entrar("")
         self.assertRedirects(self.entrar("Clave-Qa-2026!"), reverse("inicio"), fetch_redirect_response=False)
+
+
+class IpParaLimitesTests(TestCase):
+    def test_normaliza_la_ip(self):
+        casos = {
+            "201.150.10.20": "201.150.10.20",
+            "2001:db8:0:5::1": "2001:db8:0:5::/64",
+            "2001:DB8:0:5:ffff:ffff:ffff:ffff": "2001:db8:0:5::/64",
+            "::ffff:201.150.10.20": "201.150.10.20",
+            "fe80::1%eth0": "fe80::/64",
+            "k1": "no-es-ip",
+            "201.150.10.20:5000": "no-es-ip",
+            "": "no-es-ip",
+        }
+        for valor, clave in casos.items():
+            with self.subTest(valor=valor):
+                self.assertEqual(usuarios._ip_para_limites(RequestFactory().get("/", REMOTE_ADDR=valor)), clave)
+        self.assertEqual(usuarios._ip_para_limites(None), "no-es-ip")
 
 
 class RevocarDuranteLaValidacion:
