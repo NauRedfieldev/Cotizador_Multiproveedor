@@ -994,6 +994,17 @@ class ProteccionTests(TestCase):
         self.assertEqual(llamadas, [])
         self.assertIsNone(caches["limites"].get(clave_limite(sin_rol)))
 
+    def test_p6d_sin_rol_no_ve_el_enlace_al_comparador(self):
+        """El menú y el inicio no le muestran un enlace que le daría 403; con el rol sí lo ven."""
+        enlace = f'href="{reverse("comparador")}"'
+        for usuario, ve in ((get_user_model().objects.create_user("sin_rol"), False), (crear_asesor("personal_dos", tipo_cambio=False), True)):
+            self.client.force_login(usuario)
+            for pagina in ("inicio", "cotizador", "resumen"):
+                with self.subTest(usuario=usuario.username, pagina=pagina):
+                    respuesta = self.client.get(reverse(pagina))
+                    self.assertEqual(respuesta.status_code, 200)
+                    self.assertEqual(enlace in respuesta.content.decode(), ve)
+
     def test_p6c_sin_rol_los_diferidos_dan_403_y_no_consumen_el_pendiente(self):
         """Un pendiente guardado antes de quitarle el rol no se sirve ni se gasta."""
         sin_rol = get_user_model().objects.create_user("sin_rol")
