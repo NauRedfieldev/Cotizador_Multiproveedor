@@ -15,7 +15,9 @@
             <p class="small text-secondary mb-0">Portal de Cotización Multi-Proveedor</p>
         </div>
 
-        {% if form.errors %}
+        {% if form.limitado %}
+        <div class="alert alert-danger small" role="alert">{{ form.non_field_errors.0 }}</div>
+        {% elif form.errors %}
         <div class="alert alert-danger small" role="alert">Usuario o contraseña incorrectos.</div>
         {% elif next and user.is_authenticated %}
         <div class="alert alert-warning small" role="alert">Tu usuario no tiene acceso a esta página.</div>
