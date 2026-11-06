@@ -2,6 +2,7 @@
 
 import json
 import re
+import threading
 from datetime import datetime, timedelta
 from unittest import mock
 
@@ -20,6 +21,7 @@ from apps.quotes.permissions import (
     ADMIN_GROUP, ASESOR_GROUP, DISCOUNT, FX, INTERNAL_GROUP, MANAGE, MANUAL_SALE, MARGIN, TAX, VIEW_COSTS,
     configure_commercial_groups,
 )
+from apps.quotes import usuarios
 from apps.quotes.usuarios import DURACION_RESTABLECER, LIMITE_LOGIN_POR_IP, LIMITE_POR_CUENTA, LIMITE_POR_IP
 
 LOCMEM = {"BACKEND": "django.core.mail.backends.locmem.EmailBackend"}
@@ -32,8 +34,23 @@ ENLACE = re.compile(r"https?://[^/\s]+(/elegir-contrasena/[^\s\"<]+/)")
 
 @CORREO
 class UsuariosBase(TestCase):
+    esperar_correos = True  # el enlace para restablecer sale en un hilo: las pruebas lo esperan
+
     def setUp(self):
         cache.clear()
+        self.hilos_de_correo = []
+        en_segundo_plano = usuarios._en_segundo_plano
+
+        def y_esperar(*args):
+            hilo = en_segundo_plano(*args)
+            self.hilos_de_correo.append(hilo)
+            if self.esperar_correos:
+                hilo.join(10)
+            return hilo
+
+        parche = mock.patch.object(usuarios, "_en_segundo_plano", y_esperar)
+        parche.start()
+        self.addCleanup(parche.stop)
         modelo = get_user_model()
         self.root = modelo.objects.create_superuser("dueno", "dueno@qa.example.invalid", "Dueno-Qa-2026!")
         configure_commercial_groups(actor=self.root)
@@ -425,6 +442,21 @@ class ContrasenaTests(UsuariosBase):
         self.assertEqual(mail.outbox, [])
         self.pedir("asesor1@qa.example.invalid", ip="10.0.0.2")
         self.assertEqual(len(mail.outbox), 1)
+
+    def test_la_pagina_responde_sin_esperar_al_correo(self):
+        """Si la página esperara al SMTP, tardaría más con un correo que sí tiene cuenta."""
+        self.client.logout()
+        self.esperar_correos = False
+        liberar = threading.Event()
+        enviar = usuarios._enviar
+        with mock.patch.object(usuarios, "_enviar", lambda *args: liberar.wait(10) and enviar(*args)):
+            respuesta = self.pedir("asesor1@qa.example.invalid")
+            self.assertRedirects(respuesta, reverse("recuperar_contrasena") + "?enviado=1")
+            self.assertEqual(mail.outbox, [])  # la página ya respondió y el correo aún no sale
+            liberar.set()
+            for hilo in self.hilos_de_correo:
+                hilo.join(10)
+        self.assertEqual([m.to for m in mail.outbox], [["asesor1@qa.example.invalid"]])
 
     def test_correo_invalido_muestra_aviso(self):
         self.client.logout()
