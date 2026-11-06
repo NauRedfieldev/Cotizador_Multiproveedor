@@ -8,6 +8,7 @@
 - Cada cambio queda en el historial de Django (LogEntry) con quién y cuándo; no hay tablas nuevas.
 """
 
+import ipaddress
 import logging
 import threading
 from datetime import timedelta
@@ -495,6 +496,24 @@ async def api_enlace_contrasena(request, user_id):
 # «¿Olvidaste tu contraseña?» y «Elige tu contraseña»
 # ---------------------------------------------------------------------------
 
+def _ip_para_limites(request):
+    """La IP de la petición como clave de los límites de login y recuperar contraseña.
+
+    Con algunos proxies la IP sale de X-Forwarded-For, que escribe el navegador (pista 13): un texto
+    que no es IP cae en un solo contador compartido, para que inventar uno nuevo en cada petición no
+    sirva. IPv6 se agrupa por /64, porque una casa u oficina tiene millones de direcciones en el mismo.
+    """
+    try:
+        ip = ipaddress.ip_address(request.META.get("REMOTE_ADDR", "") if request else "")
+    except ValueError:
+        return "no-es-ip"
+    if ip.version == 4:
+        return str(ip)
+    if ip.ipv4_mapped:
+        return str(ip.ipv4_mapped)
+    return str(ipaddress.IPv6Network((int(ip) >> 64 << 64, 64)))
+
+
 def _sumar(clave, ventana):
     """Suma 1 al contador de la clave (vive `ventana` segundos desde el primero) y devuelve la cuenta."""
     cache.add(clave, 0, ventana)
@@ -536,7 +555,7 @@ class _LimiteDeIntentos:
     def clean(self):
         if self.cleaned_data.get("username") is None or not self.cleaned_data.get("password"):
             return super().clean()  # Django no comprueba nada sin usuario y contraseña
-        clave = f"login:ip:{self.request.META.get('REMOTE_ADDR', '') if self.request else ''}"
+        clave = f"login:ip:{_ip_para_limites(self.request)}"
         if _sumar(clave, VENTANA_LOGIN) > LIMITE_LOGIN_POR_IP:
             self.limitado = True
             raise ValidationError(DEMASIADOS_INTENTOS, code="demasiados_intentos")
@@ -575,7 +594,7 @@ def recuperar_contrasena(request):
         form = PasswordResetForm(request.POST)
         if form.is_valid():
             # Primero la IP; una IP pasada del límite no gasta los envíos de nadie.
-            if _sumar(f"recuperar:ip:{request.META.get('REMOTE_ADDR', '')}", VENTANA_RECUPERAR) <= LIMITE_POR_IP:
+            if _sumar(f"recuperar:ip:{_ip_para_limites(request)}", VENTANA_RECUPERAR) <= LIMITE_POR_IP:
                 # get_users: solo cuentas activas que ya eligieron contraseña (no invitaciones pendientes).
                 # Se cuentan los envíos de cada cuenta, no los pedidos: un correo sin cuenta no gasta nada.
                 for usuario in form.get_users(form.cleaned_data["email"]):
