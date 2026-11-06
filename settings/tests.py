@@ -3,6 +3,7 @@
 Las variables que se pasan al proceso ganan sobre .env (read_env solo rellena las que faltan),
 así que no se toca ni se lee el .env de nadie.
 """
+import asyncio
 import json
 import os
 import secrets
@@ -140,3 +141,51 @@ class AvisoDeProxyTests(SimpleTestCase):
         with self.assertLogs("settings.proxy", "WARNING"):
             respuesta = await self.async_client.get("/login/", headers={"X-Forwarded-Proto": "https"})
         self.assertEqual(respuesta.status_code, 301)
+
+
+async def llamar_asgi(metodo, ruta, cuerpos=(b"",), encabezados=()):
+    """Llama a settings.asgi.application como lo haría uvicorn. Devuelve (estado, mensajes del cuerpo leídos)."""
+    from settings import asgi
+    mensajes = [{"type": "http.request", "body": cuerpo, "more_body": i < len(cuerpos) - 1}
+                for i, cuerpo in enumerate(cuerpos)]
+    leidos = 0
+
+    async def receive():
+        nonlocal leidos
+        if leidos < len(mensajes):
+            leidos += 1
+            return mensajes[leidos - 1]
+        await asyncio.Event().wait()  # el cliente sigue conectado
+
+    enviados = []
+
+    async def send(mensaje):
+        enviados.append(mensaje)
+
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": metodo, "scheme": "http",
+             "path": ruta, "raw_path": ruta.encode(), "query_string": b"", "root_path": "",
+             "headers": [(b"host", b"testserver"), *encabezados], "client": ("127.0.0.1", 5000),
+             "server": ("testserver", 80)}
+    await asyncio.wait_for(asgi.application(scope, receive, send), 10)
+    return enviados[0]["status"], leidos
+
+
+@override_settings(DATA_UPLOAD_MAX_MEMORY_SIZE=1000)
+class LimiteDeCuerpoTests(SimpleTestCase):
+    """Pista 15 de la auditoría: un cuerpo de más del tope se corta con 413 antes de que Django lo lea entero."""
+
+    async def test_content_length_grande_se_corta_sin_leer(self):
+        for largo in (b"1001", b"999999999999", b"abc"):
+            with self.subTest(largo=largo):
+                estado, leidos = await llamar_asgi("POST", "/no-existe/", [b"x" * 10], [(b"content-length", largo)])
+                self.assertEqual((estado, leidos), (413, 0))
+
+    async def test_sin_content_length_se_corta_al_pasar_el_tope(self):
+        estado, leidos = await llamar_asgi("POST", "/no-existe/", [b"x" * 100] * 50)
+        self.assertEqual(estado, 413)
+        self.assertLessEqual(leidos, 11)  # dejó de leer en cuanto pasó de 1000 bytes
+
+    async def test_lo_normal_pasa_a_django(self):
+        self.assertEqual(await llamar_asgi("GET", "/login/"), (200, 1))
+        estado, _ = await llamar_asgi("POST", "/login/", [b"a" * 1000], [(b"content-length", b"1000")])
+        self.assertEqual(estado, 403)  # llegó a Django: falta el token CSRF
