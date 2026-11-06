@@ -5,10 +5,12 @@ from django.core.exceptions import PermissionDenied
 
 from .models import DefaultCommercialCondition, QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
 from .permissions import require_commercial_permission
-from .usuarios import FormularioCambiarContrasenaAdmin, _cerrar_sesiones
+from .usuarios import FormularioCambiarContrasenaAdmin, FormularioLoginAdmin, _cerrar_sesiones
 
 # Cambiar contraseña en /admin/ guarda solo la contraseña y respeta una revocación simultánea.
 admin.site.password_change_form = FormularioCambiarContrasenaAdmin
+# admin/login/ comparte el límite de intentos fallidos por IP con login/.
+admin.site.login_form = FormularioLoginAdmin
 
 
 class UsuarioAdmin(UserAdmin):
