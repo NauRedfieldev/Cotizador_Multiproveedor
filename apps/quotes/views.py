@@ -19,7 +19,7 @@ from asgiref.sync import sync_to_async
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
-from django.core.cache import cache
+from django.core.cache import cache, caches
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.mail import EmailMultiAlternatives
 from django.core.validators import validate_email
@@ -747,11 +747,12 @@ def clave_limite(usuario, ip=""):
 
 async def _limite_superado(request):
     clave = clave_limite(await request.auser(), request.META.get("REMOTE_ADDR", ""))
-    await cache.aadd(clave, 0, VENTANA_SEGUNDOS)
+    limites = caches["limites"]  # aparte de la caché general, para que nada lo borre (pista 14)
+    await limites.aadd(clave, 0, VENTANA_SEGUNDOS)
     try:
-        cuenta = await cache.aincr(clave)
+        cuenta = await limites.aincr(clave)
     except ValueError:  # la clave caducó entre aadd y aincr
-        await cache.aset(clave, 1, VENTANA_SEGUNDOS)
+        await limites.aset(clave, 1, VENTANA_SEGUNDOS)
         cuenta = 1
     return cuenta > LIMITE_COTIZACIONES
 

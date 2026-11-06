@@ -14,7 +14,7 @@ from asgiref.sync import sync_to_async
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.cache import cache
+from django.core.cache import cache, caches
 from django.test import TestCase, override_settings, tag
 from django.urls import reverse
 from django.utils import timezone
@@ -28,6 +28,7 @@ from apps.providers.tests.soporte import (
     crear_adaptador,
     crear_proveedor,
     exigir_bd_de_pruebas,
+    limpiar_caches,
     producto,
     sin_red,
 )
@@ -63,7 +64,7 @@ class CotizarProductosTests(TestCase):
     def setUp(self):
         exigir_bd_de_pruebas()
         self.enterContext(sin_red())
-        cache.clear()  # el rate limit vive en la LocMemCache, que dura toda la suite
+        limpiar_caches()  # el rate limit vive en la LocMemCache, que dura toda la suite
         self.asesor = crear_asesor()
         self.client.force_login(self.asesor)
         self.url = reverse("cotizar_productos")
@@ -176,7 +177,7 @@ class VistaCotizacionTests(TestCase):
     """V1–V16: la vista async en modo degradado (docs/26 y docs/28), sin red."""
 
     def setUp(self):
-        cache.clear()
+        limpiar_caches()
         crear_proveedor("alfa")
         crear_proveedor("beta")
         self.asesor = crear_asesor()
@@ -260,7 +261,7 @@ class VistaCotizacionTests(TestCase):
         ]
         for parametros in invalidas:
             with self.subTest(parametros=parametros):
-                cache.clear()
+                limpiar_caches()
                 llamadas = []
                 respuesta = await self.buscar(
                     [adaptador("alfa", mxn("1", "1.00"), llamadas=llamadas)], **parametros
@@ -300,7 +301,7 @@ class VistaCotizacionTests(TestCase):
         with mock.patch.object(cache, "aincr", side_effect=ValueError("Key not found")):
             respuesta = await self.buscar([adaptador("alfa", mxn("1", "1.00"))])
         self.assertEqual(respuesta.status_code, 200)
-        self.assertEqual(await cache.aget(clave_limite(self.asesor)), 1)
+        self.assertEqual(await caches["limites"].aget(clave_limite(self.asesor)), 1)
 
     async def test_v8_excepcion_inesperada_de_un_adaptador_queda_degradada(self):
         with self.assertLogs("apps.providers", "ERROR"):
@@ -328,7 +329,7 @@ class VistaCotizacionTests(TestCase):
         self.assertEqual(respuesta.context["proveedores_caidos"], ["alfa"])
         self.assertEqual([o.oferta.provider_code for o in respuesta.context["ofertas"]], ["beta"])
 
-        cache.clear()
+        limpiar_caches()
         with self.assertLogs("apps.quotes", "WARNING"):
             todos = await self.buscar([duplicados, adaptador("beta", error=TimeoutError())])
         self.assertEqual(todos.status_code, 503)
@@ -775,7 +776,7 @@ class VistaCotizacionTests(TestCase):
             respuesta = await self.buscar(adaptadores, q="  ", sku="")
             self.assertEqual(respuesta.status_code, 200)
         self.assertEqual(llamadas, [])
-        self.assertIsNone(await cache.aget(clave_limite(self.asesor)))
+        self.assertIsNone(await caches["limites"].aget(clave_limite(self.asesor)))
 
     async def test_v16_el_menu_marca_el_comparador_como_activo(self):
         respuesta = await self.buscar([adaptador("alfa", mxn("1", "1.00"))])
@@ -789,7 +790,7 @@ class CargaDiferidaTests(TestCase):
     """D1–D11: la página pinta los proveedores rápidos y los diferidos llegan por JS (docs/34), sin red."""
 
     def setUp(self):
-        cache.clear()
+        limpiar_caches()
         crear_proveedor("alfa")
         crear_proveedor("beta")
         self.asesor = crear_asesor()
@@ -851,9 +852,9 @@ class CargaDiferidaTests(TestCase):
     async def test_d4_el_paso_diferido_no_cuenta_en_el_limite(self):
         adaptadores = [adaptador("alfa", mxn("1", "100.00")), adaptador("beta", mxn("2", "50.00"))]
         url = (await self.pagina(adaptadores)).context["pendiente_url"]
-        self.assertEqual(await cache.aget(clave_limite(self.asesor)), 1)
+        self.assertEqual(await caches["limites"].aget(clave_limite(self.asesor)), 1)
         await self.diferidos(adaptadores, url)
-        self.assertEqual(await cache.aget(clave_limite(self.asesor)), 1)
+        self.assertEqual(await caches["limites"].aget(clave_limite(self.asesor)), 1)
 
     async def test_d5_usa_el_tipo_de_cambio_que_guardo_la_pagina(self):
         adaptadores = [adaptador("alfa", mxn("1", "100.00")), adaptador("beta", usd("2", "10.00"))]
@@ -891,7 +892,7 @@ class CargaDiferidaTests(TestCase):
                 respuesta = await self.pagina(adaptadores, **parametros)
                 self.assertEqual(respuesta.status_code, status)
                 self.assertNotIn("pendiente_url", respuesta.context)
-        await cache.aset(clave_limite(self.asesor), LIMITE_COTIZACIONES, 60)
+        await caches["limites"].aset(clave_limite(self.asesor), LIMITE_COTIZACIONES, 60)
         limite = await self.pagina(adaptadores)
         self.assertEqual(limite.status_code, 429)
         self.assertNotIn("pendiente_url", limite.context)
@@ -929,7 +930,7 @@ class ProteccionTests(TestCase):
     """P1–P6: login real de M7a (docs/28). Las páginas con precios exigen sesión."""
 
     def setUp(self):
-        cache.clear()
+        limpiar_caches()
         self.asesor = crear_asesor(password="clave-de-prueba")
 
     def test_p1_paginas_con_datos_redirigen_al_login_sin_consultar(self):
@@ -945,8 +946,8 @@ class ProteccionTests(TestCase):
                         fetch_redirect_response=False,
                     )
         self.assertEqual(llamadas, [])
-        self.assertIsNone(cache.get(clave_limite(self.asesor)))
-        self.assertIsNone(cache.get("cotizar:ip:127.0.0.1"))
+        self.assertIsNone(caches["limites"].get(clave_limite(self.asesor)))
+        self.assertIsNone(caches["limites"].get("cotizar:ip:127.0.0.1"))
 
     def test_p2_solo_el_login_es_publico_inicio_exige_sesion(self):
         self.assertRedirects(self.client.get(reverse("inicio")), f"{reverse('login')}?next={reverse('inicio')}",
@@ -991,7 +992,7 @@ class ProteccionTests(TestCase):
             respuesta = self.client.get(reverse("comparador"), {"q": "camara"})
         self.assertEqual(respuesta.status_code, 403)
         self.assertEqual(llamadas, [])
-        self.assertIsNone(cache.get(clave_limite(sin_rol)))
+        self.assertIsNone(caches["limites"].get(clave_limite(sin_rol)))
 
     def test_p6c_sin_rol_los_diferidos_dan_403_y_no_consumen_el_pendiente(self):
         """Un pendiente guardado antes de quitarle el rol no se sirve ni se gasta."""
