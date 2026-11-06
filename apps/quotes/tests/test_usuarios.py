@@ -17,6 +17,7 @@ from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.providers.tests.soporte import limpiar_caches
 from apps.quotes.permissions import (
     ADMIN_GROUP, ASESOR_GROUP, DISCOUNT, FX, INTERNAL_GROUP, MANAGE, MANUAL_SALE, MARGIN, TAX, VIEW_COSTS,
     configure_commercial_groups,
@@ -37,7 +38,7 @@ class UsuariosBase(TestCase):
     esperar_correos = True  # el enlace para restablecer sale en un hilo: las pruebas lo esperan
 
     def setUp(self):
-        cache.clear()
+        limpiar_caches()
         self.hilos_de_correo = []
         en_segundo_plano = usuarios._en_segundo_plano
 
@@ -573,6 +574,13 @@ class LimiteDeLoginTests(UsuariosBase):
             self.fallar(1, ip=f"2001:db8:0:5::{numero:x}")
         self.assertContains(self.entrar("Clave-Qa-2026!", ip="2001:db8:0:5::ffff"), "Demasiados intentos fallidos")
         self.assertRedirects(self.entrar("Clave-Qa-2026!", ip="2001:db8:0:6::1"), reverse("inicio"), fetch_redirect_response=False)
+
+    def test_llenar_la_cache_general_no_borra_el_contador(self):
+        """Pista 14: las búsquedas (Exel, tipo de cambio) llenaban la misma caché de 300 y borraban los contadores."""
+        self.fallar(LIMITE_LOGIN_POR_IP)
+        for numero in range(400):
+            cache.set(f"exel:busqueda:{numero}", "x", 300)
+        self.assertContains(self.entrar("Clave-Qa-2026!"), "Demasiados intentos fallidos")
 
     def test_sin_contrasena_no_cuenta(self):
         for _ in range(LIMITE_LOGIN_POR_IP + 1):

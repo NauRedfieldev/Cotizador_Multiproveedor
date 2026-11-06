@@ -28,7 +28,7 @@ from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm, Set
 from django.contrib.auth.models import Group, Permission
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.contrib.contenttypes.models import ContentType
-from django.core.cache import cache
+from django.core.cache import caches
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied, ValidationError
 from django.core.mail import EmailMultiAlternatives
 from django.core.validators import validate_email
@@ -516,11 +516,12 @@ def _ip_para_limites(request):
 
 def _sumar(clave, ventana):
     """Suma 1 al contador de la clave (vive `ventana` segundos desde el primero) y devuelve la cuenta."""
-    cache.add(clave, 0, ventana)
+    limites = caches["limites"]
+    limites.add(clave, 0, ventana)
     try:
-        return cache.incr(clave)
+        return limites.incr(clave)
     except ValueError:  # caducó entre add e incr
-        cache.set(clave, 1, ventana)
+        limites.set(clave, 1, ventana)
         return 1
 
 
@@ -561,7 +562,7 @@ class _LimiteDeIntentos:
             raise ValidationError(DEMASIADOS_INTENTOS, code="demasiados_intentos")
         datos = super().clean()  # si la contraseña no coincide, lanza ValidationError y el intento queda contado
         try:
-            cache.decr(clave)
+            caches["limites"].decr(clave)
         except ValueError:  # la ventana caducó mientras tanto
             pass
         return datos

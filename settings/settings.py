@@ -183,6 +183,15 @@ SYSCOM_TIPO_CAMBIO_CAMPO = env('SYSCOM_TIPO_CAMBIO_CAMPO', default='normal').str
 if SYSCOM_TIPO_CAMBIO_CAMPO not in CAMPOS_TIPO_CAMBIO_SYSCOM:
     raise ImproperlyConfigured('SYSCOM_TIPO_CAMBIO_CAMPO debe ser uno de: ' + ', '.join(CAMPOS_TIPO_CAMBIO_SYSCOM) + '.')
 
+# «limites»: contadores de login, recuperar contraseña y búsquedas del comparador, aparte de la caché
+# general (Exel, tipo de cambio SYSCOM). Compartían 300 entradas y las búsquedas normales los borraban,
+# lo que reiniciaba los límites (pista 14). Viven en la memoria de cada proceso de uvicorn.
+CACHES = {
+    'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
+    'limites': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache', 'LOCATION': 'limites',
+                'OPTIONS': {'MAX_ENTRIES': 10000}},
+}
+
 # M8: volumen privado, NO publicar mediante MEDIA_URL ni static().
 QUOTE_PDF_ROOT = Path(env('QUOTE_PDF_ROOT', default=str(BASE_DIR / 'private_quote_files')))
 
