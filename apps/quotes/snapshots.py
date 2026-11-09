@@ -101,11 +101,17 @@ class PartidaComercialCapturada(PartidaCapturada):
     edited_name: str = ""
 
 
+class CotizacionAjena(PermissionDenied):
+    """La cotización existe pero no es del usuario. Hacia fuera responde 404, igual que un folio
+    inexistente (docs/37, auditoría run-2 #17): con 403 se podían contar los folios, que son correlativos.
+    Dentro sigue siendo PermissionDenied, así que los `except PermissionDenied` no cambian."""
+
+
 def authorize(quote, actor):
     if not actor or not actor.is_authenticated or not actor.is_active:
         raise PermissionDenied("Se requiere un usuario activo autenticado.")
     if not actor.is_staff and actor.pk != quote.advisor_id:
-        raise PermissionDenied("No tienes acceso a esta cotización.")
+        raise CotizacionAjena("No tienes acceso a esta cotización.")
 
 
 def _text(value, *, required=False, limit=6000):
@@ -438,7 +444,13 @@ def obtener_documento(folio, *, actor, number=None, allow_draft=True, expected_v
 
     # El contexto debe corresponder a UNA versión: impedir lectura de cabecera
     # anterior con partidas nuevas mientras otro hilo guarda/emite el borrador.
+    from .permissions import require_commercial_permission
+
     with transaction.atomic():
+        # docs/37 (auditoría run-2 #19 y #17): todo PDF lleva datos comerciales (v1: costo de origen,
+        # proveedor y stock), así que exige ver costos, como la API; y se exige ANTES de buscar el folio
+        # para que quien no tiene el permiso reciba 403 exista o no la cotización.
+        actor = require_commercial_permission(actor)
         quote = Quote.objects.select_for_update().get(folio=folio)
         authorize(quote, actor)
         revisions = quote.revisions.select_for_update()

@@ -11,6 +11,7 @@ from threading import Barrier
 from unittest.mock import patch
 from uuid import uuid4
 
+from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser, Permission
 from django.core import mail
@@ -34,6 +35,10 @@ from apps.quotes.snapshots import (
 FECHA = datetime(2026, 10, 12, 12, tzinfo=dt_timezone.utc)
 COMPANY = {"name": "Empresa de prueba", "rfc": "", "tagline": "Datos sintéticos",
            "phone": "", "email": ""}
+
+
+def _ver_costos():
+    return Permission.objects.get(content_type__app_label="quotes", codename="view_commercial_costs")
 
 
 def partida(precio="1.004", cantidad="10", moneda="MXN", **kwargs):
@@ -283,6 +288,10 @@ class SnapshotFlowTests(SnapshotFixtures, TestCase):
                        lambda: obtener_documento(self.quote.folio, actor=self.other)]:
             with self.assertRaises(PermissionDenied):
                 action()
+        # docs/37 (auditoría run-2 #19): el documento exige ver costos también al staff.
+        with self.assertRaises(PermissionDenied):
+            obtener_documento(self.quote.folio, actor=self.staff)
+        self.staff.user_permissions.add(_ver_costos())
         self.assertTrue(obtener_documento(self.quote.folio, actor=self.staff)[1].startswith(b"%PDF-"))
 
     def test_inactivo_y_anonimo_se_rechazan_en_servicios(self):
@@ -367,6 +376,7 @@ class SnapshotFlowTests(SnapshotFixtures, TestCase):
         self.assertFalse(self.files())
 
     def test_archivo_ausente_o_alterado_no_se_regenera(self):
+        self.actor.user_permissions.add(_ver_costos())  # docs/37: leer el documento exige ver costos
         issued = self.issue()
         path = Path(issued.pdf.path)
         path.write_bytes(b"alterado")
@@ -431,6 +441,9 @@ class DocumentViewsTests(SnapshotFixtures, TestCase):
         self.client.force_login(self.other)
         self.assertEqual(self.client.get(self.url()).status_code, 403)
         self.client.force_login(self.staff)
+        # docs/37 (auditoría run-2 #19): el staff sin capacidad comercial ya no descarga; con ella, sí.
+        self.assertEqual(self.client.get(self.url()).status_code, 403)
+        self.staff.user_permissions.add(_ver_costos())
         self.assertEqual(self.client.get(self.url()).status_code, 200)
 
     def test_original_v1_intacto_y_correo_externo_bloqueado(self):
@@ -585,6 +598,7 @@ class SnapshotConcurrencyTests(SnapshotFixtures, TransactionTestCase):
         self.assertEqual(len(self.files()), 1)
 
     async def test_servicios_async_fuera_del_event_loop(self):
+        await self.actor.user_permissions.aadd(await sync_to_async(_ver_costos)())  # docs/37: leer exige ver costos
         draft = await acrear_borrador(self.quote.pk, [partida()], actor=self.actor,
                                      company=COMPANY, conditions=["Prueba"])
         issued = await aemitir_revision(draft.pk, actor=self.actor, expected_version=1)

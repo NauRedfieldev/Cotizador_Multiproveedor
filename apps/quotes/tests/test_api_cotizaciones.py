@@ -272,7 +272,8 @@ class ApiCotizacionesTests(TestCase):
 
         otro = AsyncClient()
         await otro.aforce_login(self.otro)
-        self.assertEqual((await otro.get(url)).status_code, 403)
+        # docs/37 (auditoría run-2 #17): ajena = inexistente hacia fuera (404, no 403).
+        self.assertEqual((await otro.get(url)).status_code, 404)
         staff = AsyncClient()
         await staff.aforce_login(self.staff)
         self.assertEqual((await staff.get(url)).status_code, 200)
@@ -732,7 +733,8 @@ class CommercialAPITests(CommercialFixtures, TestCase):
     def test_otro_asesor_y_staff_no_financiero_no_acceden(self):
         created = self.create()
         self.client.force_login(self.other)
-        self.send("api_guardar_revision", method="get", args=(created["folio"], 1), status=403)
+        # docs/37 (#17): otro asesor con rol ve 404 (como un folio inexistente); sin rol, 403.
+        self.send("api_guardar_revision", method="get", args=(created["folio"], 1), status=404)
         self.staff.groups.remove(self.internal)
         self.client.force_login(self.staff)
         self.send("api_guardar_revision", method="get", args=(created["folio"], 1), status=403)
@@ -1013,7 +1015,8 @@ class DocumentalAPITests(CommercialFixtures, TestCase):
     def test_resumen_ajeno_y_revocacion_no_exponen_documento(self):
         created = self.create()
         self.client.force_login(self.other)
-        self.send("api_resumen_documental", method="get", args=(created["folio"], 1), status=403)
+        # docs/37 (#17): ajena = 404; tras revocar el rol, 403 (falta la capacidad).
+        self.send("api_resumen_documental", method="get", args=(created["folio"], 1), status=404)
         self.client.force_login(self.actor)
         self.actor.groups.clear()
         self.send("api_resumen_documental", method="get", args=(created["folio"], 1), status=403)

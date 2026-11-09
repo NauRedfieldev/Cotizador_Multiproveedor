@@ -42,7 +42,7 @@ from .comparison import NIVEL_SIN_COINCIDENCIA, TipoCambio, comparar_configurado
 from .models import DefaultCommercialCondition, Quote, QuoteRevision
 from .pdf import build_demo_quote, colores_marca, generate_quote_pdf, money, safe_filename
 from .permissions import require_commercial_permission
-from .snapshots import ArchivedPDFError, RevisionConflict, obtener_documento
+from .snapshots import ArchivedPDFError, CotizacionAjena, RevisionConflict, obtener_documento
 from .taxes import TASA_IVA_INICIAL
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,8 @@ def _correo_empresa(company_key, company_email=""):
 
 
 def _document_error(exc):
-    if isinstance(exc, (Quote.DoesNotExist, QuoteRevision.DoesNotExist)):
+    if isinstance(exc, (Quote.DoesNotExist, QuoteRevision.DoesNotExist, CotizacionAjena)):
+        # Ajena = inexistente hacia fuera (docs/37, auditoría run-2 #17).
         return JsonResponse({"error": "Cotización o revisión no encontrada."}, status=404)
     if isinstance(exc, PermissionDenied):
         return JsonResponse({"error": "No tienes acceso a esta cotización."}, status=403)
