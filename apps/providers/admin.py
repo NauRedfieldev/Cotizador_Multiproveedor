@@ -1,16 +1,31 @@
+from django import forms
 from django.contrib import admin
 
-from .models import Provider, ProviderToken, RawProviderProduct
+from .models import Provider, ProviderToken, RawProviderProduct, validar_base_url
+
+
+class ProviderForm(forms.ModelForm):
+    class Meta:
+        model = Provider
+        fields = "__all__"
+
+    def clean_base_url(self):
+        # Solo corre cuando base_url está en el formulario (superusuario). Validarlo en Provider.clean()
+        # rompía el guardado del staff, para quien el campo es de solo lectura.
+        url = self.cleaned_data["base_url"]
+        validar_base_url(self.cleaned_data.get("code") or self.instance.code, url)
+        return url
 
 
 @admin.register(Provider)
 class ProviderAdmin(admin.ModelAdmin):
+    form = ProviderForm
     list_display = ("code", "name", "active", "timeout_ms", "updated_at")
     list_filter = ("active",)
     search_fields = ("code", "name")
 
     # base_url decide a dónde viajan credenciales de producción (docs/37, auditoría run-2 #5): solo el
-    # superusuario la fija, al dar de alta o al cambiarla; Provider.clean() valida el host.
+    # superusuario la fija, al dar de alta o al cambiarla; ProviderForm valida el host.
     def has_add_permission(self, request):
         return request.user.is_superuser and super().has_add_permission(request)
 

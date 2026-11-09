@@ -14,6 +14,7 @@ from django.test import TestCase, tag
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.providers.admin import ProviderForm
 from apps.providers.contracts import ProductQuery
 from apps.providers.errors import ProviderResponseError
 from apps.providers.models import Provider, ProviderToken, validar_base_url
@@ -41,19 +42,19 @@ class ValidarBaseUrlTests(TestCase):
             "https://www.exel.com.mx/xlstore",               # host de otro proveedor
             "ftp://developers.syscom.mx/api/v1",
         ):
-            with self.subTest(url=url), self.assertRaises(ValidationError) as ctx:
+            with self.subTest(url=url), self.assertRaises(ValidationError):
                 validar_base_url("syscom", url)
-            self.assertIn("base_url", ctx.exception.message_dict)
 
     def test_proveedor_sin_hosts_declarados(self):
         with self.assertRaisesMessage(ValidationError, "CCONOR_PROVIDER_HOSTS"):
             validar_base_url("nuevo", "https://api.nuevo.example.com")
 
-    def test_full_clean_del_modelo_usa_el_validador(self):
-        with self.assertRaises(ValidationError) as ctx:
-            Provider(code="syscom", name="SYSCOM", base_url="https://evil.invalid/api/v1").full_clean()
-        self.assertIn("base_url", ctx.exception.message_dict)
-        Provider(code="syscom", name="SYSCOM", base_url=SYSCOM_OFICIAL).full_clean()
+    def test_el_formulario_del_admin_usa_el_validador(self):
+        datos = {"code": "syscom", "name": "SYSCOM", "active": "on", "timeout_ms": "8000"}
+        malo = ProviderForm(data={**datos, "base_url": "https://evil.invalid/api/v1"})
+        self.assertFalse(malo.is_valid())
+        self.assertIn("base_url", malo.errors)
+        self.assertTrue(ProviderForm(data={**datos, "base_url": SYSCOM_OFICIAL}).is_valid())
 
 
 class AdminBaseUrlTests(TestCase):
@@ -81,6 +82,15 @@ class AdminBaseUrlTests(TestCase):
         self.proveedor.refresh_from_db()
         self.assertEqual(self.proveedor.base_url, SYSCOM_OFICIAL)
         self.assertTrue(ProviderToken.objects.filter(pk=self.token.pk).exists())
+
+    def test_staff_guarda_un_proveedor_con_base_url_anterior_a_la_lista(self):
+        """Regresión: el validador no debe romper (500) el guardado del staff, que no ve base_url."""
+        Provider.objects.filter(pk=self.proveedor.pk).update(base_url="https://api.syscom.mx/api/v1")
+        self.client.force_login(self.staff)
+        respuesta = self.client.post(self.url, {**self.datos("ignorado"), "timeout_ms": "9000"})
+        self.assertEqual(respuesta.status_code, 302)
+        self.proveedor.refresh_from_db()
+        self.assertEqual((self.proveedor.base_url, self.proveedor.timeout_ms), ("https://api.syscom.mx/api/v1", 9000))
 
     def test_staff_no_superusuario_no_da_de_alta_proveedores(self):
         self.client.force_login(self.staff)

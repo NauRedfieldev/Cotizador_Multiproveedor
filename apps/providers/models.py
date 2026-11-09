@@ -34,10 +34,10 @@ def validar_base_url(code: str, url: str) -> None:
     """base_url decide a dónde viajan las credenciales del proveedor (docs/37, auditoría run-2 #5).
 
     Solo https, sin usuario:clave en la URL, sin puerto explícito y con un host declarado para ese
-    code en settings.CCONOR_PROVIDER_HOSTS. Lanza ValidationError({"base_url": ...}).
+    code en settings.CCONOR_PROVIDER_HOSTS. Lanza ValidationError (lo usa el formulario de ProviderAdmin).
     """
     def error(mensaje):
-        return ValidationError({"base_url": mensaje})
+        return ValidationError(mensaje)
 
     permitidos = settings.CCONOR_PROVIDER_HOSTS.get(code)
     if not permitidos:
@@ -71,11 +71,6 @@ class Provider(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.code})"
-
-    def clean(self):
-        super().clean()
-        if self.code and self.base_url:
-            validar_base_url(self.code, self.base_url)
 
 
 class RawProviderProductManager(models.Manager):

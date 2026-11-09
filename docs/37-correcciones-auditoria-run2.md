@@ -33,13 +33,16 @@
 - **Dónde:** `apps/providers/admin.py`, `apps/providers/models.py` y `settings/settings.py`.
 - **Solo el superusuario** da de alta proveedores o cambia `base_url`. Para el resto del staff, el campo es de
   solo lectura y la página de alta da 403.
-- **`Provider.clean()` → `validar_base_url(code, url)`.** Exige:
+- **`ProviderForm.clean_base_url` → `validar_base_url(code, url)`** (`models.py`). Exige:
   - `https`;
   - sin `usuario:clave@`;
   - sin puerto;
   - un host declarado en `CCONOR_PROVIDER_HOSTS[code]`.
-  El admin ejecuta `clean()` al guardar. `Provider.objects.create()` no lo ejecuta, por eso las pruebas con hosts
-  ficticios siguen igual.
+- **Por qué en el formulario y no en `Provider.clean()`:**
+  - Solo valida cuando el campo es editable (superusuario).
+  - En `clean()` rompía con un 500 el guardado del staff, para quien `base_url` es de solo lectura, si el valor
+    guardado no estaba en la lista. Lo detectó la verificación con la auditoría.
+  - `Provider.objects.create()` no valida, así que las pruebas con hosts ficticios siguen igual.
 - **Al cambiar `base_url` se borra el `ProviderToken`:** el token del host anterior no viaja al nuevo.
 
 ```python
