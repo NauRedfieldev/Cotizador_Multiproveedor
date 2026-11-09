@@ -2,8 +2,11 @@ import hashlib
 import json
 from collections.abc import Mapping
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
+from django.conf import settings
 from django.contrib.postgres.indexes import GinIndex
+from django.core.exceptions import ValidationError
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
 from django.utils import timezone
@@ -27,6 +30,33 @@ def compute_content_hash(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def validar_base_url(code: str, url: str) -> None:
+    """base_url decide a dónde viajan las credenciales del proveedor (docs/37, auditoría run-2 #5).
+
+    Solo https, sin usuario:clave en la URL, sin puerto explícito y con un host declarado para ese
+    code en settings.CCONOR_PROVIDER_HOSTS. Lanza ValidationError({"base_url": ...}).
+    """
+    def error(mensaje):
+        return ValidationError({"base_url": mensaje})
+
+    permitidos = settings.CCONOR_PROVIDER_HOSTS.get(code)
+    if not permitidos:
+        raise error(f"El proveedor «{code}» no tiene hosts declarados en CCONOR_PROVIDER_HOSTS (settings).")
+    partes = urlsplit(url)
+    try:
+        puerto = partes.port
+    except ValueError:
+        raise error("Puerto inválido en la URL.") from None
+    if partes.scheme != "https":
+        raise error("La URL del proveedor debe usar https.")
+    if partes.username is not None or partes.password is not None or "@" in partes.netloc:
+        raise error("La URL del proveedor no puede llevar usuario ni contraseña.")
+    if puerto is not None:
+        raise error("La URL del proveedor no puede llevar un puerto explícito.")
+    if (partes.hostname or "").lower() not in permitidos:
+        raise error(f"Host no permitido para «{code}»: usa {', '.join(permitidos)}.")
+
+
 class Provider(models.Model):
     code = models.SlugField(max_length=32, unique=True)
     name = models.CharField(max_length=120)
@@ -41,6 +71,11 @@ class Provider(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.code})"
+
+    def clean(self):
+        super().clean()
+        if self.code and self.base_url:
+            validar_base_url(self.code, self.base_url)
 
 
 class RawProviderProductManager(models.Manager):

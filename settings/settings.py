@@ -220,6 +220,14 @@ COTIZACIONES_EMISION_HABILITADA = env.bool('COTIZACIONES_EMISION_HABILITADA', de
 # Exel NET confirmado por el usuario en el portal 2026-10-27 (docs/30 B5, docs/31): MXN sin IVA.
 CCONOR_PROVIDER_PRICE_BASES = {'syscom': {'vat_basis': 'NET'}, 'exel': {'vat_basis': 'NET'}}
 
+# Hosts a los que puede apuntar Provider.base_url (docs/37): ahí viajan el client_secret, el token o la
+# contraseña del proveedor. Solo https, sin puerto ni usuario en la URL. Un proveedor nuevo añade aquí su
+# code con el host oficial confirmado; sin él, el admin no deja guardar su base_url.
+CCONOR_PROVIDER_HOSTS = {
+    'syscom': ('developers.syscom.mx',),
+    'exel': ('www.exel.com.mx',),
+}
+
 # Carga diferida del comparador (docs/34): estos proveedores se piden después de pintar la página,
 # para no hacer esperar a los rápidos. Exel tarda ~4 s (web scraping, docs/32 §11). Para añadir uno
 # lento, su code aquí; un code inactivo se ignora. El cotizador y la API no cambian.
