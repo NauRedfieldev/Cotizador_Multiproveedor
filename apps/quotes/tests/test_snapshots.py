@@ -500,6 +500,7 @@ class DocumentViewsTests(SnapshotFixtures, TestCase):
 
     def test_demo_solo_explicito_y_debug(self):
         demo_url = "/demo/cotizaciones/DEMO/pdf/"
+        self.client.force_login(self.staff)  # docs/37 (auditoría run-2 #21): el demo exige staff
         with override_settings(DEBUG=True):
             self.assertEqual(self.client.get(demo_url).status_code, 200)
         with override_settings(DEBUG=False):

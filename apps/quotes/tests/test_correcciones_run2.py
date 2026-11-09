@@ -2,14 +2,19 @@
 
 #19: todo PDF (v1, v2 o histórico) exige view_commercial_costs, como la API.
 #17: una cotización ajena responde igual que un folio inexistente (404); sin rol, 403 en ambos.
+#16, #20: límites de correo y de PDF por usuario (429). #21: demo PDF solo staff, con DEBUG y folio corto.
 """
 import json
+from unittest import mock
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.core import mail
+from django.core.cache import caches
+from django.test import Client, TestCase, override_settings
 
 from apps.quotes.tests.test_commercial_persistence import CommercialFixtures, commercial_line
 from apps.quotes.tests.test_snapshots import partida
+from apps.quotes.views import LIMITE_CORREOS_POR_HORA, LIMITE_PDF_POR_MINUTO
 
 FOLIO_INEXISTENTE = "NOEXISTE-2026-9999"
 
@@ -94,3 +99,93 @@ class FolioAjenoComoInexistenteTests(CommercialFixtures, TestCase):
         self.client.force_login(self.actor)
         self.assertEqual(self.client.get(f"/api/v1/quotes/{self.quote.folio}/").status_code, 200)
         self.assertEqual(self.client.get(f"/cotizaciones/{self.quote.folio}/pdf/?revision=1").status_code, 200)
+
+
+class CorreoConLimiteTests(CommercialFixtures, TestCase):
+    """Auditoría run-2 #16 (sin límite de envíos), asunto con salto de línea (500) y punto 9 (POST en DEBUG)."""
+
+    def setUp(self):
+        super().setUp()
+        caches["limites"].clear()
+        self.addCleanup(caches["limites"].clear)
+        self.issue(self.commercial_draft())
+        self.client.force_login(self.actor)
+        self.url = f"/api/cotizaciones/{self.quote.folio}/enviar-correo/"
+
+    def enviar(self, **cuerpo):
+        return self.client.post(self.url, json.dumps({"revision": 1, "email": "cliente@example.invalid", **cuerpo}),
+                                content_type="application/json")
+
+    def test_el_correo_21_de_la_hora_da_429(self):
+        codigos = [self.enviar(email=f"destino{i}@example.invalid").status_code for i in range(LIMITE_CORREOS_POR_HORA)]
+        self.assertEqual(set(codigos), {200})
+        respuesta = self.enviar()
+        self.assertEqual(respuesta.status_code, 429)
+        self.assertFalse(respuesta.json()["success"])
+        self.assertEqual(len(mail.outbox), LIMITE_CORREOS_POR_HORA)
+
+    def test_el_limite_es_por_usuario(self):
+        caches["limites"].set(f"correo:usuario:{self.actor.pk}", LIMITE_CORREOS_POR_HORA, 3600)
+        self.assertEqual(self.enviar().status_code, 429)
+        self.client.force_login(self.staff)  # otro usuario (staff con rol) conserva su cupo
+        self.assertEqual(self.enviar().status_code, 200)
+
+    def test_asunto_con_salto_de_linea_da_400(self):
+        for asunto in ("Hola\r\nBcc: espia@example.invalid", "Hola\nX: 1", "Hola\rX: 1"):
+            with self.subTest(asunto=asunto):
+                self.assertEqual(self.enviar(subject=asunto).status_code, 400)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_con_debug_el_mensaje_no_aparece_en_la_pagina_de_error(self):
+        cliente = Client(raise_request_exception=False)
+        cliente.force_login(self.actor)
+        with override_settings(DEBUG=True), mock.patch("apps.quotes.views.render_to_string", side_effect=RuntimeError("QA")):
+            respuesta = cliente.post(self.url, json.dumps({"revision": 1, "email": "x@example.invalid",
+                                                           "message": "MENSAJE-PRIVADO-QA"}),
+                                     content_type="application/json")
+        self.assertEqual(respuesta.status_code, 500)
+        self.assertEqual(respuesta["Content-Type"], "application/json")  # sin página técnica
+        self.assertNotIn("MENSAJE-PRIVADO-QA", respuesta.content.decode(errors="replace"))
+
+
+class PdfConLimiteTests(CommercialFixtures, TestCase):
+    """Auditoría run-2 #20: cada borrador se vuelve a generar; sin límite, un usuario ocupaba el único worker."""
+
+    def setUp(self):
+        super().setUp()
+        caches["limites"].clear()
+        self.addCleanup(caches["limites"].clear)
+        self.v1 = self.draft()
+        self.client.force_login(self.actor)
+        self.url = f"/cotizaciones/{self.quote.folio}/pdf/?revision={self.v1.number}"
+
+    def test_la_descarga_11_del_minuto_da_429(self):
+        codigos = [self.client.get(self.url).status_code for _ in range(LIMITE_PDF_POR_MINUTO)]
+        self.assertEqual(set(codigos), {200})
+        respuesta = self.client.get(self.url)
+        self.assertEqual(respuesta.status_code, 429)
+        self.assertIn("error", respuesta.json())
+
+
+class DemoPdfTests(TestCase):
+    """Auditoría run-2 #21: con DEBUG=True el demo era anónimo y un folio largo daba un 500 técnico."""
+
+    def setUp(self):
+        U = get_user_model().objects
+        self.staff = U.create_user("staff_demo_qa", is_staff=True)
+        self.normal = U.create_user("normal_demo_qa")
+
+    def test_anonimo_va_al_login(self):
+        with override_settings(DEBUG=True):
+            self.assertEqual(self.client.get("/demo/cotizaciones/DEMO/pdf/").status_code, 302)
+
+    def test_solo_staff_con_debug_y_folio_corto(self):
+        self.client.force_login(self.staff)
+        with override_settings(DEBUG=True):
+            self.assertEqual(self.client.get("/demo/cotizaciones/DEMO/pdf/").status_code, 200)
+            self.assertEqual(self.client.get("/demo/cotizaciones/" + "Z" * 41 + "/pdf/").status_code, 404)
+        with override_settings(DEBUG=False):
+            self.assertEqual(self.client.get("/demo/cotizaciones/DEMO/pdf/").status_code, 404)
+        self.client.force_login(self.normal)
+        with override_settings(DEBUG=True):
+            self.assertEqual(self.client.get("/demo/cotizaciones/DEMO/pdf/").status_code, 404)

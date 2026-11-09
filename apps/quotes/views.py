@@ -28,6 +28,7 @@ from django.shortcuts import render
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
 from django.views.decorators.http import require_GET
 
 from apps.catalog.matching import IdentificadoresConfiables, ResultadoMatch, aemparejar_con_fallback
@@ -125,6 +126,19 @@ def cotizador_comercial(request):
                                               "tasa_iva_inicial": tasa_iva_inicial})
 
 
+# docs/37 (auditoría run-2 #16 y #20): límites por usuario en la caché «limites». Un borrador se vuelve a
+# generar en cada descarga (decenas de segundos con muchas partidas) y cada correo sale por la cuenta SMTP
+# de la empresa: sin límite, un solo usuario ocupaba el único worker o mandaba correos sin fin.
+LIMITE_PDF_POR_MINUTO = 10
+LIMITE_CORREOS_POR_HORA = 20
+
+
+def _superado(clave, ventana, limite):
+    from .usuarios import _sumar  # import diferido: usuarios → api → views
+
+    return _sumar(clave, ventana) > limite
+
+
 @login_required
 def descargar_pdf_cotizacion(request, folio):
     """GET /cotizaciones/<folio>/pdf/ → descarga el PDF oficial.
@@ -133,6 +147,9 @@ def descargar_pdf_cotizacion(request, folio):
     """
     if request.method not in {"GET", "HEAD"}:
         return JsonResponse({"error": "Método no permitido."}, status=405)
+    if _superado(f"pdf:usuario:{request.user.pk}", 60, LIMITE_PDF_POR_MINUTO):
+        return JsonResponse({"error": "Demasiadas descargas seguidas. Espera un minuto y vuelve a intentarlo."},
+                            status=429)
     try:
         if request.GET.get("exact") == "1" and request.GET.get("revision") is None:
             raise ValidationError("Se requiere revisión exacta.")
@@ -148,6 +165,8 @@ def descargar_pdf_cotizacion(request, folio):
 
 
 @login_required
+@sensitive_post_parameters()
+@sensitive_variables()  # docs/37 (punto 9): con DEBUG=True el mensaje del cliente no sale en la página de error
 def enviar_cotizacion_correo(request, folio):
     """POST /api/cotizaciones/<folio>/enviar-correo/ → envía la cotización.
 
@@ -179,12 +198,18 @@ def enviar_cotizacion_correo(request, folio):
         return JsonResponse({"success": False, "error": "Tipos de datos inválidos."}, status=400)
     if len(payload.get("email", "")) > 254 or len(payload.get("subject", "")) > 255 or len(payload.get("message", "")) > 6000:
         return JsonResponse({"success": False, "error": "Datos del correo demasiado largos."}, status=400)
+    if any(c in payload.get("subject", "") for c in "\r\n"):
+        # Un salto de línea en una cabecera lo rechaza el backend de correo con un 500; aquí es un 400 claro.
+        return JsonResponse({"success": False, "error": "El asunto no puede tener saltos de línea."}, status=400)
     email = payload.get("email", "").strip()
     try:
         validate_email(email)
     except ValidationError:
         return JsonResponse({"success": False, "error": "Correo destinatario inválido."}, status=400)
 
+    if _superado(f"correo:usuario:{request.user.pk}", 3600, LIMITE_CORREOS_POR_HORA):
+        return JsonResponse({"success": False, "error": "Alcanzaste el límite de correos por hora. Inténtalo más tarde."},
+                            status=429)
     try:
         guard = _document_guard(payload)
         if payload.get("revision") is None:
@@ -202,35 +227,37 @@ def enviar_cotizacion_correo(request, folio):
         mailer, remitente = _correo_empresa(empresa.get("key", "cconor"), empresa.get("email", ""))
     except _RemitenteSinConfigurar:
         return JsonResponse({"success": False, "error": "Correo de la empresa sin remitente configurado; avisa al administrador."}, status=503)
-    nombre_empresa = empresa.get("name") or "CCONOR"
-    subject = (payload.get("subject") or "").strip() or (
-        f"Cotización {quote['folio']} - {nombre_empresa}"
-    )
-    message_text = (payload.get("message") or "").strip()
-    plain_body = message_text or (
-        f"Adjuntamos la cotización {quote['folio']} de {nombre_empresa}."
-    )
-    # Lienzo fila 11: encabezado con el nombre de la empresa (primera palabra grande, el resto debajo) y su color.
-    colores = colores_marca(empresa.get("key"))
-    palabras = nombre_empresa.split()
-    marca = {"barra": colores["text"], "subtitulo": colores["tint"], "folio": colores["text"],
-             "nombre": palabras[0] if palabras else nombre_empresa, "resto": " ".join(palabras[1:])}
-    html_body = render_to_string(
-        "pdf/email_cotizacion.html", {"quote": quote, "message": message_text or plain_body,
-                                     "attach_pdf": payload.get("attach_pdf", True), "marca": marca}
-    )
-
-    # B3: copia oculta (CCO) completa, con el PDF, a la cuenta remitente: el cliente no la ve y el buzón de la
-    # empresa conserva el registro de lo enviado (el correo del hosting no lo guarda en «Enviados»).
-    msg = EmailMultiAlternatives(
-        subject=subject, body=plain_body, from_email=remitente, to=[email],
-        bcc=[remitente] if remitente.lower() != email.lower() else [],
-    )
-    msg.attach_alternative(html_body, "text/html")
-    if payload.get("attach_pdf", True):
-        msg.attach(filename, pdf_bytes, "application/pdf")
-
+    # docs/37 (punto 9): armar y enviar el correo va dentro del try. Un fallo responde JSON y queda en el log;
+    # con DEBUG=True Django no censura la página técnica, que mostraría el mensaje privado del cliente.
     try:
+        nombre_empresa = empresa.get("name") or "CCONOR"
+        subject = (payload.get("subject") or "").strip() or (
+            f"Cotización {quote['folio']} - {nombre_empresa}"
+        )
+        message_text = (payload.get("message") or "").strip()
+        plain_body = message_text or (
+            f"Adjuntamos la cotización {quote['folio']} de {nombre_empresa}."
+        )
+        # Lienzo fila 11: encabezado con el nombre de la empresa (primera palabra grande, el resto debajo) y su color.
+        colores = colores_marca(empresa.get("key"))
+        palabras = nombre_empresa.split()
+        marca = {"barra": colores["text"], "subtitulo": colores["tint"], "folio": colores["text"],
+                 "nombre": palabras[0] if palabras else nombre_empresa, "resto": " ".join(palabras[1:])}
+        html_body = render_to_string(
+            "pdf/email_cotizacion.html", {"quote": quote, "message": message_text or plain_body,
+                                         "attach_pdf": payload.get("attach_pdf", True), "marca": marca}
+        )
+
+        # B3: copia oculta (CCO) completa, con el PDF, a la cuenta remitente: el cliente no la ve y el buzón de la
+        # empresa conserva el registro de lo enviado (el correo del hosting no lo guarda en «Enviados»).
+        msg = EmailMultiAlternatives(
+            subject=subject, body=plain_body, from_email=remitente, to=[email],
+            bcc=[remitente] if remitente.lower() != email.lower() else [],
+        )
+        msg.attach_alternative(html_body, "text/html")
+        if payload.get("attach_pdf", True):
+            msg.attach(filename, pdf_bytes, "application/pdf")
+
         if msg.send(using=mailer) != 1:
             raise RuntimeError("El backend de correo no confirmó aceptación.")
     except Exception:
@@ -242,9 +269,14 @@ def enviar_cotizacion_correo(request, folio):
     )
 
 
+@login_required
 def demo_pdf_cotizacion(request, folio):
-    """Demostración sintética explícita, deshabilitada fuera de DEBUG."""
-    if not settings.DEBUG:
+    """Demostración sintética explícita, deshabilitada fuera de DEBUG.
+
+    docs/37 (auditoría run-2 #21): solo staff y folio corto; antes era anónima y un folio enorme no cabía
+    en el encabezado (LayoutError → 500 con la página técnica de DEBUG).
+    """
+    if not settings.DEBUG or not request.user.is_staff or len(folio) > 40:
         return JsonResponse({"error": "No encontrado."}, status=404)
     if request.method != "GET":
         return JsonResponse({"error": "Método no permitido."}, status=405)
