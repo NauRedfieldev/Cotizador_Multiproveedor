@@ -37,7 +37,7 @@ from apps.providers.adapters.syscom import consultar_tipo_cambio
 from apps.providers.contracts import ProductQuery, ProviderOffer
 from apps.providers.errors import ProviderError
 from apps.providers.models import Provider
-from apps.providers.service import search_all
+from apps.providers.service import CON_TOPE, search_all
 
 from .comparison import NIVEL_SIN_COINCIDENCIA, TipoCambio, comparar_configurado, tipo_cambio_manual
 from .models import DefaultCommercialCondition, Quote, QuoteRevision
@@ -617,7 +617,8 @@ async def tipo_cambio_sugerido():
         if proveedor is None:
             return None, False
         try:
-            async with httpx.AsyncClient(timeout=min(proveedor.timeout_ms, 4000) / 1000) as client:
+            # CON_TOPE: mismo tope de respuesta que search_all (docs/37, auditoría run-2 #18).
+            async with httpx.AsyncClient(timeout=min(proveedor.timeout_ms, 4000) / 1000, event_hooks=CON_TOPE) as client:
                 valor = await consultar_tipo_cambio(proveedor.base_url, campo, client)
         except (httpx.HTTPError, ProviderError, ValueError) as exc:
             logger.warning("No se pudo consultar el tipo de cambio de SYSCOM: %s", type(exc).__name__)

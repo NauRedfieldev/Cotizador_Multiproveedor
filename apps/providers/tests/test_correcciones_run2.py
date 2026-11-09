@@ -2,9 +2,11 @@
 
 #5: base_url decide a dónde viajan credenciales de producción; solo el superusuario lo cambia, a un host
 declarado en CCONOR_PROVIDER_HOSTS, y el token no sigue al host nuevo.
+#18: una respuesta de proveedor de más de MAX_BYTES_RESPUESTA se corta (proveedor caído, nunca 500).
 """
 from datetime import timedelta
 
+import httpx
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.exceptions import ValidationError
@@ -12,7 +14,11 @@ from django.test import TestCase, tag
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.providers.contracts import ProductQuery
+from apps.providers.errors import ProviderResponseError
 from apps.providers.models import Provider, ProviderToken, validar_base_url
+from apps.providers.service import MAX_BYTES_RESPUESTA, search_all
+from apps.providers.tests.soporte import credenciales_de_prueba
 
 SYSCOM_OFICIAL = "https://developers.syscom.mx/api/v1"
 
@@ -97,3 +103,42 @@ class AdminBaseUrlTests(TestCase):
         self.client.force_login(self.superusuario)
         self.client.post(self.url, {**self.datos(SYSCOM_OFICIAL), "timeout_ms": "9000"})
         self.assertTrue(ProviderToken.objects.filter(pk=self.token.pk).exists())
+
+
+class _Trozos(httpx.AsyncByteStream):
+    """Respuesta sin Content-Length (chunked): cuenta cuántos trozos llegaron a pedirse."""
+
+    def __init__(self, trozos, tamano):
+        self.trozos, self.tamano, self.entregados = trozos, tamano, 0
+
+    async def __aiter__(self):
+        for _ in range(self.trozos):
+            self.entregados += 1
+            yield b"A" * self.tamano
+
+
+class TopeDeRespuestaTests(TestCase):
+    """#18: el núcleo leía la respuesta entera en memoria (60 MB pasaron sin error)."""
+
+    async def buscar(self, handler):
+        p = await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url=SYSCOM_OFICIAL)
+        await ProviderToken.objects.acreate(provider=p, access_token="token-ficticio",
+                                            expires_at=timezone.now() + timedelta(days=30))
+        with credenciales_de_prueba("syscom", CLIENT_ID="id-ficticio", CLIENT_SECRET="secreto-ficticio"):
+            return (await search_all(ProductQuery(term="camara"), transport=httpx.MockTransport(handler)))[0]
+
+    async def test_respuesta_con_content_length_enorme_se_corta(self):
+        resultado = await self.buscar(lambda r: httpx.Response(200, content=b"A" * (MAX_BYTES_RESPUESTA + 1)))
+        self.assertIsInstance(resultado.error, ProviderResponseError)
+        self.assertIn("demasiado grande", str(resultado.error))
+        self.assertEqual(resultado.offers, ())
+
+    async def test_respuesta_chunked_se_corta_sin_leerla_entera(self):
+        cuerpo = _Trozos(trozos=60, tamano=1024 * 1024)
+        resultado = await self.buscar(lambda r: httpx.Response(200, stream=cuerpo))
+        self.assertIn("demasiado grande", str(resultado.error))
+        self.assertLessEqual(cuerpo.entregados, MAX_BYTES_RESPUESTA // (1024 * 1024) + 1)
+
+    async def test_respuesta_normal_pasa(self):
+        resultado = await self.buscar(lambda r: httpx.Response(200, json={"productos": []}))
+        self.assertIsNone(resultado.error)

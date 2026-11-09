@@ -7,14 +7,17 @@
 import json
 from unittest import mock
 
+import httpx
 from django.contrib.auth import get_user_model
 from django.core import mail
-from django.core.cache import caches
+from django.core.cache import cache, caches
 from django.test import Client, TestCase, override_settings
 
+from apps.providers.models import Provider
+from apps.providers.service import MAX_BYTES_RESPUESTA
 from apps.quotes.tests.test_commercial_persistence import CommercialFixtures, commercial_line
 from apps.quotes.tests.test_snapshots import partida
-from apps.quotes.views import LIMITE_CORREOS_POR_HORA, LIMITE_PDF_POR_MINUTO
+from apps.quotes.views import LIMITE_CORREOS_POR_HORA, LIMITE_PDF_POR_MINUTO, tipo_cambio_sugerido
 
 FOLIO_INEXISTENTE = "NOEXISTE-2026-9999"
 
@@ -189,3 +192,23 @@ class DemoPdfTests(TestCase):
         self.client.force_login(self.normal)
         with override_settings(DEBUG=True):
             self.assertEqual(self.client.get("/demo/cotizaciones/DEMO/pdf/").status_code, 404)
+
+
+class TipoCambioConTopeTests(TestCase):
+    """Auditoría run-2 #18: el tipo de cambio de SYSCOM usa el mismo tope de respuesta que search_all."""
+
+    async def test_respuesta_enorme_del_tipo_de_cambio_se_corta(self):
+        await Provider.objects.acreate(code="syscom", name="SYSCOM", base_url="https://developers.syscom.mx/api/v1")
+        await cache.aclear()
+        real = httpx.AsyncClient
+
+        def cliente(**kwargs):
+            kwargs["transport"] = httpx.MockTransport(
+                lambda r: httpx.Response(200, content=b"A" * (MAX_BYTES_RESPUESTA + 1)))
+            return real(**kwargs)
+
+        with mock.patch("apps.quotes.views.httpx.AsyncClient", new=cliente), \
+                self.assertLogs("apps.quotes.views", level="WARNING") as registros:
+            valor, fallo = await tipo_cambio_sugerido()
+        self.assertEqual((valor, fallo), (None, True))
+        self.assertIn("RespuestaDemasiadoGrande", registros.output[0])
