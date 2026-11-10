@@ -21,6 +21,12 @@ from .snapshot_values import MAX_ITEMS, MONEY_CONTEXT, decimal_limit
 from .taxes import TASA_IVA_INICIAL, calcular_iva, divisor_iva_incluido, validar_tasa
 
 MARGEN_INICIAL = Decimal("35")
+# Versión de las reglas de cálculo (QuoteRevision.calculation_version):
+#   1: el importe usa el unitario exacto (cociente) y se redondea una vez; el unitario puede tener 3+ decimales.
+#   2: el unitario de venta se redondea a centavos (HALF_UP) y el importe es unitario × cantidad, así el cliente
+#      puede comprobar la multiplicación. Las emisiones v1 conservan su versión; lo nuevo se calcula con la vigente.
+VERSIONES_CALCULO = (1, 2)
+CALCULO_VIGENTE = 2
 _CIEN = Decimal("100")
 _UNO = Decimal("1")
 _CERO = Decimal("0.00")
@@ -192,7 +198,7 @@ def _importe(numerador, denominador=_UNO):
     return decimal_limit(Decimal(centavos).scaleb(-2), 38, 2)
 
 
-def _calcular_partida(entrada, tipo_cambio):
+def _calcular_partida(entrada, tipo_cambio, version):
     cantidad = Decimal(entrada.cantidad)
     costo_unitario = importe_costo = None
     if entrada.costo is not None:
@@ -204,8 +210,12 @@ def _calcular_partida(entrada, tipo_cambio):
         vn, vd = cn * _CIEN, cd * (_CIEN - _margen(entrada.margen))
     else:
         vn, vd = _normalizar(entrada.venta_manual, tipo_cambio)
-    venta_unitaria = vn / vd
-    importe_venta = _importe(vn * cantidad, vd)
+    if version == 1:
+        venta_unitaria = vn / vd
+        importe_venta = _importe(vn * cantidad, vd)
+    else:
+        venta_unitaria = _importe(vn, vd)
+        importe_venta = _importe(venta_unitaria * cantidad)  # exacto con cantidad entera; HALF_UP si no
     utilidad = margen_real = None
     if importe_costo is not None:
         utilidad = importe_venta - importe_costo
@@ -231,10 +241,12 @@ def _aviso_existencias(entrada):
 def calcular_cotizacion(
     partidas: Iterable[PartidaComercial], *, tipo_cambio: TipoCambio | None = None,
     descuento: DescuentoGlobal | None = None, tasa_iva: Decimal = TASA_IVA_INICIAL,
+    version: int = CALCULO_VIGENTE,
 ) -> ResultadoComercial:
     """Calcula importes internos, sin persistir, consultar APIs ni aprobar una emisión.
 
     Importes/costos por partida se redondean una vez a centavos, después se suman.
+    `version` elige las reglas (VERSIONES_CALCULO); en la 2 el unitario de venta ya va en centavos.
     Descuento sobre esa suma; IVA sobre el neto; utilidad sobre venta neta. Con
     descuento global, resultados individuales se etiquetan ANTES del descuento.
     No se atribuyen pérdidas por partida al descuento global. La autorización
@@ -247,6 +259,8 @@ def calcular_cotizacion(
     if descuento is not None and not isinstance(descuento, DescuentoGlobal):
         raise TypeError("Se requiere DescuentoGlobal o None.")
     tasa_iva = validar_tasa(tasa_iva)
+    if type(version) is not int or version not in VERSIONES_CALCULO:
+        raise ValidationError("Versión de cálculo comercial no soportada.")
     referencias, calculadas, advertencias = set(), [], []
     with localcontext(MONEY_CONTEXT):
         for entrada in partidas:
@@ -257,7 +271,7 @@ def calcular_cotizacion(
             if entrada.referencia in referencias:
                 raise ValidationError("Referencia de partida duplicada; no se sobrescribe.")
             referencias.add(entrada.referencia)
-            resultado = _calcular_partida(entrada, tipo_cambio)
+            resultado = _calcular_partida(entrada, tipo_cambio, version)
             calculadas.append(resultado)
             if entrada.margen is not None and entrada.margen == 0:
                 advertencias.append(AdvertenciaComercial(CodigoAdvertencia.MARGEN_CERO, entrada.referencia))

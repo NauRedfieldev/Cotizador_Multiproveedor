@@ -160,7 +160,7 @@
                 <div class="summary-row"><span>IVA</span><span id="ivaDisplay">—</span></div>
                 <div class="summary-row summary-total"><span>Total con IVA</span><span id="totalFinalDisplay">—</span></div>
                 <div class="summary-row"><span>Utilidad bruta estimada (sin IVA)</span><span id="marginDisplay">—</span></div>
-                <p class="small text-muted mb-0">Unitarios aproximados identificados por el servidor. Prevalece el importe definitivo de la partida; no hay descuento repartido por línea.</p>
+                <p class="small text-muted mb-0">Cada importe es la venta por unidad (en centavos) × la cantidad. No hay descuento repartido por línea.</p>
             </div></div>
         </div>
         {# 6D: los tres botones alineados a la derecha; «Limpiar» (destructivo) en rojo. #}
@@ -221,4 +221,4 @@
     </dialog>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=35"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/cotizador.js' %}?v=36"></script>{% endblock %}

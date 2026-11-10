@@ -1002,7 +1002,6 @@
 
                 units.append(element('h6', '¿Cómo lo vendes?', 'fw-bold'));
                 const split = line.unitMode ? line.unitMode === 'SPLIT' : splitUnits(line.units);
-                const lockSource = line.persisted && line.kind === 'API';
                 // Un servicio se cobra completo: no se pregunta la forma de venta.
                 if (service) units.append(element('div', 'Con «servicio» se cobra el servicio completo.', 'form-text mb-3'));
                 else choice(units, 'Forma de venta', split ? 'SPLIT' : 'SAME', [['SAME', 'Igual que el proveedor'], ['SPLIT', 'Por partes (metros, etc.)']], value => {
@@ -1024,10 +1023,11 @@
                         line.units.source_label = value; line.units.sale_label = value; line.units.conversion_factor = '1';
                         // Entrar o salir de «servicio» cambia las columnas: se vuelve a dibujar.
                         if (isService(line) !== service) { line.units.confirmed = false; update(true); } else unitsChanged();
-                    }, { disabled: lockSource, name: 'units' });
+                    }, { name: 'units' });
                 } else {
+                    // La unidad la escribe el asesor (el proveedor no la manda): se puede corregir en un borrador guardado.
                     unitField(units, 'El proveedor lo vende por', line.units.source_label, value => { line.units.source_label = value; unitsChanged(); },
-                        { disabled: lockSource, name: 'units' });
+                        { name: 'units' });
                     unitField(units, 'Tú lo vendes por', line.units.sale_label, value => { line.units.sale_label = value; unitsChanged(); },
                         { name: 'units' });
                     refs.factor = textField(units, '¿Cuántas trae?', line.units.conversion_factor, value => { line.units.conversion_factor = value; unitsChanged(); },
@@ -1222,7 +1222,8 @@
                 row.append(info, saved, today, badge, action);
                 list.append(row);
             }
-            box.replaceChildren(head, list, element('div', 'Al usar el precio de hoy se conservan cantidad, unidades y margen; la venta se recalcula. Si la partida tiene precio de venta fijo, solo cambia el costo.', 'small text-muted mt-2'));
+            const sameNote = rows.some(r => r.kind === 'same') ? ' Las que no cambiaron quedan como revisadas hoy al guardar.' : '';
+            box.replaceChildren(head, list, element('div', 'Al usar el precio de hoy se conservan cantidad, unidades y margen; la venta se recalcula. Si la partida tiene precio de venta fijo, solo cambia el costo.' + sameNote, 'small text-muted mt-2'));
             box.classList.remove('d-none');
         }
         function afterReplace(rows) {
@@ -1262,6 +1263,11 @@
             }
             state.busy = false;
             state.priceReviewed = { folio: state.saved?.folio ?? null, at: new Date().toISOString() };
+            // «Sin cambio»: mismo precio, pero se toma la consulta de hoy para que al guardar cuente como revisada hoy
+            // (si no, «Mis cotizaciones» seguiría diciendo «de hace X días»).
+            const same = rows.filter(r => r.kind === 'same' && state.lines.includes(r.line));
+            for (const r of same) replaceWithOffer(r.line, r.offer);
+            if (same.length) changed();
             locks(); renderLines(); renderReview(rows); priceAge();
         }
         $('reviewPricesBtn').addEventListener('click', reviewPrices);

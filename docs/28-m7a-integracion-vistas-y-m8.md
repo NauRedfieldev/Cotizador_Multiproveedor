@@ -1032,6 +1032,33 @@ Solo navegador (`static/js/main.js`, `static/js/cotizador.js`, `templates/compar
   error se queda dentro de la ventana, como antes (cotizacion_actions.js v14).
 - Pruebas: `CorreoConexionRapidaTests` (test_api_cotizaciones), sin red: sockets falsos.
 
+### 14.23 Ajustes del cotizador (2026-11-10)
+
+- **Unidad editable en un borrador guardado.** La unidad de una partida de proveedor la escribe el asesor (el
+  proveedor no la manda), así que ya no es parte de los originales fijos (`_commercial_adjustments` ya no incluye
+  `source_unit_label`; cotizador.js quitó `lockSource`). Al cambiarla se vuelve a pedir «Revisé la unidad» y
+  `_commercial_write_parts` registra quién la validó. Precio, marca, modelo y demás datos del proveedor siguen fijos.
+- **Unitario en centavos (cálculo v2).** `calcular_cotizacion(version=2)`: venta por unidad HALF_UP a centavos e
+  importe = unitario × cantidad (p. ej. 20 × $5.01 = $100.20, antes $100.17 con unitario «$5.0085 (aprox.)»).
+  Revisiones nuevas y borradores al guardarse usan la v2; emitidas v1 intactas (docs/31). Migración 0008 solo amplía
+  la restricción. La nota del cotizador sobre unitarios aproximados ahora explica unitario × cantidad.
+- **PDF: solo marca.** La columna «Marca / Modelo» pasa a «Marca» y no imprime el modelo (para que el cliente no
+  identifique el producto exacto); su ancho se devuelve a la descripción. El nombre del producto no se toca: si trae
+  el modelo, el asesor lo ajusta en «Concepto en la cotización» (§14.21). Las emisiones anteriores conservan su PDF.
+- **Precios revisados hoy.** En «Revisar precios», las partidas «Sin cambio» se reemplazan por la consulta de hoy
+  (mismo precio, `replaceWithOffer`), así que al guardar su `captured_at` es de hoy y «Mis cotizaciones» deja de decir
+  «de hace X días». Las que «ya no aparecen» o «no se pudieron revisar» conservan su fecha.
+- **Otra empresa desde una emitida.** «Nueva revisión» de una emisión v2, con más de una empresa configurada, abre la
+  ventana «Cotizar como». La misma empresa = siguiente revisión del folio, como antes. Otra empresa =
+  `POST …/revisiones/<n>/nueva/` con `company_key`: `_copy_to_company` crea una cotización NUEVA con el prefijo de esa
+  empresa y copia cliente, condiciones, notas internas, partidas (con su `captured_at` y validación de unidad), IVA,
+  descuento y tipo de cambio; los ajustes se comparan contra la emisión de origen. La original no cambia. Un borrador
+  no se copia (409); un histórico v1 no acepta `company_key` (400).
+- Pruebas: `test_v2_*` y oráculos v1/v2 (test_commercial); `test_unidad_de_partida_api_guardada_se_puede_corregir`,
+  `test_borrador_v1_pasa_a_v2_*`, `test_emitida_v1_conserva_*`, `test_version_de_calculo_no_retrocede_*`,
+  `test_v2_unitario_en_centavos_*` (test_commercial_persistence); `test_nueva_revision_como_otra_empresa_*` y
+  `test_otra_empresa_solo_desde_emitida_*` (test_api_cotizaciones). cotizador.js v36, cotizacion_actions.js v15.
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 > **Rediseño 12A (2026-10-20, rama `feature/ui-interfaz-general`).** La pantalla pasó a lista y

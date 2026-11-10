@@ -436,7 +436,7 @@ def generate_quote_pdf(quote, *, _partir_partidas=False):
         Paragraph("#", st["th_center"]),
         Paragraph("Código / Clave", st["th"]),
         Paragraph("Descripción Detallada", st["th"]),
-        Paragraph("Marca / Modelo" if commercial else "Marca / Dist.", st["th_center"]),
+        Paragraph("Marca" if commercial else "Marca / Dist.", st["th_center"]),
         Paragraph("Cant.", st["th_center"]),
         Paragraph("P. Unitario", st["th_right"]),
         Paragraph("Importe histórico" if quote.get("legacy_unknown_currency") else "Importe MXN", st["th_right"]),
@@ -467,15 +467,15 @@ def generate_quote_pdf(quote, *, _partir_partidas=False):
                 Paragraph(f"<b>{i}</b>", st["cell_center"]),
                 Paragraph(item["code"], st["cell_mono"]),
                 Paragraph(f"<b>{item['name']}</b><br/><font color=\"#5A5F7A\">{item['description']}{source_label}</font>", st["cell"]),
-                Paragraph("<br/>".join(v for v in (item["brand"], item["model"]) if v) or "—", st["cell_center"]) if commercial else Paragraph(item["provider"], st["cell_center"]),
+                Paragraph(item["brand"] or "—", st["cell_center"]) if commercial else Paragraph(item["provider"], st["cell_center"]),
                 Paragraph(f"<b>{item['qty']}</b>", st["cell_center"]),
                 Paragraph(unit_text, st["cell_right"]),
                 Paragraph(f"<b>{money(item['amount'])}</b>", st["cell_right"]),
             ]
         )
     if commercial:
-        # V2: Marca/Modelo más ancha para no partir modelos; Código cede espacio.
-        col_widths = [0.9 * cm, 2.0 * cm, usable - 12.3 * cm, 3.0 * cm, 1.2 * cm, 2.1 * cm, 2.1 * cm]
+        # V2: solo la marca (sin modelo, para que el cliente no identifique el producto exacto); Código cede espacio.
+        col_widths = [0.9 * cm, 2.0 * cm, usable - 11.7 * cm, 2.4 * cm, 1.2 * cm, 2.1 * cm, 2.1 * cm]
     else:
         col_widths = [0.9 * cm, 2.4 * cm, usable - 11.9 * cm, 2.2 * cm, 1.2 * cm, 2.1 * cm, 2.1 * cm]
     items_table = Table(rows, colWidths=col_widths, repeatRows=1, splitInRow=1 if _partir_partidas else 0)
