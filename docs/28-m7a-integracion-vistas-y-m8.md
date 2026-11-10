@@ -1016,6 +1016,22 @@ Solo navegador (`static/js/main.js`, `static/js/cotizador.js`, `templates/compar
 - Pruebas: `ConceptoEditadoTests` (test_commercial_persistence), `test_concepto_editado_*` (test_api_busqueda) y
   «concepto editado viaja solo en partidas API» (tools/test_cotizador_comercial.cjs). cotizador.js v35, custom.css v24.
 
+### 14.22 Envío de correo más rápido (B3b, 2026-11-10)
+
+- **Problema:** enviar una cotización de Torva (Gmail) tardaba 10–23 s. `smtp.gmail.com` da primero su dirección
+  IPv6; en una red que anuncia IPv6 pero no lo enruta, Python esperaba los 20 s del envío (`timeout`) en esa dirección
+  antes de pasar a la IPv4, que conecta en 0.05 s. El inicio de sesión y el PDF (80–150 KB) no influían.
+- **Arreglo:** `MAILERS` usa `apps.quotes.smtp.EmailBackend` (sigue terminando en `smtp.EmailBackend`, como esperan
+  `_correo_empresa` y `usuarios._correo_sistemas`). Cada dirección tiene `ESPERA_CONEXION` = 3 s para conectar; ya
+  conectado, el envío conserva sus 20 s. Además recuerda en memoria qué tipo de dirección conectó con cada servidor y
+  la prueba primero: solo el primer envío tras arrancar paga los 3 s. Medido con Gmail: 3.8 s el primero y < 1 s los
+  siguientes (conectar + iniciar sesión). Aplica igual a CCONOR y a `sistemas`.
+- **Pantalla:** al pulsar «Enviar», el botón y el estado de la ventana dicen «Enviando…» hasta que el servidor
+  responde. Al aceptarse, la ventana se cierra y sale un aviso verde «Correo enviado · Cotización <folio> enviada a
+  <correo>» (5 s, `showToast` de api.js); la línea bajo el documento sigue aclarando que no certifica la entrega. Un
+  error se queda dentro de la ventana, como antes (cotizacion_actions.js v14).
+- Pruebas: `CorreoConexionRapidaTests` (test_api_cotizaciones), sin red: sockets falsos.
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 > **Rediseño 12A (2026-10-20, rama `feature/ui-interfaz-general`).** La pantalla pasó a lista y
