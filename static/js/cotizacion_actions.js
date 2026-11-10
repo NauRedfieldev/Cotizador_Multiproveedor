@@ -314,10 +314,12 @@
             const d = state.detail, to = recipient.value.trim();
             if (!window.confirm(`Enviar a ${to} el PDF original de ${d.folio}, revisión ${d.revision}?`)) return;
             state.busy = true; locks();
+            text('emailStatus', 'Enviando…'); text('confirmSendEmailBtn', 'Enviando…');
             try {
                 await session();
                 await api.email(d.folio, { ...identity(d), email: to, subject: $('emailSubjectInput').value.trim(), message: $('emailMessageInput').value, attach_pdf: true });
                 $('emailDialog').close();
+                window.showToast?.(`Cotización ${d.folio} enviada a ${to}.`, 'success', 'Correo enviado', 5000);
                 text('documentNotice', `El servidor de correo aceptó ${d.folio}, revisión ${d.revision}, para ${to}. Esto no certifica la entrega al destinatario.`); error();
             } catch (err) {
                 if (err.uncertain) {
@@ -326,7 +328,7 @@
                     text('documentNotice', 'Correo con resultado desconocido: verifica la recepción antes de volver a enviar.');
                 } else text('emailStatus', err.message || String(err));
                 error(err);
-            } finally { state.busy = false; locks(); }
+            } finally { state.busy = false; text('confirmSendEmailBtn', 'Enviar'); locks(); }
         }
         async function pdf(print = false) {
             if (state.busy || state.pending || !state.detail) return;

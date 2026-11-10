@@ -242,7 +242,9 @@ def _mailer(prefijo):
     seguridad = env(f'{prefijo}_SMTP_SECURITY', default='ssl').strip().lower()
     if seguridad not in ('ssl', 'tls'):
         raise ImproperlyConfigured(f'{prefijo}_SMTP_SECURITY debe ser «ssl» o «tls».')
-    return {'BACKEND': 'django.core.mail.backends.smtp.EmailBackend', 'OPTIONS': {
+    # apps.quotes.smtp: si una dirección del servidor no responde (p. ej. IPv6 sin ruta), pasa a la siguiente
+    # en 3 s en lugar de esperar los 20 s del envío.
+    return {'BACKEND': 'apps.quotes.smtp.EmailBackend', 'OPTIONS': {
         'host': host,
         'port': env.int(f'{prefijo}_SMTP_PORT', default=465 if seguridad == 'ssl' else 587),
         'username': env(f'{prefijo}_SMTP_USER', default=''),
