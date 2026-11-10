@@ -16,6 +16,7 @@ from django.db.models import F, Q, Sum
 from django.db.models.functions import Floor
 from django.utils import timezone
 
+from .commercial import VERSIONES_CALCULO
 from .snapshot_values import decimal_limit
 from .storage import QuotePDFStorage, quote_pdf_path
 from .taxes import TASA_IVA_INICIAL, validar_tasa
@@ -304,7 +305,7 @@ class QuoteRevision(models.Model):
             ), name="quote_revision_seal_consistent"),
             models.CheckConstraint(condition=(
                 (Q(schema_version=1) & Q(**{f"{f}__isnull": True for f in REVISION_COMMERCIAL_FIELDS}))
-                | (Q(schema_version=2, calculation_version=1, calculation_version__isnull=False, discount_percent__isnull=False,
+                | (Q(schema_version=2, calculation_version__in=VERSIONES_CALCULO, calculation_version__isnull=False, discount_percent__isnull=False,
                      discount_percent__gte=0, discount_percent__lte=100, state_fingerprint__isnull=False)
                    & Q(state_fingerprint__regex=r"^[0-9a-f]{64}$"))
             ), name="quote_revision_commercial_version"),
@@ -342,7 +343,7 @@ class QuoteRevision(models.Model):
             if any(getattr(self, f) is not None for f in REVISION_COMMERCIAL_FIELDS):
                 raise ValidationError("Una revisión v1 no recibe campos comerciales v2.")
         elif self.schema_version == 2:
-            if self.calculation_version != 1 or self.discount_percent is None:
+            if self.calculation_version not in VERSIONES_CALCULO or self.discount_percent is None:
                 raise ValidationError("Versión de cálculo/descuento comercial requeridos.")
             if not isinstance(self.state_fingerprint, str) or len(self.state_fingerprint) != 64 or any(
                     c not in "0123456789abcdef" for c in self.state_fingerprint):
@@ -375,9 +376,12 @@ class QuoteRevision(models.Model):
                     raise ValidationError("La revisión emitida es inmutable; crea otra revisión.")
                 if any(getattr(previous, f) != getattr(self, f) for f in (
                     "quote_id", "number", "based_on_id", "request_id", "request_fingerprint", "schema_version",
-                    "calculation_version",
                 )):
                     raise ValidationError("No se cambia la identidad de una revisión.")
+                # Un borrador solo puede pasar a reglas de cálculo más nuevas (al guardarse); nunca volver atrás.
+                if (previous.calculation_version or 0) > (self.calculation_version or 0) or (
+                        previous.calculation_version is None) != (self.calculation_version is None):
+                    raise ValidationError("La versión de cálculo de un borrador solo avanza.")
             if self.status != self.Status.DRAFT and not _seal:
                 raise ValidationError("Solo emitir_revision puede sellar el documento.")
             self.full_clean()

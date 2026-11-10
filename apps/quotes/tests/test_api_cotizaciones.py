@@ -535,7 +535,7 @@ class CommercialAPITests(CommercialFixtures, TestCase):
         data = alta_comercial()
         created = self.create(data)
         detail = self.detail(created)
-        self.assertEqual((detail["schema_version"], detail["calculation_version"]), (2, 1))
+        self.assertEqual((detail["schema_version"], detail["calculation_version"]), (2, 2))
         self.assertEqual(detail["items"][0]["line_key"], data["items"][0]["line_key"])
         self.assertIsNone(detail["items"][0]["source_unit_price"])
         self.assertEqual(detail["preview"]["resultado"]["total"], "116.00")
@@ -675,6 +675,49 @@ class CommercialAPITests(CommercialFixtures, TestCase):
             self.send("api_guardar_revision", {**edit, "company_key": "cconor"}, method="put", args=(created["folio"], 1), status=400)
             self.send("api_guardar_revision", edit, method="put", args=(created["folio"], 1))
         self.assertEqual(self.detail(created)["company"]["key"], "torva")
+
+    def test_nueva_revision_como_otra_empresa_crea_cotizacion_nueva_con_su_folio(self):
+        # Punto 5: el folio lleva el prefijo de su empresa, así que cambiar de empresa = cotización nueva.
+        with override_settings(TORVA_EMPRESA=self.TORVA_QA):
+            created = self.create()
+            self.confirm_and_issue(created)
+            origen = QuoteRevision.objects.get(quote__folio=created["folio"], number=1)
+            body = {"schema_version": 2, "request_id": str(uuid4()), "company_key": "torva"}
+            copia = self.send("api_nueva_revision", body, args=(created["folio"], 1), status=201)
+            replay = self.send("api_nueva_revision", body, args=(created["folio"], 1), status=201)
+            misma = self.send("api_nueva_revision", {"schema_version": 2, "request_id": str(uuid4()), "company_key": "cconor"},
+                              args=(created["folio"], 1), status=201)
+        self.assertRegex(copia["folio"], r"^TQA-\d{4}-0001$")
+        self.assertEqual((copia["revision"], replay["folio"], replay["replayed"]), (1, copia["folio"], True))
+        self.assertEqual((misma["folio"], misma["revision"]), (created["folio"], 2))     # misma empresa: como siempre
+        nueva = QuoteRevision.objects.get(quote__folio=copia["folio"], number=1)
+        self.assertEqual((nueva.status, nueva.header["company"]["key"], nueva.based_on_id), ("DRAFT", "torva", None))
+        self.assertEqual(nueva.header["client"], origen.header["client"])
+        self.assertEqual(nueva.header["conditions"], origen.header["conditions"])
+        self.assertEqual((nueva.tax_rate, nueva.discount_percent, nueva.calculation_version), (origen.tax_rate, origen.discount_percent, 2))
+        campos = ("line_key", "name", "source_unit_price", "margin_percent", "quantity", "captured_at", "sale_unit_label")
+        self.assertEqual([tuple(getattr(x, f) for f in campos) for x in nueva.snapshots.order_by("position")],
+                         [tuple(getattr(x, f) for f in campos) for x in origen.snapshots.order_by("position")])
+        self.assertEqual(QuoteRevision.objects.filter(quote__folio=created["folio"]).count(), 2)   # la original no cambia
+        self.assertEqual(origen.status, "ISSUED")
+
+    def test_otra_empresa_solo_desde_emitida_v2_y_empresa_valida(self):
+        with override_settings(TORVA_EMPRESA=self.TORVA_QA):
+            created = self.create()
+            before = Quote.objects.count()
+            # Un borrador se edita, no se copia.
+            self.send("api_nueva_revision", {"schema_version": 2, "request_id": str(uuid4()), "company_key": "torva"},
+                      args=(created["folio"], 1), status=409)
+            self.confirm_and_issue(created)
+            for clave in ("otra", 7, None):
+                with self.subTest(clave=clave):
+                    self.send("api_nueva_revision", {"schema_version": 2, "request_id": str(uuid4()), "company_key": clave},
+                              args=(created["folio"], 1), status=400)
+        self.assertEqual(Quote.objects.count(), before)
+        # Torva sin configurar: no se crea nada.
+        self.send("api_nueva_revision", {"schema_version": 2, "request_id": str(uuid4()), "company_key": "torva"},
+                  args=(created["folio"], 1), status=400)
+        self.assertEqual(Quote.objects.count(), before)
 
     def test_listado_por_empresa_y_anteriores_cuentan_como_cconor(self):
         with override_settings(TORVA_EMPRESA=self.TORVA_QA):

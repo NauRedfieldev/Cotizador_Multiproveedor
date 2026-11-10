@@ -66,10 +66,16 @@ Excepciones a propósito:
 - Una cotización **emitida nunca se recalcula**. Su PDF y sus importes son los
   originales (docs/24, docs/25).
 - `QuoteRevision.calculation_version` identifica con qué reglas se calculó una
-  revisión v2. Hoy solo existe `1`, y una restricción de la BD
-  (`quote_revision_commercial_version`) lo exige.
-- Un borrador o una revisión nueva se calcula con la regla vigente; si la regla
-  cambia, el documento afectado necesita una revisión nueva.
+  revisión v2 (`commercial.VERSIONES_CALCULO`; la restricción de la BD
+  `quote_revision_commercial_version` acepta esas versiones, migración 0008):
+  - `1`: el importe usa el unitario exacto y se redondea una vez (el unitario puede
+    mostrar 3+ decimales con «(aprox.)» en el PDF).
+  - `2` (vigente desde 2026-11-10, `CALCULO_VIGENTE`): el unitario de venta se redondea
+    a centavos (HALF_UP) y el importe es unitario × cantidad. El costo interno no
+    cambia de regla. Detalle: docs/28 §14.23.
+- Una revisión nueva se crea con la versión vigente. Un borrador pasa a la vigente al
+  guardarse (la versión entra en la huella, así que sus confirmaciones de avisos
+  vencen); nunca retrocede. Una emitida conserva su versión.
 
 ## Cómo agregar una regla fiscal
 
@@ -77,9 +83,10 @@ Excepciones a propósito:
    presentan base, impuesto y total. Registrarlo en docs/30.
 2. **Regla nueva en `taxes.py`**, sin cambiar lo que calcula la actual: la versión
    `1` debe seguir dando los mismos importes.
-3. **Nueva `calculation_version`** (p. ej. `2`): migración que amplíe la restricción
-   de `QuoteRevision`, y `commercial.py`/`snapshots.py` eligen la regla según la
-   versión de la revisión.
+3. **Nueva `calculation_version`** (la siguiente libre; `2` ya es el redondeo del
+   unitario): añadirla a `VERSIONES_CALCULO`, subir `CALCULO_VIGENTE`, migración que
+   amplíe la restricción de `QuoteRevision`, y `calcular_cotizacion(version=…)` elige
+   la regla según la versión de la revisión.
 4. **Datos nuevos** (p. ej. tasa por partida en `QuoteSnapshot`): migración con
    valores nulos para lo existente, sin alterar originales ni huellas guardadas.
 5. **Pantalla y PDF**: mostrar el desglose acordado; el PDF de emisiones anteriores

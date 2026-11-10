@@ -24,7 +24,7 @@ from apps.quotes.models import Quote, QuoteCommercialConfirmation, QuoteRevision
 from apps.quotes.permissions import ADJUSTMENTS, configure_commercial_groups
 from apps.quotes.snapshots import (
     PartidaComercialCapturada, RevisionConflict, _commercial_fingerprint, _commercial_stored,
-    _current_commercial_state,
+    _current_commercial_state, _tipo,
     ArchivedPDFError, aemitir_revision, aprevisualizar_comercial, aprevisualizar_revision_comercial,
     confirmar_advertencias_comerciales, crear_borrador_comercial, crear_revision_comercial,
     emitir_revision, guardar_borrador, guardar_borrador_comercial, validar_confirmaciones_comerciales,
@@ -76,6 +76,19 @@ class CommercialFixtures(SnapshotFixtures):
         service = previsualizar_edicion_comercial if preview else guardar_borrador_comercial
         return service(revision.pk, parts, **datos)
 
+    def a_version_1(self, revision):
+        """Convierte un borrador a las reglas de cálculo v1 (como los guardados antes de la v2).
+
+        Con SQL directo: el modelo no deja bajar de versión. La huella se recalcula con la v1.
+        """
+        huella = _commercial_fingerprint(revision.header, _commercial_stored(revision), _tipo(revision),
+            revision.tax_rate, revision.discount_percent, revision.issue_date, revision.valid_days,
+            revision.based_on_id, revision.exchange_context_id, version=1)
+        with connection.cursor() as cursor:
+            cursor.execute(f"UPDATE {QuoteRevision._meta.db_table} SET calculation_version = 1, state_fingerprint = %s "
+                           "WHERE id = %s", [huella, revision.pk])
+        return QuoteRevision.objects.get(pk=revision.pk)
+
     def confirm(self, revision, warnings, **kwargs):
         datos = dict(actor=self.actor, expected_version=revision.edit_version, state_fingerprint=revision.state_fingerprint)
         datos.update(kwargs)
@@ -85,7 +98,7 @@ class CommercialFixtures(SnapshotFixtures):
 class CommercialPersistenceTests(CommercialFixtures, TestCase):
     def test_borrador_v2_captura_sin_sellar_ni_tocar_legacy(self):
         r = self.commercial_draft()
-        self.assertEqual((r.schema_version, r.calculation_version, r.discount_percent), (2, 1, D("0")))
+        self.assertEqual((r.schema_version, r.calculation_version, r.discount_percent), (2, 2, D("0")))
         self.assertEqual(len(r.state_fingerprint), 64)
         self.assertEqual(r.state_fingerprint, r.request_fingerprint)
         self.assertIsNone(r.total)
@@ -155,11 +168,26 @@ class CommercialPersistenceTests(CommercialFixtures, TestCase):
             self.commercial_edit(r, [replace(p, source_unit_price=D("1"))])
         self.assertEqual(r.snapshots.get().source_unit_price, D("100"))
 
+    def test_unidad_de_partida_api_guardada_se_puede_corregir(self):
+        p = commercial_line(kind="API")
+        r = self.commercial_draft([p])
+        antes = r.snapshots.get()
+        self.commercial_edit(r, [replace(p, source_unit_label="Metro", sale_unit_label="Metro")])
+        despues = QuoteRevision.objects.get(pk=r.pk).snapshots.get()
+        self.assertEqual((despues.source_unit_label, despues.sale_unit_label), ("Metro", "Metro"))
+        self.assertEqual((despues.line_key, despues.captured_at, despues.source_unit_price),
+                         (antes.line_key, antes.captured_at, antes.source_unit_price))   # la captura del proveedor no cambia
+        self.assertEqual(despues.unit_validated_by_id, self.actor.pk)                    # quien cambió la unidad la validó
+        self.assertGreater(despues.unit_validated_at, antes.unit_validated_at)            # validación nueva
+        r = QuoteRevision.objects.get(pk=r.pk)
+        with self.assertRaises(RevisionConflict):                                          # el resto del original sigue fijo
+            self.commercial_edit(r, [replace(p, source_unit_label="Metro", sale_unit_label="Metro", model="OTRO")])
+
     def test_unidad_fraccionada_validada_por_actor_y_cantidad_entera(self):
         p = commercial_line(cost="3050", quantity="20", source_unit_label="Bobina", sale_unit_label="Metro", conversion_factor=D("305"))
         r = self.commercial_draft([p])
         result = validar_confirmaciones_comerciales(r.pk, actor=self.actor, expected_version=1)
-        self.assertEqual(result.subtotal_venta, D("307.69"))
+        self.assertEqual(result.subtotal_venta, D("307.60"))      # v2: 15.38 por metro × 20
         with self.assertRaises(ValidationError):
             self.commercial_edit(r, [replace(p, quantity=D("1.5"))])
 
@@ -354,6 +382,38 @@ class CommercialServicesTests(CommercialFixtures, TestCase):
         self.assertEqual(saved.state_fingerprint, output["state_fingerprint"])
         self.assertEqual(self.preview(saved)["resultado"], output["resultado"])
 
+    def test_borrador_v1_pasa_a_v2_al_guardarse_y_su_huella_cambia(self):
+        p = commercial_line(quantity="3")                                    # 100 / 0.65 = 153.846…
+        r = self.a_version_1(self.commercial_draft([p]))
+        self.assertEqual(self.preview(r)["resultado"].subtotal_venta, D("461.54"))   # v1 hasta guardarse
+        huella_v1 = r.state_fingerprint
+        saved = self.commercial_edit(r, [p])
+        saved = QuoteRevision.objects.get(pk=saved.pk)
+        self.assertEqual(saved.calculation_version, 2)
+        self.assertNotEqual(saved.state_fingerprint, huella_v1)              # confirmaciones de la v1 ya no valen
+        self.assertEqual(self.preview(saved)["resultado"].subtotal_venta, D("461.55"))   # 153.85 × 3
+
+    def test_emitida_v1_conserva_su_calculo_y_la_nueva_revision_usa_v2(self):
+        p = commercial_line(quantity="3")
+        issued = self.issue(self.a_version_1(self.commercial_draft([p])))
+        self.assertEqual((issued.calculation_version, issued.sale_subtotal), (1, D("461.54")))
+        self.assertEqual(obtener_documento(self.quote.folio, actor=self.actor, number=issued.number)[0]["sale_subtotal"], D("461.54"))
+        nueva = crear_revision_comercial(issued.pk, [PartidaComercialCapturada(**d) for d in _commercial_stored(issued)],
+            actor=self.actor, request_id=uuid4(),
+            tax_rate=issued.tax_rate, discount_percent=issued.discount_percent, tipo_cambio=None, exchange_context_id=None)
+        self.assertEqual(nueva.calculation_version, 2)
+        self.assertEqual(self.preview(nueva)["resultado"].subtotal_venta, D("461.55"))
+
+    def test_version_de_calculo_no_retrocede_ni_cambia_en_emitida(self):
+        r = self.commercial_draft()
+        r.calculation_version = 1
+        with self.assertRaises(ValidationError):
+            r.save()
+        issued = self.issue(self.a_version_1(self.commercial_draft([commercial_line()])))
+        issued.calculation_version = 2
+        with self.assertRaises(ValidationError):
+            issued.save()
+
     def test_simular_edicion_no_recaptura_original_api(self):
         p = commercial_line(kind="API")
         r = self.commercial_draft([p])
@@ -398,7 +458,8 @@ class CommercialServicesTests(CommercialFixtures, TestCase):
         for secret in ("DISTRIBUIDOR_SECRETO_QA", "ID_INTERNO_QA", "Origen:", "Stock capturado:", "1 USD", "Marca / Dist."):
             self.assertNotIn(secret, text)
         self.assertIn("MARCA_PUBLICA_QA", text)
-        self.assertIn("Marca / Modelo", text)
+        self.assertNotIn("MODELO_PUBLICO_QA", text)      # solo la marca: el modelo identificaría el producto exacto
+        self.assertNotIn("Marca / Modelo", text)
         self.assertTrue(data.startswith(b"%PDF-"))
 
         # También verificar el PDF real descomprimido, no solo los Paragraph.
@@ -408,13 +469,31 @@ class CommercialServicesTests(CommercialFixtures, TestCase):
         with patch("apps.quotes.pdf.SimpleDocTemplate", side_effect=uncompressed):
             pdf = generate_quote_pdf(client)
         self.assertTrue(b"MARCA_PU" in pdf)  # El texto público puede dividirse en renglones.
+        self.assertFalse(b"MODELO_PU" in pdf)
         self.assertFalse(b"DISTRIBUIDOR_SECRETO_QA" in pdf)
         self.assertFalse(b"ID_INTERNO_QA" in pdf)
         self.assertFalse(b"USD" in pdf)
 
-    def test_unitario_periodico_leyenda_y_desglose_global_sin_reparto(self):
+    def test_v2_unitario_en_centavos_sin_aprox_y_desglose_global(self):
         p = commercial_line(cost="100", margin="0", quantity="3", conversion_factor=D("3"))
         r = self.commercial_draft([p], discount_percent=D("10"))
+        context = self.preview(r)["cliente"]
+        item = context["items"][0]
+        self.assertEqual((item["unit_price"], item["amount"]), (D("33.33"), D("99.99")))   # 33.33 × 3
+        self.assertEqual((item["unit_price_label"], item["unit_price_approximate"]), ("$33.33", False))
+        self.assertEqual((context["sale_subtotal"], context["discount_amount"], context["subtotal"]),
+                         (D("99.99"), D("10.00"), D("89.99")))
+        from reportlab.platypus import Paragraph
+        with patch("apps.quotes.pdf.Paragraph", wraps=Paragraph) as paragraphs:
+            generate_quote_pdf(context)
+        text = "\n".join(c.args[0] for c in paragraphs.call_args_list)
+        self.assertNotIn("aprox.", text)
+        self.assertNotIn("precisión completa", text)
+
+    def test_unitario_periodico_leyenda_y_desglose_global_sin_reparto(self):
+        # Borradores v1 (guardados antes de la v2) se siguen mostrando con su regla hasta volver a guardarse.
+        p = commercial_line(cost="100", margin="0", quantity="3", conversion_factor=D("3"))
+        r = self.a_version_1(self.commercial_draft([p], discount_percent=D("10")))
         context = self.preview(r)["cliente"]
         item = context["items"][0]
         self.assertEqual(item["amount"], D("100"))
@@ -469,7 +548,7 @@ class CommercialServicesTests(CommercialFixtures, TestCase):
     def test_unitario_exacto_y_empate_periodico_no_cambian_importe(self):
         self.assertEqual(commercial_unit_money(D("10"), D("3"), D("30")), ("$10.00", False))
         p = commercial_line(cost=".025", margin="0", quantity="3", conversion_factor=D("3"))
-        context = self.preview(self.commercial_draft([p]))["cliente"]
+        context = self.preview(self.a_version_1(self.commercial_draft([p])))["cliente"]
         self.assertEqual(context["items"][0]["amount"], D(".03"))
         self.assertTrue(context["items"][0]["unit_price_approximate"])
 
