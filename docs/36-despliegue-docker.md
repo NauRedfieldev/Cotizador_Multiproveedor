@@ -204,3 +204,4 @@ Pendiente de decidir antes de producción (con el socio y CCONOR):
 | Página sin estilos | Se cambiaron estáticos sin reconstruir: `docker compose up -d --build` |
 | Redirección infinita con `USE_HTTPS=True` | Hay HTTPS antes de nginx que no se reenvía como `https` (§6, proxy del socio) |
 | `connection refused` a la BD al migrar | `db` aún no está «healthy»: esperar unos segundos y repetir |
+| `password authentication failed for user …` | El volumen de PostgreSQL se creó con otro usuario/contraseña (se arrancó `db` antes de terminar el `.env` o se cambió después). Si es una instalación **nueva sin datos**: `docker compose down`, `docker volume rm cconor-cotizador_postgres`, `docker compose up -d db` y repetir `migrate`. Con datos: cambiar la contraseña dentro de PostgreSQL, nunca borrar el volumen |
