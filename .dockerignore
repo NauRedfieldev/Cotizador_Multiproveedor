@@ -1,0 +1,25 @@
+# Lo que nunca entra a la imagen (docs/36): secretos, datos locales y archivos de trabajo.
+.env*
+.git
+venv/
+**/__pycache__/
+**/*.pyc
+private_quote_files/
+staticfiles/
+*.sqlite3
+*.bak*
+*.dump
+*.tar.gz
+.DS_Store
+.vscode/
+.opencode/
+.claude/
+.agents/
+skills-lock.json
+opencode.json*
+docs/
+tools/
+# Notas, planes y scripts locales de la raíz (no se nombran aquí); manage.py sí entra.
+*.md
+*.py
+!manage.py

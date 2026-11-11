@@ -84,6 +84,30 @@ class ServidorTests(SimpleTestCase):
                 self.assertNotIn(f"security.{aviso}", salida)
 
 
+class DespliegueTests(SimpleTestCase):
+    """docs/36: lo que la imagen de Docker necesita de settings.py."""
+
+    def test_collectstatic_corre_como_en_el_dockerfile(self):
+        # Mismas variables falsas que el Dockerfile, sin BD; --dry-run no escribe nada.
+        resultado = ejecutar(["manage.py", "collectstatic", "--noinput", "--dry-run"], USE_SQLITE="False",
+                             SECRET_KEY="solo-para-collectstatic", NAME_DB="x", USER_DB="x", PASSWORD_DB="x")
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+        self.assertIn(str(RAIZ / "staticfiles"), resultado.stdout)
+        self.assertIn("css/custom.css", resultado.stdout)        # static/
+        self.assertIn("admin/css/base.css", resultado.stdout)    # los del admin
+
+    def test_log_a_consola_escribe_los_errores_500(self):
+        # Sin LOG_A_CONSOLA, con DEBUG=False la traza de un 500 no sale en ningún lado (como antes).
+        codigo = ("import django, logging; django.setup(); "
+                  "logging.getLogger('django.request').error('Internal Server Error: /prueba-log/')")
+        for valor, se_escribe in (("True", True), ("False", False)):
+            with self.subTest(LOG_A_CONSOLA=valor):
+                resultado = ejecutar(["-c", codigo], DJANGO_SETTINGS_MODULE="settings.settings",
+                                     SECRET_KEY=get_random_secret_key(), DEBUG="False", LOG_A_CONSOLA=valor)
+                self.assertEqual(resultado.returncode, 0, resultado.stderr)
+                self.assertEqual("/prueba-log/" in resultado.stderr, se_escribe, resultado.stderr)
+
+
 class AvisoDeProxyTests(SimpleTestCase):
     """Pista 12 de la auditoría: un proxy que uvicorn no reconoce se avisa en el log, una sola vez."""
 

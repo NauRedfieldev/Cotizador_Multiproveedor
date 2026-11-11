@@ -172,6 +172,22 @@ STATIC_URL = 'static/'
 
 STATICFILES_DIRS = [BASE_DIR / 'static', BASE_DIR / 'public']
 
+# Despliegue (docs/36): collectstatic junta aquí static/ + public/ + los del admin para que nginx los sirva;
+# uvicorn no sirve estáticos. Ignorada por Git; en desarrollo (runserver) no se usa.
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Despliegue (docs/36): con DEBUG=False Django no escribe en ningún lado la traza de un error 500.
+# LOG_A_CONSOLA=True (lo pone docker-compose.yml) manda avisos y errores a la consola del servidor
+# (`docker compose logs web`). En desarrollo y en las pruebas queda apagado, como antes.
+if env.bool('LOG_A_CONSOLA', default=False):
+    LOGGING = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {'simple': {'format': '%(asctime)s %(levelname)s %(name)s: %(message)s'}},
+        'handlers': {'consola': {'class': 'logging.StreamHandler', 'formatter': 'simple'}},
+        'root': {'handlers': ['consola'], 'level': 'WARNING'},
+    }
+
 # M6: límite por proveedor; comparar_configurado valida que sea positivo.
 OFERTAS_POR_PROVEEDOR = env.int('OFERTAS_POR_PROVEEDOR', default=10)
 

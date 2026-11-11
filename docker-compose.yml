@@ -1,0 +1,62 @@
+# Multi-cotizador con Docker (guía paso a paso: docs/36-despliegue-docker.md).
+#   proxy (nginx) → web (uvicorn + Django) → db (PostgreSQL 18)
+# Solo «proxy» se publica; «web» y «db» no son accesibles desde fuera de Docker.
+# Los valores salen del .env de esta carpeta (nunca entra a la imagen).
+name: cconor-cotizador
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      # Solo cuentan al crear el volumen la primera vez; cambiarlos después no cambia la BD.
+      POSTGRES_DB: ${NAME_DB:?Falta NAME_DB en .env}
+      POSTGRES_USER: ${USER_DB:?Falta USER_DB en .env}
+      POSTGRES_PASSWORD: ${PASSWORD_DB:?Falta PASSWORD_DB en .env}
+    volumes:
+      # PostgreSQL 18 guarda en /var/lib/postgresql/18/docker: el volumen va en la carpeta de arriba.
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  web:
+    build:
+      context: .
+      target: app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Estos ganan sobre el .env: dentro de Docker la BD se llama «db» y los PDFs van al volumen.
+      HOST_DB: db
+      PORT_DB: "5432"
+      USE_SQLITE: "False"
+      QUOTE_PDF_ROOT: /data/cotizaciones
+      # Errores 500 y avisos a `docker compose logs web` (settings.py, LOG_A_CONSOLA).
+      LOG_A_CONSOLA: "True"
+      # uvicorn confía en los encabezados del proxy (IP real y https). Es seguro porque «web» no publica
+      # su puerto (solo nginx le llega) y nginx reemplaza esos encabezados. Si se publica el puerto 8000,
+      # cambiar esto por la IP del proxy.
+      FORWARDED_ALLOW_IPS: "*"
+    volumes:
+      - cotizaciones:/data/cotizaciones
+    depends_on:
+      db:
+        condition: service_healthy
+
+  proxy:
+    build:
+      context: .
+      target: proxy
+    restart: unless-stopped
+    ports:
+      # Por defecto solo esta computadora: http://localhost:8080. En un servidor: PUBLICAR_HTTP=80 en .env.
+      - "${PUBLICAR_HTTP:-127.0.0.1:8080}:80"
+    depends_on:
+      - web
+
+volumes:
+  postgres:
+  cotizaciones:

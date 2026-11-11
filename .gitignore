@@ -3,6 +3,7 @@
 venv
 __pycache__
 private_quote_files/
+staticfiles/
 .vscode/
 
 # Agents

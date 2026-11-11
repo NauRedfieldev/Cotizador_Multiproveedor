@@ -17,6 +17,7 @@
 
 Pasos que se repiten en **cada** equipo o servidor (desarrollo, compañero, producción).
 No tienen estado global: que estén hechos en un equipo no significa que lo estén en otro.
+Con Docker (prueba o servidor), los comandos de cada paso están en [docs/36](36-despliegue-docker.md); por ejemplo, A2 es `docker compose run --rm web python manage.py migrate`.
 
 | Paso | Qué hacer | Cómo verificar | Detalle |
 | --- | --- | --- | --- |
