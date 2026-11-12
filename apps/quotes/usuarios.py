@@ -612,17 +612,18 @@ def recuperar_contrasena(request):
                   {"enviado": request.GET.get("enviado") == "1", "invalido": invalido})
 
 
-def _guardar_solo_contrasena(usuario, contrasena, *, exige_staff=False):
+def _guardar_solo_contrasena(usuario, contrasena, *, exige_dueno=False):
     """Escribe solo la contraseña, sobre la fila actual y bloqueada.
 
     Django guarda la fila completa que leyó al inicio de la petición: si mientras se calculaba el hash
-    un administrador desactivó la cuenta o le quitó staff/superusuario, ese guardado lo deshacía.
+    un administrador desactivó la cuenta o le quitó staff/superusuario, ese guardado lo deshacía. El admin
+    (exige_dueno) además exige seguir siendo el Dueño: /admin/ es solo suyo (docs/37 §9).
     Aquí la revocación gana: cuenta revocada → 403 y nada se escribe. El hash (lento) ya viene en
     usuario.password, así que el bloqueo dura solo la escritura.
     """
     with transaction.atomic():
         fila = get_user_model().objects.select_for_update().get(pk=usuario.pk)
-        if not fila.is_active or (exige_staff and not fila.is_staff):
+        if not fila.is_active or (exige_dueno and not (fila.is_staff and fila.is_superuser)):
             raise PermissionDenied("La cuenta ya no tiene acceso.")
         fila.password = usuario.password
         fila.save(update_fields=["password"])
@@ -632,13 +633,13 @@ def _guardar_solo_contrasena(usuario, contrasena, *, exige_staff=False):
 class _SoloContrasena:
     """save() de los formularios de contraseña sin el guardado de fila completa de Django."""
 
-    exige_staff = False
+    exige_dueno = False
 
     def save(self, commit=True):
         contrasena = self.cleaned_data["new_password1"]
         self.user.set_password(contrasena)
         if commit:
-            _guardar_solo_contrasena(self.user, contrasena, exige_staff=self.exige_staff)
+            _guardar_solo_contrasena(self.user, contrasena, exige_dueno=self.exige_dueno)
         return self.user
 
 
@@ -647,9 +648,9 @@ class FormularioElegirContrasena(_SoloContrasena, SetPasswordForm):
 
 
 class FormularioCambiarContrasenaAdmin(_SoloContrasena, AdminPasswordChangeForm):
-    """admin/password_change/ (se instala en apps/quotes/admin.py): el admin exige staff además de activo."""
+    """admin/password_change/ (se instala en apps/quotes/admin.py): exige seguir siendo el Dueño (staff y superusuario)."""
 
-    exige_staff = True
+    exige_dueno = True
 
 
 class ElegirContrasena(auth_views.PasswordResetConfirmView):

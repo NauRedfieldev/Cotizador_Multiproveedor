@@ -14,6 +14,18 @@ admin.site.password_change_form = FormularioCambiarContrasenaAdmin
 admin.site.login_form = FormularioLoginAdmin
 
 
+def _solo_dueno(request):
+    """docs/37 §9: todo /admin/ es solo del superusuario (el Dueño). Ningún rol del portal recibe is_staff, y
+    desde aquí se cambia el emparejamiento de productos (catálogo) y a dónde viajan las credenciales de los
+    proveedores. Un staff que no sea superusuario ve el login del admin. Las reglas por modelo
+    (SoloSuperusuario, base_url de solo lectura) quedan como segunda capa."""
+    usuario = request.user
+    return usuario.is_active and usuario.is_staff and usuario.is_superuser
+
+
+admin.site.has_permission = _solo_dueno
+
+
 class SoloSuperusuario:
     """Usuarios y grupos en /admin/ solo para el superusuario (el Dueño), aunque alguien tenga is_staff y
     permisos de auth: quien edita usuarios ahí puede darse superusuario. Los roles se gestionan en

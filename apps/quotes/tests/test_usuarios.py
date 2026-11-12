@@ -258,13 +258,36 @@ class RolesTests(UsuariosBase):
                  reverse("admin:auth_group_change", args=[Group.objects.get(name=ADMIN_GROUP).pk])]
         cliente = self.client_class()
         cliente.force_login(staff)
+        # Desde docs/37 §9 todo /admin/ es solo del Dueño: el staff va al login del admin (302), no a un 403.
         for ruta in rutas:
             with self.subTest(ruta=ruta):
-                self.assertEqual(cliente.get(ruta).status_code, 403)
+                self.assertEqual(cliente.get(ruta).status_code, 302)
         datos = {"username": "staff1", "is_staff": "on", "is_active": "on", "is_superuser": "on"}
-        self.assertEqual(cliente.post(reverse("admin:auth_user_change", args=[staff.pk]), datos).status_code, 403)
+        self.assertEqual(cliente.post(reverse("admin:auth_user_change", args=[staff.pk]), datos).status_code, 302)
         self.assertFalse(get_user_model().objects.get(pk=staff.pk).is_superuser)
-        self.assertNotContains(cliente.get(reverse("admin:index")), reverse("admin:auth_user_changelist"))
+        self.assertEqual(cliente.get(reverse("admin:index")).status_code, 302)
+        dueno = self.client_class()
+        dueno.force_login(self.root)
+        for ruta in rutas:
+            with self.subTest(dueno=ruta):
+                self.assertEqual(dueno.get(ruta).status_code, 200)
+
+    def test_todo_el_admin_solo_para_el_dueno(self):
+        """docs/37 §9: catálogo y proveedores también; un staff con todos sus permisos no entra a /admin/."""
+        from django.contrib.auth.models import Permission
+        staff = self.usuario("staff_catalogo", is_staff=True)
+        staff.user_permissions.set(Permission.objects.filter(content_type__app_label__in=["catalog", "providers"]))
+        sin_staff = self.usuario("root_sin_staff", is_superuser=True)
+        rutas = [reverse("admin:index"), reverse("admin:catalog_sinonimored_changelist"),
+                 reverse("admin:catalog_productocanonico_changelist"), reverse("admin:providers_provider_changelist")]
+        for usuario in (staff, sin_staff):
+            cliente = self.client_class()
+            cliente.force_login(usuario)
+            for ruta in rutas:
+                with self.subTest(usuario=usuario.username, ruta=ruta):
+                    respuesta = cliente.get(ruta)
+                    self.assertEqual(respuesta.status_code, 302)
+                    self.assertIn(reverse("admin:login"), respuesta["Location"])
         dueno = self.client_class()
         dueno.force_login(self.root)
         for ruta in rutas:
@@ -691,22 +714,24 @@ class RevocacionDuranteContrasenaTests(UsuariosBase):
             "old_password": "Clave-Qa-2026!", "new_password1": nueva, "new_password2": nueva})
 
     def test_quitar_staff_mientras_cambia_contrasena_en_admin(self):
-        staff = self.usuario("staff1", is_staff=True)
-        cliente = self.client_class()
-        cliente.force_login(staff)
-        RevocarDuranteLaValidacion.accion = lambda: get_user_model().objects.filter(pk=staff.pk).update(is_staff=False)
-        self.assertEqual(self.cambiar_en_admin(cliente).status_code, 403)
-        fresco = get_user_model().objects.get(pk=staff.pk)
-        self.assertFalse(fresco.is_staff)
-        self.assertTrue(fresco.check_password("Clave-Qa-2026!"))
-        self.assertEqual(cliente.get(reverse("admin:index")).status_code, 302)   # sin staff, el admin manda al login
+        # /admin/ es solo del Dueño (docs/37 §9): quitarle staff o superusuario a la mitad gana igual.
+        for revocar in ({"is_staff": False}, {"is_superuser": False}):
+            with self.subTest(revocar=revocar):
+                jefe = self.usuario(f"jefe_{next(iter(revocar))}", is_staff=True, is_superuser=True)
+                cliente = self.client_class()
+                cliente.force_login(jefe)
+                RevocarDuranteLaValidacion.accion = lambda: get_user_model().objects.filter(pk=jefe.pk).update(**revocar)
+                self.assertEqual(self.cambiar_en_admin(cliente).status_code, 403)
+                fresco = get_user_model().objects.get(pk=jefe.pk)
+                self.assertTrue(fresco.check_password("Clave-Qa-2026!"))
+                self.assertEqual(cliente.get(reverse("admin:index")).status_code, 302)   # el admin manda al login
 
     def test_sin_revocacion_el_cambio_en_admin_sigue_igual(self):
-        staff = self.usuario("staff1", is_staff=True)
+        jefe = self.usuario("jefe1", is_staff=True, is_superuser=True)
         cliente = self.client_class()
-        cliente.force_login(staff)
+        cliente.force_login(jefe)
         self.assertRedirects(self.cambiar_en_admin(cliente), reverse("admin:password_change_done"))
-        self.assertTrue(get_user_model().objects.get(pk=staff.pk).check_password("Otra-Clave-Nueva-9"))
+        self.assertTrue(get_user_model().objects.get(pk=jefe.pk).check_password("Otra-Clave-Nueva-9"))
         self.assertEqual(cliente.get(reverse("admin:index")).status_code, 200)   # la sesión sigue viva
 
 
