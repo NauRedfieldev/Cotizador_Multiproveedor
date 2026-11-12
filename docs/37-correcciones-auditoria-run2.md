@@ -9,11 +9,10 @@
 - [20 · Integrar API de proveedor](20-guia-integrar-api-de-proveedor.md);
 - [33 · Proveedor por web scraping](33-guia-integrar-proveedor-por-web-scraping.md).
 
-> Número 37: las ramas de Docker (`feature/docker*`) ya usan el 35 y el 36. Este documento no sustituye a ninguno
-> anterior: explica qué cambió y por qué.
+> Este documento no sustituye a ninguno anterior: explica qué cambió y por qué.
 
 ## 1. Origen
-- La run-2 auditó `a9e64dd` con pruebas dinámicas en un contenedor aislado, contra mocks de SYSCOM, Exel y SMTP.
+- La run-2 auditó `a9e64dd` con pruebas dinámicas en un entorno aislado, contra mocks de SYSCOM, Exel y SMTP.
 - `main` ya había corregido los hallazgos de la run-1 (rama `feature/seguridad-acceso-cuentas`), pero los de la
   run-2 seguían abiertos.
 - Este documento recoge cómo se cerró cada uno.
@@ -94,7 +93,7 @@ el admin no deja guardar su `base_url`.
 | Descargas de PDF | 10 | 1 minuto | `LIMITE_PDF_POR_MINUTO` |
 | Correos de cotización | 20 | 1 hora | `LIMITE_CORREOS_POR_HORA` |
 
-- Viven en la memoria de cada proceso. Con un solo worker (docs/35 de la rama Docker) el límite es exacto; con
+- Viven en la memoria de cada proceso. Con un solo worker (`uvicorn --workers 1`) el límite es exacto; con
   varios, habría que pasar la caché `limites` a un almacén compartido.
 
 **Correo**
@@ -131,5 +130,3 @@ el admin no deja guardar su `base_url`.
   comercial para leer documentos):
   - `test_api_cotizaciones.py`;
   - `test_snapshots.py`.
-- Para volver a pasar la auditoría contra el código corregido: `git archive` del commit a `audit-env/src/<commit>` y
-  `AUDIT_SRC=… ./audit-run.sh …` (ver el `REPORT.md` de la run-2, §9).
