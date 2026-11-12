@@ -161,3 +161,66 @@ Quedan sin aplicar del §5: sacar `_cerrar_sesiones` de la transacción, que el 
 `is_staff`/`is_superuser`, `LogEntry` en `set_commercial_permission`, revisar `MANAGE` antes del lock, no contar
 invitaciones pendientes como administrador, mover `_correo_sistemas()`, rechazar caracteres de control en nombres
 y no escribir enlaces con token en el correo de consola.
+
+## 9. Pendientes de código cerrados · 2026-11-12
+Rama `fix/pendientes-auditoria`. Cierra el #20 (que en §4 quedó a medias), el admin de catálogo y la lista de §8.
+
+### 9.1 PDF de borrador (#20)
+**Dónde:** `apps/quotes/snapshots.py` (`_pdf_de_borrador`), `snapshot_values.py`, `views.py` y la caché `pdfs` de
+`settings/settings.py`.
+
+| Medida | Cómo | Por qué |
+| --- | --- | --- |
+| **Caché del PDF ya generado** | Caché `pdfs` (LocMem, 20 entradas, 10 min). La clave es el `sha256` del contexto completo más los ids de la cotización y la revisión | Un borrador que no cambió se entrega al instante. Cualquier cambio (partidas, tipo de cambio, cabecera) da otra clave, así que nunca hay que invalidar. Va aparte de `default` para no desalojar el tipo de cambio ni las ofertas |
+| **Máximo 2 PDF de borrador a la vez** (`MAX_PDF_SIMULTANEOS`) | `threading.BoundedSemaphore`; si no hay hueco, `PdfOcupado` → **503** con `Retry-After: 5` | Con un solo worker (docs/30 A12) es exacto. Lo que sale de la caché no ocupa hueco |
+| **Tope de texto: 150 000 caracteres por revisión** (`MAX_TEXTO_TOTAL`) | `sumar_texto` suma `name`, `edited_name` y `description` de las partidas al guardar (v1 y v2); al pasarlo, `ValidationError` | El tiempo del PDF crece con el texto: 500 partidas de 6000 caracteres tardaban 69 s. Con el tope, medido en local: el peor caso (25 partidas de 6000) tarda 3,3 s; 250 partidas de 600, 1,7 s; desde la caché, 0,003 s |
+
+- La caché se consulta después de `require_commercial_permission` y `authorize`: el PDF solo lo recibe quien
+  ya podía generarlo.
+- La emisión no cambia: genera el PDF una sola vez y lo guarda en disco.
+- Las revisiones guardadas antes del tope no se tocan; las protegen la caché y el semáforo.
+
+### 9.2 `/admin/` solo para el Dueño
+- `apps/quotes/admin.py`: `admin.site.has_permission = _solo_dueno` (activo, staff **y** superusuario).
+- Cubre catálogo (`SinonimoRed` y `ProductoCanonico`, que deciden cómo se emparejan los productos de todos),
+  proveedores, cotizaciones y cualquier modelo futuro.
+- Un staff que no sea superusuario va al login del admin (302).
+- Ningún rol del portal recibe `is_staff`, así que en el uso normal no cambia nada.
+- Segunda capa, se queda igual: `SoloSuperusuario` en usuarios y grupos, y `base_url` de solo lectura.
+- `admin/password_change/` exige seguir siendo el Dueño: quitarle staff **o** superusuario a la mitad gana
+  (`exige_dueno`, antes `exige_staff`).
+
+### 9.3 Las 8 recomendaciones de §8
+**Dónde:** `apps/quotes/usuarios.py`, `permissions.py`, `admin.py`, `templates/registration/correo_acceso.*` y
+`static/js/usuarios.js`.
+
+| Recomendación | Cambio |
+| --- | --- |
+| Sacar `_cerrar_sesiones` de la transacción | `transaction.on_commit` en el portal y en `/admin/`: recorrer las sesiones ya no retiene el lock del grupo. Mientras tanto no hay hueco, porque Django no autentica a un usuario inactivo |
+| Que el enlace de contraseña cubra `is_active`, `is_staff` e `is_superuser` | `_GeneradorDeEnlaces._make_hash_value` los añade a la huella de Django |
+| `LogEntry` en `set_commercial_permission` | Con el prefijo `B6: ` del historial de «Usuarios y permisos». La ruta `api/v1/commercial/permissions/` se conserva |
+| Revisar `MANAGE` antes del lock | `_bloquear_y_cargar` lo revisa antes del `select_for_update` del grupo y otra vez con el lock tomado |
+| No contar una invitación pendiente como administrador | `_hay_otro_administrador` excluye a quien nunca entró y tiene contraseña inutilizable (criterio de `_pendiente`) |
+| `_correo_sistemas()` después del permiso | En `invitar`, `reenviar_invitacion` y `enviar_enlace`: quien no gestiona usuarios recibe 403, no un 503 que delata la configuración del correo |
+| Rechazar caracteres de control en nombres | `_texto` rechaza las categorías Unicode `Cc` y `Cf`: saltos de línea, ancho cero e inversiones de dirección |
+| La consola no escribe enlaces con token | Si el correo de «sistemas» es el de consola (falta `SISTEMAS_SMTP_HOST`), el correo sale **sin el enlace** y con un aviso. El panel lo marca como no enviado. Las pruebas usan locmem y sí lo reciben |
+
+### 9.4 Cambios de comportamiento para el equipo
+- **PDF de borrador:** 503 «Se están generando otros PDF» si ya hay 2 en curso.
+- **Guardar un borrador** con más de 150 000 caracteres de texto en las partidas: 400.
+- **`/admin/`:** solo el Dueño entra.
+- **Enlaces de contraseña** enviados antes de desplegar esta versión: dejan de servir una vez (cambió la huella).
+  Basta con reenviarlos.
+- **Sin `SISTEMAS_SMTP_HOST`:** las invitaciones ya no se pueden completar desde la consola; hay que configurar el
+  correo de sistemas.
+
+### 9.5 Pruebas
+- `apps/quotes/tests/test_correcciones_run2.py` (`PdfDeBorradorTests`): caché, borrador cambiado, 503 con el
+  semáforo lleno y tope v1/v2.
+- `apps/quotes/tests/test_usuarios.py`:
+  - `test_todo_el_admin_solo_para_el_dueno`;
+  - `EndurecimientoRun1Tests`, una prueba por recomendación (`test_a_…` a `test_h_…`).
+- Ajustadas a propósito, porque el staff ya no entra a `/admin/`:
+  - `apps/providers/tests/test_correcciones_run2.py`: la regresión de `base_url` se prueba sobre el `ModelAdmin`;
+  - `test_usuarios.py`: 302 en lugar de 403, el cambio de contraseña en admin con el Dueño, y las sesiones se
+    cierran con `captureOnCommitCallbacks`.

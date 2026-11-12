@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 MONEY_CONTEXT = Context(prec=64, rounding=ROUND_HALF_UP, Emax=MAX_EMAX, Emin=MIN_EMIN, clamp=0)
 MAX_ITEMS = 500
 # docs/37 §9 (auditoría run-2 #20): el PDF tarda en proporción al texto. 500 partidas de 6000 caracteres
-# tardaban 69 s; con este tope total el peor borrador ronda los 4 s. Solo se revisa al guardar.
+# tardaban 69 s; con este tope total el peor borrador tarda unos 3 s (medido en local). Solo se revisa al guardar.
 MAX_TEXTO_TOTAL = 150_000
 
 
