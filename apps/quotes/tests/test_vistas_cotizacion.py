@@ -1167,3 +1167,21 @@ class TasaIvaInicialTests(TestCase):
     def test_si_cambia_la_tasa_inicial_cambia_la_pantalla(self):
         with mock.patch("apps.quotes.views.TASA_IVA_INICIAL", Decimal("0.085")):
             self.assertIn('value="8.5"', self.campo_iva())
+
+
+class RecursosExternosTests(TestCase):
+    """Endurecimiento (auditoría run-1 §5): todo CSS/JS de un CDN lleva SRI; si el CDN lo altera, no se carga."""
+
+    def test_cada_recurso_de_cdn_lleva_integridad(self):
+        import re
+        etiquetas = []
+        for plantilla in (settings.BASE_DIR / "templates").rglob("*.html"):
+            for etiqueta in re.findall(r"<(?:link|script)\b[^>]*>", plantilla.read_text(encoding="utf-8")):
+                # Google Fonts no admite SRI: su CSS cambia según el navegador. Lo demás viene de jsDelivr.
+                if re.search(r"(?:href|src)=\"https://cdn\.jsdelivr\.net/", etiqueta):
+                    etiquetas.append((plantilla.name, etiqueta))
+        self.assertGreaterEqual(len(etiquetas), 3)   # Bootstrap CSS y JS + iconos
+        for nombre, etiqueta in etiquetas:
+            with self.subTest(plantilla=nombre, etiqueta=etiqueta[:90]):
+                self.assertRegex(etiqueta, r'integrity="sha384-[A-Za-z0-9+/]{64}"')
+                self.assertIn('crossorigin="anonymous"', etiqueta)

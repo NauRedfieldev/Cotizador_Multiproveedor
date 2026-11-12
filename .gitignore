@@ -1,5 +1,9 @@
 #Project
 .env
+# Variantes del .env (.env.produccion, .env.bak…) y llaves; .env_example sí se sube.
+.env.*
+*.pem
+*.key
 venv
 __pycache__
 private_quote_files/

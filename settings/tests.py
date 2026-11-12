@@ -12,7 +12,8 @@ import subprocess
 import sys
 
 from django.core.management.utils import get_random_secret_key
-from django.test import RequestFactory, SimpleTestCase, override_settings
+from django.db import connection
+from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 
 from settings import proxy
 
@@ -82,6 +83,28 @@ class ServidorTests(SimpleTestCase):
         for aviso in ("W004", "W008", "W009", "W012", "W016", "W018", "W020"):
             with self.subTest(aviso=aviso):
                 self.assertNotIn(f"security.{aviso}", salida)
+
+
+class TiempoMaximoDeConsultaTests(SimpleTestCase):
+    """Endurecimiento (auditoría run-1 §5): PostgreSQL corta cualquier consulta que pase de 30 s."""
+
+    POSTGRES = {"USE_SQLITE": "0", "NAME_DB": "qa", "USER_DB": "qa", "PASSWORD_DB": "qa"}
+
+    def opciones(self, **variables):
+        return leer_settings("DATABASES", **self.POSTGRES, **variables)["DATABASES"]["default"]["OPTIONS"]
+
+    def test_30_segundos_por_defecto_y_ajustable_desde_env(self):
+        self.assertEqual(self.opciones(), {"options": "-c statement_timeout=30000"})
+        self.assertEqual(self.opciones(STATEMENT_TIMEOUT_MS="120000"), {"options": "-c statement_timeout=120000"})
+
+
+class TiempoMaximoEnLaConexionTests(TestCase):
+    def test_la_conexion_de_django_lo_aplica(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("solo PostgreSQL")
+        with connection.cursor() as cursor:
+            cursor.execute("SHOW statement_timeout")
+            self.assertEqual(cursor.fetchone()[0], "30s")
 
 
 class AvisoDeProxyTests(SimpleTestCase):

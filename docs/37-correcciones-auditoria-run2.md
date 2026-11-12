@@ -130,3 +130,34 @@ el admin no deja guardar su `base_url`.
   comercial para leer documentos):
   - `test_api_cotizaciones.py`;
   - `test_snapshots.py`.
+
+## 8. Endurecimiento de la run-1 (§5 del informe) · 2026-11-12
+Rama `feature/endurecimiento-seguridad`. No eran vulnerabilidades por sí solas; se aplicaron cinco de la lista.
+
+| Cambio | Dónde | Por qué |
+| --- | --- | --- |
+| La sesión vence tras **8 h sin usar el sistema** (`SESSION_COOKIE_AGE`) y cada visita la renueva (`SESSION_SAVE_EVERY_REQUEST`) | `settings/settings.py` | Antes duraba 2 semanas aunque nadie la usara. Sin renovar en cada visita, las 8 h contarían desde el último cambio guardado en la sesión y podían cortar a alguien a media cotización |
+| Borrar las sesiones vencidas a diario con `clearsessions` | docs/30 A14 | Vencer no borra la fila de `django_session` |
+| **PostgreSQL corta cualquier consulta de más de 30 s** (`statement_timeout`; `STATEMENT_TIMEOUT_MS` en `.env` para cambiarlo) | `settings/settings.py` | Una consulta atorada no deja ocupada la conexión ni el único worker. No afecta a `pg_dump`; si una migración pesada se corta, subirlo solo para ella |
+| **Usuarios y grupos en `/admin/` solo para el superusuario** (`SoloSuperusuario`) | `apps/quotes/admin.py` | Quien edita usuarios en `/admin/` puede darse superusuario. Un staff con permisos de `auth` ahora recibe 403. Los roles se gestionan en «Usuarios y permisos» |
+| **SRI en `bootstrap-icons`** (`integrity` + `crossorigin`) | `templates/base.html` | Si el CDN sirve otro archivo, el navegador no lo carga. Bootstrap ya lo tenía. Google Fonts no admite SRI (su CSS cambia según el navegador) |
+| `.gitignore`: `.env.*`, `*.pem`, `*.key` | `.gitignore` | Prevención: el historial no tiene ninguno de esos archivos. `.env_example` sí se sube |
+
+**Al actualizar el SRI:** si se cambia la versión de un recurso del CDN, recalcular su hash
+(`curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A`); con el hash viejo el navegador no lo carga.
+
+**Riesgo conocido de guardar en cada visita:** cada petición reescribe la sesión. Si una petición rápida empieza
+antes y termina después de otra que cambia la sesión (por ejemplo, una búsqueda), puede reescribir la versión
+anterior. La ventana es de milisegundos y las búsquedas largas ya escriben la sesión de por sí.
+
+**Pruebas:** `settings/tests.py` (`TiempoMaximoDeConsultaTests`, `TiempoMaximoEnLaConexionTests`),
+`apps/quotes/tests/test_usuarios.py` (`test_usuarios_y_grupos_en_admin_solo_para_el_superusuario`,
+`VencimientoDeSesionTests`) y `apps/quotes/tests/test_vistas_cotizacion.py` (`RecursosExternosTests`).
+Ajuste a propósito: las tres pruebas de «la vista previa no escribe» de `test_api_cotizaciones.py` usan
+`escribe_datos()`, que ignora el `UPDATE` de `django_session` (ahora cada visita guarda la sesión) y sigue
+detectando cualquier escritura en las tablas de cotizaciones.
+
+Quedan sin aplicar del §5: sacar `_cerrar_sesiones` de la transacción, que el token de recuperación cubra
+`is_staff`/`is_superuser`, `LogEntry` en `set_commercial_permission`, revisar `MANAGE` antes del lock, no contar
+invitaciones pendientes como administrador, mover `_correo_sistemas()`, rechazar caracteres de control en nombres
+y no escribir enlaces con token en el correo de consola.
