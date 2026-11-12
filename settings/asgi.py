@@ -73,4 +73,11 @@ class LimiteDeCuerpo:
             await _responder_413(send)
 
 
+if settings.SERVIR_ESTATICOS:
+    # Sin un servidor web delante que entregue /static/ (docs/30 A13): Django los sirve desde los finders.
+    # Va por dentro de LimiteDeCuerpo, así el tope de cuerpo aplica también a esas rutas.
+    from django.contrib.staticfiles.handlers import ASGIStaticFilesHandler
+
+    django_application = ASGIStaticFilesHandler(django_application)
+
 application = LimiteDeCuerpo(django_application)

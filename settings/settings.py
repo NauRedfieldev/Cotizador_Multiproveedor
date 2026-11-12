@@ -172,6 +172,11 @@ STATIC_URL = 'static/'
 
 STATICFILES_DIRS = [BASE_DIR / 'static', BASE_DIR / 'public']
 
+# Con DEBUG=False nadie entrega /static/ (CSS, JS, imágenes, admin). SERVIR_ESTATICOS=True en el .env del
+# servidor hace que los sirva el propio uvicorn (settings/asgi.py, ASGIStaticFilesHandler de Django, sin
+# collectstatic). Dejarlo en False si el proxy o el hosting ya sirve /static/ (docs/30 A13).
+SERVIR_ESTATICOS = env.bool('SERVIR_ESTATICOS', default=False)
+
 # M6: límite por proveedor; comparar_configurado valida que sea positivo.
 OFERTAS_POR_PROVEEDOR = env.int('OFERTAS_POR_PROVEEDOR', default=10)
 
