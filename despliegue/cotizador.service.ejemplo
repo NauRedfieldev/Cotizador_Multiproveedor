@@ -1,0 +1,26 @@
+# Ejemplo de servicio systemd para un servidor Linux (docs/30 A12). Ajustar rutas y usuario, y copiar a
+# /etc/systemd/system/cotizador.service; luego: systemctl daemon-reload && systemctl enable --now cotizador
+#
+# - Un solo worker: los límites viven en la memoria de cada proceso.
+# - 127.0.0.1: solo el proxy o el hosting (que pone el certificado HTTPS) llega a uvicorn.
+# - FORWARDED_ALLOW_IPS: IP del proxy; uvicorn solo cree la IP real del cliente y el https si vienen de ahí.
+# - El .env se queda en WorkingDirectory con permisos 600 y dueño el usuario del servicio.
+
+[Unit]
+Description=Cotizador CCONOR (uvicorn, ASGI)
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=cotizador
+Group=cotizador
+WorkingDirectory=/opt/cotizador
+Environment=FORWARDED_ALLOW_IPS=127.0.0.1
+ExecStart=/opt/cotizador/venv/bin/python -m uvicorn settings.asgi:application --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

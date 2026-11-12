@@ -1,6 +1,6 @@
 # Puesta en marcha · Pendientes antes del uso real
 
-> **Estado del documento: ABIERTO** · Última revisión: 2026-10-26 (B3 CCONOR hecho y probado; B6 esquema de roles hecho; M4 hecho; 2026-10-27: B5 Exel hecho por web scraping. 2026-11-10: B3b correo de Torva hecho. Pendientes: B6b quién recibe cada rol y el Dueño, B7 aceptación y respaldos)
+> **Estado del documento: ABIERTO** · Última revisión: 2026-10-26 (B3 CCONOR hecho y probado; B6 esquema de roles hecho; M4 hecho; 2026-10-27: B5 Exel hecho por web scraping. 2026-11-10: B3b correo de Torva hecho. 2026-11-12: A10–A13 para el servidor sin Docker (proxy + uvicorn, un worker, estáticos). Pendientes: B6b quién recibe cada rol y el Dueño, B7 aceptación y respaldos)
 >
 > Este es el único documento de pendientes; los demás de `docs/` son técnicos y no
 > llevan estados. Reglas:
@@ -33,6 +33,10 @@ No tienen estado global: que estén hechos en un equipo no significa que lo est�
 | A7b | Tipo de cambio de SYSCOM: `SYSCOM_TIPO_CAMBIO_CAMPO` en `.env` (uno solo: `normal` = contado, `preferencial`, `un_dia`, `una_semana`, `dos_semanas`, `tres_semanas` o `un_mes`; decidido `normal`, M4); reiniciar | El chip del menú muestra «USD $… · SYSCOM» sin capturarlo; un valor mal escrito detiene el arranque | docs/28 §14.20 |
 | A8 | `~/.pgpass` (permisos 600) para respaldar sin escribir la contraseña | `ls -l ~/.pgpass` → `-rw-------` | docs/29 §3 |
 | A9 | Habilitar emisión: `COTIZACIONES_EMISION_HABILITADA=True` en `.env`, solo tras B7 | Botón «Emitir» activo en una revisión sin avisos pendientes | docs/25, docs/28 §7 |
+| A10 | Solo servidor. `.env` de producción: `DEBUG=False`, `ALLOWED_HOSTS=<dominio o IP>` y una `SECRET_KEY` propia (generarla como dice `.env_example`) | `python manage.py check --deploy` sin W009, W018 ni avisos de hosts. Quedan W005 y W021 (HSTS para subdominios y precarga), que se dejan apagados a propósito | Auditoría run-1 #9; `.env_example` |
+| A11 | Solo servidor. HTTPS en un proxy o en el hosting (IIS, Apache, nginx o el panel), que pone el certificado y reenvía a `http://127.0.0.1:8000` con `X-Forwarded-For` y `X-Forwarded-Proto`. Después, `USE_HTTPS=True` en `.env` | `http://<dominio>` redirige a `https://`; la cookie `sessionid` sale con `Secure`; el log **no** muestra el aviso de `settings/proxy.py` («proxy no reconocido») | Auditoría run-1 #8, #12, #13 |
+| A12 | Solo servidor. Arrancar con `despliegue/iniciar_servidor.ps1` (Windows; `-IpProxy` = IP del proxy) o `despliegue/cotizador.service.ejemplo` (Linux, systemd; `FORWARDED_ALLOW_IPS`). **Un solo worker**: los límites de login, recuperar contraseña, búsquedas, PDF y correo viven en la memoria del proceso | Tras 20 logins fallidos desde una IP, otra IP sigue entrando (los límites ven la IP real, no la del proxy); el proceso tiene `--workers 1` | Auditoría run-1 #12–#14, run-2 #16 y #20; docs/37 |
+| A13 | Solo servidor. `SERVIR_ESTATICOS=True` en `.env` si el proxy no entrega `/static/` (con `DEBUG=False` Django no lo hace solo) | `/static/admin/css/base.css` → 200 y `/login/` se ve con estilos | `settings/asgi.py` |
 
 ## B. Decisiones y validaciones únicas
 
@@ -59,4 +63,5 @@ No tienen estado global: que estén hechos en un equipo no significa que lo est�
 
 ## D. Orden recomendado
 
-A1 → A2 → A3 → A4 → A4c/A4d → A5 → (B6b) A6 → (B4/B5) A7 → A7b → aceptación (B7) → A9.
+A1 → A2 → A3 → A4 → A4c/A4d → A5 → (B6b) A6 → (B4/B5) A7 → A7b → en el servidor: A10 → A11 → A12 → A13 →
+aceptación (B7) → A9.
