@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta, timezone as dt_timezone
@@ -15,6 +16,7 @@ from decimal import Decimal, localcontext
 from uuid import UUID, uuid4
 
 from asgiref.sync import sync_to_async
+from django.core.cache import caches
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.base import ContentFile
 from django.db import transaction
@@ -26,7 +28,7 @@ from apps.providers.contracts import ProviderOffer
 from .commercial import CALCULO_VIGENTE, MARGEN_INICIAL, VERSIONES_CALCULO
 from .comparison import OfertaComparada, TipoCambio
 from .models import Quote, QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
-from .snapshot_values import MAX_ITEMS, MONEY_CONTEXT, amount, decimal_limit
+from .snapshot_values import MAX_ITEMS, MONEY_CONTEXT, amount, decimal_limit, sumar_texto
 from .taxes import TASA_IVA_INICIAL, calcular_iva, validar_tasa
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,40 @@ class RevisionConflict(ValidationError):
 
 class ArchivedPDFError(Exception):
     """Falta el archivo original o no coincide con su huella; restaurar respaldo."""
+
+
+class PdfOcupado(Exception):
+    """Ya hay MAX_PDF_SIMULTANEOS borradores generándose; la vista responde 503 con Retry-After."""
+
+
+# docs/37 §9 (auditoría run-2 #20): un borrador se genera al descargarlo (decenas de segundos si es grande) y
+# comparte la CPU con todo el portal. Con un solo worker (docs/30 A12) el semáforo es exacto; cada petición
+# ASGI síncrona corre en su propio hilo.
+MAX_PDF_SIMULTANEOS = 2
+_GENERANDO = threading.BoundedSemaphore(MAX_PDF_SIMULTANEOS)
+
+
+def _pdf_de_borrador(context, *ids):
+    """PDF de un borrador, guardado en la caché «pdfs» mientras su contenido no cambie.
+
+    La clave es la huella del contexto completo (más los ids de la cotización y la revisión): cualquier
+    cambio del borrador da otra clave, así que nunca hay que invalidar. Se llama solo después de autorizar.
+    """
+    from .pdf import generate_quote_pdf
+
+    pdfs = caches["pdfs"]
+    clave = "borrador:" + hashlib.sha256(repr((ids, context)).encode()).hexdigest()
+    data = pdfs.get(clave)
+    if data is not None:
+        return data
+    if not _GENERANDO.acquire(blocking=False):
+        raise PdfOcupado()
+    try:
+        data = generate_quote_pdf(context)
+    finally:
+        _GENERANDO.release()
+    pdfs.set(clave, data)
+    return data
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +186,7 @@ def _parts(partidas, tipo):
     if tipo is not None:
         decimal_limit(tipo.valor, 18, 8, minimum=Decimal("0.00000001"))
         _text(tipo.origen, required=True, limit=120)
-    salida = []
+    salida, texto = [], 0
     for partida in partidas:
         if len(salida) >= MAX_ITEMS:
             raise ValidationError(f"Máximo {MAX_ITEMS} partidas por revisión.")
@@ -160,6 +196,7 @@ def _parts(partidas, tipo):
         for key in ("name", "code", "description", "provider_code", "provider_name", "external_id", "brand", "model", "mpn"):
             limit = 80 if key == "provider_code" else 255 if key == "provider_name" else 6000
             _text(datos[key], required=key == "name", limit=limit)
+        texto = sumar_texto(texto, datos["name"], datos["description"])
         if datos["source_currency"] not in {"MXN", "USD"}:
             raise ValidationError("Solo MXN y USD están soportados.")
         if datos["source_currency"] == "USD" and tipo is None:
@@ -437,7 +474,7 @@ def emitir_revision(revision_id, *, actor, expected_version, state_fingerprint=N
 def obtener_documento(folio, *, actor, number=None, allow_draft=True, expected_version=None,
                       state_fingerprint=None, expected_status=None, customer_only=False):
     """Número explícito o última emitida; si no hay emisiones, último borrador."""
-    from .pdf import generate_quote_pdf, get_quote_context, safe_filename
+    from .pdf import get_quote_context, safe_filename
 
     if expected_version is not None and number is None:
         raise ValidationError("La lectura exacta requiere número de revisión.")
@@ -479,13 +516,13 @@ def obtener_documento(folio, *, actor, number=None, allow_draft=True, expected_v
             _commercial_actor(quote, actor)
         context = get_quote_context(folio) if revision is None else contexto_revision(revision)
     if revision is None:
-        return context, generate_quote_pdf(context), safe_filename(folio)
+        return context, _pdf_de_borrador(context, quote.pk), safe_filename(folio)
     filename = safe_filename(f"{context['folio']}_r{revision.number}")
     if revision.status == QuoteRevision.Status.ISSUED:
         return context, leer_pdf_emitido(revision), filename
     if not allow_draft:
         raise RevisionConflict("Emite la revisión antes de enviarla por correo.")
-    return context, generate_quote_pdf(context), filename
+    return context, _pdf_de_borrador(context, quote.pk, revision.pk), filename
 
 
 async def acrear_borrador(*args, **kwargs):
@@ -512,7 +549,7 @@ async def aobtener_documento(*args, **kwargs):
 # los servicios v1 anteriores mantienen su contrato y no reinterpretan histórico.
 
 def _commercial_data(partidas):
-    salida, keys = [], set()
+    salida, keys, texto = [], set(), 0
     for entrada in partidas:
         if len(salida) >= MAX_ITEMS:
             raise ValidationError(f"Máximo {MAX_ITEMS} partidas por revisión.")
@@ -524,6 +561,7 @@ def _commercial_data(partidas):
         datos = asdict(entrada)
         for field in ("name", "edited_name", "code", "description", "provider_code", "provider_name", "external_id", "brand", "model", "mpn"):
             _text(datos[field], required=field == "name", limit=80 if field == "provider_code" else 255 if field == "provider_name" else 6000)
+        texto = sumar_texto(texto, datos["name"], datos["edited_name"], datos["description"])
         # Igual al nombre del proveedor (o solo espacios) = sin editar.
         datos["edited_name"] = datos["edited_name"].strip()
         if datos["edited_name"] == datos["name"].strip():

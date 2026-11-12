@@ -205,6 +205,10 @@ CACHES = {
     'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
     'limites': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache', 'LOCATION': 'limites',
                 'OPTIONS': {'MAX_ENTRIES': 10000}},
+    # PDF de borradores ya generados (docs/37 §9): aparte de «default» para no desalojar el tipo de cambio ni
+    # las ofertas, porque un PDF puede pesar 2 MB. 20 entradas ≈ 40 MB en el peor caso; 10 minutos.
+    'pdfs': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache', 'LOCATION': 'pdfs', 'TIMEOUT': 600,
+             'OPTIONS': {'MAX_ENTRIES': 20}},
 }
 
 # M8: volumen privado, NO publicar mediante MEDIA_URL ni static().
