@@ -32,6 +32,12 @@ EMPRESA_QA = {"name": "Empresa sintética (QA)", "rfc": "", "tagline": "Datos si
 CONDICIONES = ["Entrega en sitio.", "Pago contra entrega."]
 
 
+def escribe_datos(queries):
+    """¿Hubo INSERT/UPDATE/DELETE fuera de django_session? La sesión se guarda en cada visita (8 h por inactividad)."""
+    return any(q["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) and '"django_session"' not in q["sql"]
+               for q in queries)
+
+
 def oferta_guardada(provider, external_id, precio, moneda="USD", tipo=TIPO):
     return {
         "provider_code": provider, "provider_name": provider.title(), "external_id": external_id,
@@ -523,7 +529,7 @@ class CommercialAPITests(CommercialFixtures, TestCase):
         before = Quote.objects.count()
         with CaptureQueriesContext(connection) as queries:
             result = self.send("api_preview_nueva", data)
-        self.assertFalse(any(q["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for q in queries))
+        self.assertFalse(escribe_datos(queries))
         self.assertFalse(result["persistida"])
         self.assertIsNone(result["cliente"]["folio"])
         self.assertIsNone(result["cliente"]["revision"])
@@ -1035,7 +1041,7 @@ class DocumentalAPITests(CommercialFixtures, TestCase):
         created = self.create()
         with CaptureQueriesContext(connection) as queries:
             result = self.summary(created)
-        self.assertFalse(any(q["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for q in queries))
+        self.assertFalse(escribe_datos(queries))
         self.assertEqual(result["cliente"]["total"], "116.00")
         self.assertEqual(result["warnings"][0]["code"], "COSTO_DESCONOCIDO")
         self.assertEqual(result["revision"], 1)
@@ -1214,7 +1220,7 @@ class DocumentalAPITests(CommercialFixtures, TestCase):
                 "tax_rate": "0.16", "discount_percent": "0", "fx_context_id": None}
         with CaptureQueriesContext(connection) as queries:
             preview = self.send("api_preview_transicion", body, args=(self.quote.folio, 1))
-        self.assertFalse(any(q["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for q in queries))
+        self.assertFalse(escribe_datos(queries))
         self.assertFalse(preview["persistida"])
         self.assertEqual(preview["cliente"]["total"], "116.00")
         body["source_edit_version"] = 2

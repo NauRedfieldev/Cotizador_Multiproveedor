@@ -245,6 +245,32 @@ class RolesTests(UsuariosBase):
         self.assertRedirects(self.guardar_en_admin(dueno, self.asesor, activo=True), reverse("admin:auth_user_changelist"))
         self.assertEqual(otro.get(reverse("api_capacidades_comerciales")).status_code, 200)
 
+    def test_usuarios_y_grupos_en_admin_solo_para_el_superusuario(self):
+        """Endurecimiento (auditoría run-1 §5): un staff con permisos de auth no ve ni edita usuarios ni grupos,
+        porque desde ahí podría darse superusuario."""
+        from django.contrib.auth.models import Permission
+        staff = self.usuario("staff1", is_staff=True)
+        staff.user_permissions.set(Permission.objects.filter(content_type__app_label="auth"))
+        rutas = [reverse("admin:auth_user_changelist"), reverse("admin:auth_user_add"),
+                 reverse("admin:auth_user_change", args=[self.asesor.pk]),
+                 reverse("admin:auth_user_password_change", args=[self.asesor.pk]),
+                 reverse("admin:auth_group_changelist"), reverse("admin:auth_group_add"),
+                 reverse("admin:auth_group_change", args=[Group.objects.get(name=ADMIN_GROUP).pk])]
+        cliente = self.client_class()
+        cliente.force_login(staff)
+        for ruta in rutas:
+            with self.subTest(ruta=ruta):
+                self.assertEqual(cliente.get(ruta).status_code, 403)
+        datos = {"username": "staff1", "is_staff": "on", "is_active": "on", "is_superuser": "on"}
+        self.assertEqual(cliente.post(reverse("admin:auth_user_change", args=[staff.pk]), datos).status_code, 403)
+        self.assertFalse(get_user_model().objects.get(pk=staff.pk).is_superuser)
+        self.assertNotContains(cliente.get(reverse("admin:index")), reverse("admin:auth_user_changelist"))
+        dueno = self.client_class()
+        dueno.force_login(self.root)
+        for ruta in rutas:
+            with self.subTest(dueno=ruta):
+                self.assertEqual(dueno.get(ruta).status_code, 200)
+
     def test_entradas_invalidas(self):
         for datos in ({}, {"role": "owner"}, {"role": "root"}, {"is_active": "no"}, {"extras": "descuentos"},
                       {"extras": [DISCOUNT, DISCOUNT]}, {"keep_extras": 1}, {"is_superuser": True}):
@@ -682,3 +708,28 @@ class RevocacionDuranteContrasenaTests(UsuariosBase):
         self.assertRedirects(self.cambiar_en_admin(cliente), reverse("admin:password_change_done"))
         self.assertTrue(get_user_model().objects.get(pk=staff.pk).check_password("Otra-Clave-Nueva-9"))
         self.assertEqual(cliente.get(reverse("admin:index")).status_code, 200)   # la sesión sigue viva
+
+
+class VencimientoDeSesionTests(UsuariosBase):
+    """Endurecimiento (auditoría run-1 §5): la sesión vence tras 8 h sin usar el sistema, no a las 2 semanas."""
+
+    def sesion(self):
+        from django.contrib.sessions.models import Session
+        return Session.objects.get(session_key=self.client.session.session_key)
+
+    def test_cada_visita_renueva_las_8_horas(self):
+        sesion = self.sesion()
+        sesion.expire_date = timezone.now() + timedelta(minutes=5)   # casi vencida: lleva horas sin usarse
+        sesion.save()
+        respuesta = self.client.get(reverse("inicio"))
+        self.assertEqual(respuesta.status_code, 200)
+        restante = self.sesion().expire_date - timezone.now()
+        self.assertGreater(restante, timedelta(hours=7, minutes=59))
+        self.assertLessEqual(restante, timedelta(hours=8))
+        self.assertEqual(respuesta.cookies[settings.SESSION_COOKIE_NAME]["max-age"], 8 * 60 * 60)
+
+    def test_sesion_vencida_pide_entrar_de_nuevo(self):
+        sesion = self.sesion()
+        sesion.expire_date = timezone.now() - timedelta(seconds=1)
+        sesion.save()
+        self.assertEqual(self.client.get(reverse("api_capacidades_comerciales")).status_code, 401)

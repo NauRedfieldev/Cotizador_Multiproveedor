@@ -57,6 +57,13 @@ USE_HTTPS = env.bool('USE_HTTPS', default=False)
 SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = SECURE_SSL_REDIRECT = USE_HTTPS
 SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=3600) if USE_HTTPS else 0
 
+# La sesión vence tras 8 horas sin usar el sistema (antes: 2 semanas, sin importar la inactividad).
+# SAVE_EVERY_REQUEST renueva el vencimiento en cada visita; sin él, las 8 h contarían desde el último
+# cambio guardado en la sesión (entrar, buscar, tipo de cambio) y podían cortar a alguien a media tarea.
+# Las sesiones vencidas se borran con `manage.py clearsessions` una vez al día (docs/30 A14).
+SESSION_COOKIE_AGE = 8 * 60 * 60
+SESSION_SAVE_EVERY_REQUEST = True
+
 # Application definition
 
 INSTALLED_APPS = [
@@ -132,6 +139,9 @@ else:
             'PASSWORD': env('PASSWORD_DB'),
             'HOST': env('HOST_DB', default='localhost'),
             'PORT': env('PORT_DB', default='5432'),
+            # Ninguna consulta pasa de 30 s: una consulta atorada no deja ocupada la conexión ni el worker.
+            # No afecta a pg_dump (otra conexión); si una migración pesada se corta, subirlo solo para ella.
+            'OPTIONS': {'options': f"-c statement_timeout={env.int('STATEMENT_TIMEOUT_MS', default=30000)}"},
         }
     }
 
