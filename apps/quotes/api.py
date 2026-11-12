@@ -264,6 +264,11 @@ def _api(metodo):
         @wraps(vista)
         async def envoltura(request, *args, **kwargs):
             try:
+                if "folio" in kwargs:
+                    # docs/37 (auditoría run-2 #17): la capacidad se revisa antes de buscar el folio; así quien
+                    # no la tiene recibe 403 exista o no, y con ella un folio ajeno da el mismo 404 que uno
+                    # inexistente.
+                    await sync_to_async(require_commercial_permission, thread_sensitive=True)(await request.auser())
                 return await vista(request, *args, **kwargs)
             except Exception as exc:
                 return _respuesta_de_error(exc)
@@ -283,10 +288,11 @@ def _respuesta_de_error(exc):
         status, mensaje = 400, "; ".join(exc.messages)
     elif isinstance(exc, TypeError):
         status, mensaje = 400, "Datos de solicitud inválidos."
+    elif isinstance(exc, (ObjectDoesNotExist, commercial_services.CotizacionAjena)):
+        # Ajena = inexistente hacia fuera (docs/37, auditoría run-2 #17).
+        status, mensaje = 404, "Cotización o revisión no encontrada."
     elif isinstance(exc, PermissionDenied):
         status, mensaje = 403, "No tienes acceso a esta cotización."
-    elif isinstance(exc, ObjectDoesNotExist):
-        status, mensaje = 404, "Cotización o revisión no encontrada."
     elif isinstance(exc, ArchivedPDFError):
         status, mensaje = 503, "PDF original no disponible o dañado; requiere recuperación."
     elif isinstance(exc, _EmpresaSinConfigurar):

@@ -189,3 +189,55 @@ class LimiteDeCuerpoTests(SimpleTestCase):
         self.assertEqual(await llamar_asgi("GET", "/login/"), (200, 1))
         estado, _ = await llamar_asgi("POST", "/login/", [b"a" * 1000], [(b"content-length", b"1000")])
         self.assertEqual(estado, 403)  # llegó a Django: falta el token CSRF
+
+
+# Llama a settings.asgi.application en un proceso aparte (la envoltura de estáticos se decide al importar asgi).
+_LLAMAR_ASGI = """
+import asyncio, json, sys
+from settings import asgi
+
+async def llamar(metodo, ruta, encabezados):
+    estado, leido = {}, []
+    async def receive():
+        if not leido:
+            leido.append(1)
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await asyncio.Event().wait()  # el cliente sigue conectado (como llamar_asgi)
+    async def send(mensaje):
+        if mensaje["type"] == "http.response.start":
+            estado["status"] = mensaje["status"]
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": metodo, "scheme": "http",
+             "path": ruta, "raw_path": ruta.encode(), "query_string": b"", "root_path": "",
+             "headers": [(b"host", b"testserver"), *[(k.encode(), v.encode()) for k, v in encabezados]],
+             "client": ("127.0.0.1", 5000), "server": ("testserver", 80)}
+    await asyncio.wait_for(asgi.application(scope, receive, send), 20)
+    return estado.get("status")
+
+print(json.dumps([asyncio.run(llamar(*p)) for p in json.loads(sys.argv[1])]))
+"""
+
+
+def estados_asgi(peticiones, **variables):
+    resultado = ejecutar(["-c", _LLAMAR_ASGI, json.dumps(peticiones)], SECRET_KEY=get_random_secret_key(),
+                         DEBUG="False", ALLOWED_HOSTS="testserver", **variables)
+    assert resultado.returncode == 0, resultado.stderr
+    return json.loads(resultado.stdout)
+
+
+class ServirEstaticosTests(SimpleTestCase):
+    """Sin Docker ni proxy que sirva /static/: con SERVIR_ESTATICOS=True los sirve Django (docs/30 A13)."""
+
+    PETICIONES = [["GET", "/static/css/custom.css", []], ["GET", "/static/admin/css/base.css", []],
+                  ["GET", "/static/css/no-existe.css", []]]
+
+    def test_con_la_variable_django_sirve_los_estaticos_con_debug_false(self):
+        self.assertEqual(estados_asgi(self.PETICIONES, SERVIR_ESTATICOS="True"), [200, 200, 404])
+
+    def test_sin_la_variable_no_los_sirve(self):
+        self.assertEqual(estados_asgi(self.PETICIONES[:2], SERVIR_ESTATICOS="False"), [404, 404])
+        self.assertFalse(leer_settings("SERVIR_ESTATICOS")["SERVIR_ESTATICOS"])
+
+    def test_el_tope_de_cuerpo_sigue_aplicando(self):
+        grande = str(10 * 1024 * 1024)
+        self.assertEqual(estados_asgi([["POST", "/static/css/custom.css", [["content-length", grande]]]],
+                                      SERVIR_ESTATICOS="True"), [413])

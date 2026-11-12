@@ -172,6 +172,11 @@ STATIC_URL = 'static/'
 
 STATICFILES_DIRS = [BASE_DIR / 'static', BASE_DIR / 'public']
 
+# Con DEBUG=False nadie entrega /static/ (CSS, JS, imágenes, admin). SERVIR_ESTATICOS=True en el .env del
+# servidor hace que los sirva el propio uvicorn (settings/asgi.py, ASGIStaticFilesHandler de Django, sin
+# collectstatic). Dejarlo en False si el proxy o el hosting ya sirve /static/ (docs/30 A13).
+SERVIR_ESTATICOS = env.bool('SERVIR_ESTATICOS', default=False)
+
 # M6: límite por proveedor; comparar_configurado valida que sea positivo.
 OFERTAS_POR_PROVEEDOR = env.int('OFERTAS_POR_PROVEEDOR', default=10)
 
@@ -219,6 +224,14 @@ COTIZACIONES_EMISION_HABILITADA = env.bool('COTIZACIONES_EMISION_HABILITADA', de
 # SYSCOM NET verificado 2026-10-19 (docs/30 B4): el adaptador consulta con iva=0.
 # Exel NET confirmado por el usuario en el portal 2026-10-27 (docs/30 B5, docs/31): MXN sin IVA.
 CCONOR_PROVIDER_PRICE_BASES = {'syscom': {'vat_basis': 'NET'}, 'exel': {'vat_basis': 'NET'}}
+
+# Hosts a los que puede apuntar Provider.base_url (docs/37): ahí viajan el client_secret, el token o la
+# contraseña del proveedor. Solo https, sin puerto ni usuario en la URL. Un proveedor nuevo añade aquí su
+# code con el host oficial confirmado; sin él, el admin no deja guardar su base_url.
+CCONOR_PROVIDER_HOSTS = {
+    'syscom': ('developers.syscom.mx',),
+    'exel': ('www.exel.com.mx',),
+}
 
 # Carga diferida del comparador (docs/34): estos proveedores se piden después de pintar la página,
 # para no hacer esperar a los rápidos. Exel tarda ~4 s (web scraping, docs/32 §11). Para añadir uno

@@ -25,6 +25,47 @@ logger = logging.getLogger("apps.providers")
 # Lo que parse_offer puede lanzar ante un elemento inválido: se descarta solo esa oferta.
 _OFERTA_INVALIDA = (ProviderResponseError, ValueError, TypeError, KeyError)
 
+# docs/37 (auditoría run-2 #18): tope por respuesta de proveedor. Las reales pesan KB; sin tope, una de 60 MB
+# se leía entera en la memoria del único worker.
+MAX_BYTES_RESPUESTA = 5 * 1024 * 1024
+
+
+class RespuestaDemasiadoGrande(httpx.HTTPError):
+    """La respuesta superó MAX_BYTES_RESPUESTA. Es un httpx.HTTPError: quien ya captura errores de httpx
+    (tipo de cambio de SYSCOM) la trata como un fallo de conexión."""
+
+
+class _CuerpoConTope(httpx.AsyncByteStream):
+    def __init__(self, cuerpo: httpx.AsyncByteStream, limite: int) -> None:
+        self._cuerpo, self._limite = cuerpo, limite
+
+    async def __aiter__(self):
+        leidos = 0
+        async for trozo in self._cuerpo:
+            leidos += len(trozo)
+            if leidos > self._limite:
+                raise RespuestaDemasiadoGrande("Respuesta del proveedor demasiado grande.")
+            yield trozo
+
+    async def aclose(self) -> None:
+        await self._cuerpo.aclose()
+
+
+async def limitar_respuesta(respuesta: httpx.Response) -> None:
+    """Hook «response» de httpx: corre con las cabeceras, antes de leer el cuerpo.
+
+    Corta si Content-Length ya pasa el tope y, si no, envuelve el cuerpo para cortarlo al leerlo (también
+    chunked). No toca el transporte (real, MockTransport o ApiFalsa): los adaptadores no cambian.
+    """
+    largo = respuesta.headers.get("content-length", "")
+    if largo.isdigit() and int(largo) > MAX_BYTES_RESPUESTA:
+        await respuesta.aclose()
+        raise RespuestaDemasiadoGrande("Respuesta del proveedor demasiado grande.")
+    respuesta.stream = _CuerpoConTope(respuesta.stream, MAX_BYTES_RESPUESTA)
+
+
+CON_TOPE = {"response": [limitar_respuesta]}  # event_hooks de cada AsyncClient hacia proveedores
+
 
 async def search_all(
     query: ProductQuery,
@@ -45,7 +86,7 @@ async def search_all(
     if not proveedores:
         return []
     # Sin timeout propio: manda el wait_for con Provider.timeout_ms (el de httpx, 5 s, cortaría antes).
-    async with httpx.AsyncClient(transport=transport, timeout=None) as client:
+    async with httpx.AsyncClient(transport=transport, timeout=None, event_hooks=CON_TOPE) as client:
         resultados = await asyncio.gather(
             *(_query_provider(p, query, client) for p in proveedores), return_exceptions=True
         )
@@ -84,6 +125,8 @@ async def _query_provider(
         error = ProviderTimeout(provider.code, f"Sin respuesta en {provider.timeout_ms} ms.")
     except ProviderError as exc:
         error = exc
+    except RespuestaDemasiadoGrande:
+        error = ProviderResponseError(provider.code, f"Respuesta demasiado grande (más de {MAX_BYTES_RESPUESTA} bytes).")
     except httpx.HTTPError as exc:
         error = ProviderResponseError(provider.code, f"Error de conexión: {type(exc).__name__}.")
     except Exception as exc:
