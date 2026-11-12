@@ -84,7 +84,7 @@
     }
     function avisoCorreo(correo, para, accion) {
         if (correo === 'sent') aviso(accion + ' a ' + para + ' desde la cuenta de sistemas.');
-        else if (correo === 'console') aviso(accion + ' (correo de prueba: se escribió en la consola del servidor porque falta SISTEMAS_SMTP_HOST).');
+        else if (correo === 'console') aviso('No se envió el correo: falta configurar SISTEMAS_SMTP_HOST. Se escribió en la consola del servidor sin el enlace.', true);
         else aviso('No se pudo enviar el correo a ' + para + '. Revisa la cuenta de sistemas e inténtalo de nuevo.', true);
     }
 

@@ -11,6 +11,7 @@
 import ipaddress
 import logging
 import threading
+import unicodedata
 from datetime import timedelta
 from email.utils import formataddr
 from functools import wraps
@@ -25,6 +26,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.admin.forms import AdminAuthenticationForm, AdminPasswordChangeForm
 from django.contrib.auth import password_validation
 from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm, SetPasswordForm
+from django.contrib.auth.hashers import UNUSABLE_PASSWORD_PREFIX
 from django.contrib.auth.models import Group, Permission
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.contrib.contenttypes.models import ContentType
@@ -187,9 +189,11 @@ def _puede_editar(gestor, objetivo):
 
 
 def _hay_otro_administrador(objetivo):
+    # docs/37 §9: una invitación pendiente (el criterio de _pendiente) no cuenta: aún no puede entrar.
     return get_user_model().objects.filter(
         groups__name=ADMIN_GROUP, is_active=True, is_superuser=False,
-    ).exclude(pk=objetivo.pk).exists()
+    ).exclude(pk=objetivo.pk).exclude(
+        last_login__isnull=True, password__startswith=UNUSABLE_PASSWORD_PREFIX).exists()
 
 
 def _cerrar_sesiones(usuario):
@@ -206,9 +210,13 @@ def _cerrar_sesiones(usuario):
 
 
 def _bloquear_y_cargar(actor, user_id):
-    """Dentro de una transacción: serializa los cambios de rol (regla del último administrador)."""
+    """Dentro de una transacción: serializa los cambios de rol (regla del último administrador).
+
+    El permiso se revisa antes del lock (docs/37 §9): quien no gestiona usuarios no espera ni bloquea a nadie.
+    """
+    require_commercial_permission(actor, MANAGE)
     list(Group.objects.select_for_update().filter(name=ADMIN_GROUP))
-    gestor = require_commercial_permission(actor, MANAGE)
+    gestor = require_commercial_permission(actor, MANAGE)  # otra vez con el lock: pudo perderlo mientras esperaba
     objetivo = get_user_model().objects.select_for_update().get(pk=user_id)
     return gestor, objetivo
 
@@ -268,7 +276,9 @@ def actualizar(actor, user_id, datos):
             objetivo.is_active = activo
             objetivo.save(update_fields=["is_active"])
             if not activo:
-                _cerrar_sesiones(objetivo)
+                # Después del commit (docs/37 §9): recorrer las sesiones no retiene el lock del grupo. Mientras
+                # tanto no hay hueco: Django ya no autentica a un usuario inactivo.
+                transaction.on_commit(lambda: _cerrar_sesiones(objetivo))
             cambios.append("cuenta activada" if activo else "cuenta desactivada")
         if cambios:
             _registrar(gestor, objetivo, CHANGE, "; ".join(cambios))
@@ -285,6 +295,10 @@ def _texto(valor, campo, limite, requerido=True):
         raise _EntradaInvalida(f"Falta {campo}.")
     if len(valor) > limite:
         raise _EntradaInvalida(f"{campo[:1].upper()}{campo[1:]}: máximo {limite} caracteres.")
+    # docs/37 §9: sin saltos de línea, caracteres invisibles ni inversiones de dirección (Cc y Cf), que
+    # descuadran el panel, los correos y el historial o disfrazan un nombre.
+    if any(unicodedata.category(c) in ("Cc", "Cf") for c in valor):
+        raise _EntradaInvalida(f"{campo[:1].upper()}{campo[1:]}: no puede llevar saltos de línea ni caracteres invisibles.")
     return valor
 
 
@@ -306,10 +320,12 @@ def invitar(actor, datos, request):
         validate_email(correo)
     except ValidationError:
         raise _EntradaInvalida("Escribe un correo válido.") from None
-    _correo_sistemas()  # sin remitente configurado no se crea la cuenta (503)
     try:
         with transaction.atomic():
             gestor = require_commercial_permission(actor, MANAGE)
+            # Sin remitente configurado no se crea la cuenta (503). Después del permiso (docs/37 §9): a quien no
+            # gestiona usuarios no se le dice cómo está configurado el correo.
+            _correo_sistemas()
             if modelo.objects.filter(username__iexact=usuario).exists():
                 raise ValidationError("Ese usuario ya existe; elige otro.")
             if modelo.objects.filter(email__iexact=correo).exists():
@@ -328,9 +344,9 @@ def invitar(actor, datos, request):
 
 
 def reenviar_invitacion(actor, user_id, request):
-    _correo_sistemas()
     with transaction.atomic():
         gestor, objetivo = _bloquear_y_cargar(actor, user_id)
+        _correo_sistemas()  # después del permiso (docs/37 §9)
         _puede_editar(gestor, objetivo)
         if not _pendiente(objetivo):
             raise ValidationError("Ya eligió su contraseña; usa «Enviar enlace de contraseña».")
@@ -345,9 +361,9 @@ def reenviar_invitacion(actor, user_id, request):
 
 
 def enviar_enlace(actor, user_id, request):
-    _correo_sistemas()
     with transaction.atomic():
         gestor = require_commercial_permission(actor, MANAGE)
+        _correo_sistemas()  # después del permiso (docs/37 §9)
         objetivo = get_user_model().objects.get(pk=user_id)
         if objetivo.is_superuser and objetivo.pk != gestor.pk:
             raise PermissionDenied("El Dueño no se edita desde aquí.")
@@ -376,6 +392,12 @@ def _correo_sistemas():
     return real, remitente
 
 
+def _sistemas_en_consola():
+    """Sin SISTEMAS_SMTP_HOST el correo se escribe en la consola, que en el servidor termina en los logs: ahí
+    nunca va el enlace con su token (docs/37 §9). Las pruebas cambian MAILERS a locmem y sí lo reciben."""
+    return settings.MAILERS.get("sistemas", {}).get("BACKEND", "").endswith("console.EmailBackend")
+
+
 def _enviar_acceso(usuario, request, tipo, invito=None):
     """Devuelve «sent» (salió por SMTP), «console» (sin SISTEMAS_SMTP_HOST) o «failed»."""
     return _enviar(*_correo_de_acceso(usuario, request, tipo, invito), usuario.pk)
@@ -387,8 +409,10 @@ def _correo_de_acceso(usuario, request, tipo, invito=None):
     empresa = (settings.CCONOR_EMPRESA.get("name") or "CCONOR").strip()
     nombre, _, resto = empresa.partition(" ")
     marca = colores_marca("cconor")
-    enlace = request.build_absolute_uri(reverse("elegir_contrasena", args=[
-        urlsafe_base64_encode(force_bytes(usuario.pk)), generador_de_enlaces.make_token(usuario)]))
+    enlace = None
+    if not _sistemas_en_consola():
+        enlace = request.build_absolute_uri(reverse("elegir_contrasena", args=[
+            urlsafe_base64_encode(force_bytes(usuario.pk)), generador_de_enlaces.make_token(usuario)]))
     invitacion = tipo == "invitacion"
     rol = _rol(usuario, {g.name for g in usuario.groups.all()})
     contexto = {
@@ -531,6 +555,11 @@ class _GeneradorDeEnlaces(PasswordResetTokenGenerator):
     Restablecer caduca en DURACION_RESTABLECER; la invitación (cuenta pendiente) conserva
     PASSWORD_RESET_TIMEOUT, porque quien es nuevo puede abrir el correo al día siguiente.
     """
+
+    def _make_hash_value(self, user, timestamp):
+        # docs/37 §9: el enlace deja de servir si cambia la cuenta activa, staff o superusuario (una revocación
+        # entre el envío y el uso), además de la contraseña y el último acceso que ya cubre Django.
+        return f"{super()._make_hash_value(user, timestamp)}{user.is_active}{user.is_staff}{user.is_superuser}"
 
     def check_token(self, user, token):
         if not super().check_token(user, token):

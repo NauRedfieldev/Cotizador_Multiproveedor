@@ -21,14 +21,14 @@
                     <td style="padding: 12px 16px; font-size: 13px; font-weight: bold; color: #111638; font-family: Courier, monospace;" align="right">{{ usuario.get_username }}</td>
                 </tr>
             </table>
-            <p style="margin: 22px 0;">
+            {% if enlace %}<p style="margin: 22px 0;">
                 <a href="{{ enlace }}" style="display: inline-block; background-color: {{ marca.barra }}; color: #FFFFFF; font-size: 15px; font-weight: bold; text-decoration: none; padding: 12px 22px; border-radius: 8px;">{% if invitacion %}Elegir mi contraseña{% else %}Elegir nueva contraseña{% endif %}</a>
-            </p>
+            </p>{% else %}<p style="margin: 22px 0; color: #5A5F7A; font-size: 13px;">[Enlace no incluido: este correo solo se escribió en la consola porque falta SISTEMAS_SMTP_HOST.]</p>{% endif %}
             <p style="color: #5A5F7A; font-size: 12px; line-height: 1.5;">
                 El enlace sirve una sola vez y caduca el {{ caduca|date:"d/m/Y" }} a las {{ caduca|date:"H:i" }}.<br>
                 {% if invitacion %}Si no esperabas esta invitación, ignora este correo.{% else %}Si no lo pediste, ignora este correo: tu contraseña actual sigue igual.{% endif %}
             </p>
-            <p style="color: #5A5F7A; font-size: 11px; line-height: 1.5; word-break: break-all;">Si el botón no funciona, copia este enlace en tu navegador:<br>{{ enlace }}</p>
+            {% if enlace %}<p style="color: #5A5F7A; font-size: 11px; line-height: 1.5; word-break: break-all;">Si el botón no funciona, copia este enlace en tu navegador:<br>{{ enlace }}</p>{% endif %}
             <p style="color: #8A8DA3; font-size: 11px; border-top: 1px solid #EAE7F3; padding-top: 12px; margin-bottom: 0;">Correo automático del Portal de Cotización de {{ empresa }}. No respondas a este mensaje.</p>
         </div>
     </div>

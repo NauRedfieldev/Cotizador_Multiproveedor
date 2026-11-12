@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.admin import GroupAdmin, UserAdmin
 from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
 
 from .models import DefaultCommercialCondition, QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
 from .permissions import require_commercial_permission
@@ -56,7 +57,7 @@ class UsuarioAdmin(SoloSuperusuario, UserAdmin):
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
         if change and "is_active" in form.changed_data and not obj.is_active:
-            _cerrar_sesiones(obj)
+            transaction.on_commit(lambda: _cerrar_sesiones(obj))  # fuera de la transacción (docs/37 §9)
 
 
 class GrupoAdmin(SoloSuperusuario, GroupAdmin):
