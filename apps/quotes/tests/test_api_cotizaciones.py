@@ -536,7 +536,7 @@ class CommercialAPITests(CommercialFixtures, TestCase):
         data = alta_comercial()
         created = self.create(data)
         detail = self.detail(created)
-        self.assertEqual((detail["schema_version"], detail["calculation_version"]), (2, 1))
+        self.assertEqual((detail["schema_version"], detail["calculation_version"]), (2, 2))
         self.assertEqual(detail["items"][0]["line_key"], data["items"][0]["line_key"])
         self.assertIsNone(detail["items"][0]["source_unit_price"])
         self.assertEqual(detail["preview"]["resultado"]["total"], "116.00")
@@ -676,6 +676,49 @@ class CommercialAPITests(CommercialFixtures, TestCase):
             self.send("api_guardar_revision", {**edit, "company_key": "cconor"}, method="put", args=(created["folio"], 1), status=400)
             self.send("api_guardar_revision", edit, method="put", args=(created["folio"], 1))
         self.assertEqual(self.detail(created)["company"]["key"], "torva")
+
+    def test_nueva_revision_como_otra_empresa_crea_cotizacion_nueva_con_su_folio(self):
+        # Punto 5: el folio lleva el prefijo de su empresa, así que cambiar de empresa = cotización nueva.
+        with override_settings(TORVA_EMPRESA=self.TORVA_QA):
+            created = self.create()
+            self.confirm_and_issue(created)
+            origen = QuoteRevision.objects.get(quote__folio=created["folio"], number=1)
+            body = {"schema_version": 2, "request_id": str(uuid4()), "company_key": "torva"}
+            copia = self.send("api_nueva_revision", body, args=(created["folio"], 1), status=201)
+            replay = self.send("api_nueva_revision", body, args=(created["folio"], 1), status=201)
+            misma = self.send("api_nueva_revision", {"schema_version": 2, "request_id": str(uuid4()), "company_key": "cconor"},
+                              args=(created["folio"], 1), status=201)
+        self.assertRegex(copia["folio"], r"^TQA-\d{4}-0001$")
+        self.assertEqual((copia["revision"], replay["folio"], replay["replayed"]), (1, copia["folio"], True))
+        self.assertEqual((misma["folio"], misma["revision"]), (created["folio"], 2))     # misma empresa: como siempre
+        nueva = QuoteRevision.objects.get(quote__folio=copia["folio"], number=1)
+        self.assertEqual((nueva.status, nueva.header["company"]["key"], nueva.based_on_id), ("DRAFT", "torva", None))
+        self.assertEqual(nueva.header["client"], origen.header["client"])
+        self.assertEqual(nueva.header["conditions"], origen.header["conditions"])
+        self.assertEqual((nueva.tax_rate, nueva.discount_percent, nueva.calculation_version), (origen.tax_rate, origen.discount_percent, 2))
+        campos = ("line_key", "name", "source_unit_price", "margin_percent", "quantity", "captured_at", "sale_unit_label")
+        self.assertEqual([tuple(getattr(x, f) for f in campos) for x in nueva.snapshots.order_by("position")],
+                         [tuple(getattr(x, f) for f in campos) for x in origen.snapshots.order_by("position")])
+        self.assertEqual(QuoteRevision.objects.filter(quote__folio=created["folio"]).count(), 2)   # la original no cambia
+        self.assertEqual(origen.status, "ISSUED")
+
+    def test_otra_empresa_solo_desde_emitida_v2_y_empresa_valida(self):
+        with override_settings(TORVA_EMPRESA=self.TORVA_QA):
+            created = self.create()
+            before = Quote.objects.count()
+            # Un borrador se edita, no se copia.
+            self.send("api_nueva_revision", {"schema_version": 2, "request_id": str(uuid4()), "company_key": "torva"},
+                      args=(created["folio"], 1), status=409)
+            self.confirm_and_issue(created)
+            for clave in ("otra", 7, None):
+                with self.subTest(clave=clave):
+                    self.send("api_nueva_revision", {"schema_version": 2, "request_id": str(uuid4()), "company_key": clave},
+                              args=(created["folio"], 1), status=400)
+        self.assertEqual(Quote.objects.count(), before)
+        # Torva sin configurar: no se crea nada.
+        self.send("api_nueva_revision", {"schema_version": 2, "request_id": str(uuid4()), "company_key": "torva"},
+                  args=(created["folio"], 1), status=400)
+        self.assertEqual(Quote.objects.count(), before)
 
     def test_listado_por_empresa_y_anteriores_cuentan_como_cconor(self):
         with override_settings(TORVA_EMPRESA=self.TORVA_QA):
@@ -1408,3 +1451,104 @@ class FechasDePrecioTests(CommercialFixtures, TestCase):
         draft = self.commercial_draft([commercial_line()])
         resumen = self.send("api_resumen_documental", method="get", args=(self.quote.folio, draft.number))
         self.assertIsNone(resumen["prices_captured_at"])
+
+
+class CorreoConexionRapidaTests(TestCase):
+    """B3b: una dirección del servidor SMTP que no responde (IPv6 sin ruta) no detiene el envío 20 s."""
+
+    def setUp(self):
+        from apps.quotes import smtp
+        smtp._familia_que_funciono.clear()
+        self.addCleanup(smtp._familia_que_funciono.clear)
+
+    def sockets_falsos(self, fallan):
+        from apps.quotes import smtp
+        creados = []
+
+        class SocketFalso:
+            def __init__(self, familia, tipo, protocolo):
+                self.familia, self.esperas, self.cerrado = familia, [], False
+                creados.append(self)
+
+            def settimeout(self, valor):
+                self.esperas.append(valor)
+
+            def bind(self, direccion):
+                pass
+
+            def connect(self, direccion):
+                if self.familia in fallan:
+                    raise TimeoutError("sin respuesta")
+
+            def close(self):
+                self.cerrado = True
+
+        direcciones = [(10, 1, 6, "", ("2001:db8::1", 465, 0, 0)), (2, 1, 6, "", ("192.0.2.1", 465))]
+        parches = (mock.patch.object(smtp.socket, "getaddrinfo", return_value=direcciones),
+                   mock.patch.object(smtp.socket, "socket", SocketFalso))
+        return creados, parches
+
+    def test_pasa_a_la_siguiente_direccion_con_espera_corta(self):
+        from apps.quotes import smtp
+        creados, (resolver, crear) = self.sockets_falsos(fallan={10})
+        with resolver, crear:
+            sock = smtp.conectar("smtp.qa.invalid", 465, 20)
+        ipv6, ipv4 = creados
+        self.assertIs(sock, ipv4)
+        self.assertEqual(ipv6.esperas, [smtp.ESPERA_CONEXION])       # no los 20 s del envío
+        self.assertTrue(ipv6.cerrado)
+        self.assertEqual(ipv4.esperas, [smtp.ESPERA_CONEXION, 20])   # conectado: recupera la espera completa
+        self.assertFalse(ipv4.cerrado)
+
+    def test_el_siguiente_envio_empieza_por_la_que_funciono(self):
+        from apps.quotes import smtp
+        creados, (resolver, crear) = self.sockets_falsos(fallan={10})
+        with resolver, crear:
+            smtp.conectar("smtp.qa.invalid", 465, 20)
+            del creados[:]
+            smtp.conectar("smtp.qa.invalid", 465, 20)
+            self.assertEqual([s.familia for s in creados], [2])           # ya no espera a la IPv6
+            del creados[:]
+            smtp.conectar("otro.qa.invalid", 465, 20)
+            self.assertEqual([s.familia for s in creados], [10, 2])       # otro servidor: orden del DNS
+
+    def test_si_ninguna_responde_falla_con_el_ultimo_error(self):
+        from apps.quotes import smtp
+        creados, (resolver, crear) = self.sockets_falsos(fallan={10, 2})
+        with resolver, crear, self.assertRaises(TimeoutError):
+            smtp.conectar("smtp.qa.invalid", 465, 20)
+        self.assertTrue(all(s.cerrado for s in creados))
+
+    def test_espera_corta_nunca_mayor_que_la_del_envio(self):
+        from apps.quotes import smtp
+        creados, (resolver, crear) = self.sockets_falsos(fallan=set())
+        with resolver, crear:
+            smtp.conectar("smtp.qa.invalid", 465, 1)
+        self.assertEqual(creados[0].esperas, [1, 1])
+
+    def test_ssl_cifra_el_socket_de_la_conexion_rapida(self):
+        from django.core import mail
+        from apps.quotes import smtp
+        opciones = {"host": "smtp.qa.invalid", "username": "cuenta@qa.invalid", "password": "sintetica"}
+        with override_settings(MAILERS={"ssl": {"BACKEND": "apps.quotes.smtp.EmailBackend", "OPTIONS": {**opciones, "use_ssl": True}},
+                                        "tls": {"BACKEND": "apps.quotes.smtp.EmailBackend", "OPTIONS": {**opciones, "use_tls": True}}}):
+            self.assertIs(mail.mailers["ssl"].connection_class, smtp.SMTPSSLRapido)
+            self.assertIs(mail.mailers["tls"].connection_class, smtp.SMTPRapido)
+        contexto = mock.Mock()
+        contexto.wrap_socket.return_value = "cifrado"
+        conexion = smtp.SMTPSSLRapido(context=contexto)          # sin host: no conecta
+        conexion._host = "smtp.qa.invalid"
+        with mock.patch.object(smtp, "conectar", return_value="crudo") as conectar:
+            self.assertEqual(conexion._get_socket("smtp.qa.invalid", 465, 20), "cifrado")
+        conectar.assert_called_once_with("smtp.qa.invalid", 465, 20, None)
+        contexto.wrap_socket.assert_called_once_with("crudo", server_hostname="smtp.qa.invalid")
+
+    def test_settings_usa_el_backend_rapido_y_se_reconoce_como_correo_real(self):
+        import settings.settings as configuracion
+        with mock.patch.dict("os.environ", {"QA_SMTP_HOST": "smtp.qa.invalid", "QA_SMTP_USER": "cuenta@qa.invalid"}):
+            mailer = configuracion._mailer("QA")
+        self.assertEqual(mailer["BACKEND"], "apps.quotes.smtp.EmailBackend")
+        self.assertTrue(mailer["BACKEND"].endswith("smtp.EmailBackend"))   # views.py y usuarios.py lo comparan así
+        from apps.quotes.views import _correo_empresa
+        with override_settings(MAILERS={"default": mailer}, CCONOR_SMTP_FROM=""):
+            self.assertEqual(_correo_empresa("cconor"), ("default", "cuenta@qa.invalid"))

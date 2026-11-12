@@ -171,11 +171,11 @@ class FlujoCompletoQ4Tests(Q4Base):
         self.assertEqual(response.status_code, 200, response.content.decode()[:800])
         guardado = response.json()["data"]
         self.assertEqual(guardado["edit_version"], 2)
-        # El importe de línea se redondea por partida sobre la venta sin redondear:
-        # 1496.25/0.65 × 2 = 4603.8461… → 4603.85 (distinto de 4603.84 = 2301.92 × 2).
+        # Cálculo v2: el unitario se redondea a centavos y el importe es unitario × cantidad:
+        # 1496.25/0.65 = 2301.923… → 2301.92; × 2 = 4603.84 (la v1 daba 4603.85 sobre la venta sin redondear).
         subtotal2 = Decimal(str(self.detail(created)["preview"]["resultado"]["subtotal_venta"]))
-        venta_sin_redondear = CAMARA_COSTO_MXN / (Decimal("1") - Decimal("0.35"))
-        self.assertEqual(subtotal2, (venta_sin_redondear * 2).quantize(Decimal("0.01")))
+        venta_unitaria = (CAMARA_COSTO_MXN / (Decimal("1") - Decimal("0.35"))).quantize(Decimal("0.01"))
+        self.assertEqual(subtotal2, venta_unitaria * 2)
 
         # PDF del borrador: existe y es un PDF, sin archivo archivado todavía.
         pdf_borrador = self.client.get(reverse("descargar_pdf_cotizacion", args=[created["folio"]]))

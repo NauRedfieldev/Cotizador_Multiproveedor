@@ -144,7 +144,7 @@
             show('documentView', false); show('documentEmpty', true);
             $('documentWarnings').replaceChildren(); $('revisionSelector').replaceChildren();
             for (const id of ['emailRecipientInput', 'emailSubjectInput', 'emailMessageInput']) $(id).value = '';
-            if ($('emailDialog').open) $('emailDialog').close();
+            for (const id of ['emailDialog', 'cloneDialog']) if ($(id).open) $(id).close();
             for (const id of ['emailStatus', 'documentNotice', 'documentTitle', 'documentIdentity', 'documentMeta', 'documentTotalLabel', 'documentTotalValue']) text(id, '');
         }
         function warnings(d) {
@@ -271,13 +271,15 @@
             } catch (err) { if (err.name !== 'AbortError' && epoch === listEpoch) { text('historyStatus', err.message); state.pages = 1; state.page = 1; text('historyPage', ''); } }
             finally { if (epoch === listEpoch) locks(); }
         }
-        async function mutate(kind) {
+        // companyKey: solo desde la ventana «Nueva revisión» (ya confirmada); otra empresa = cotización nueva.
+        async function mutate(kind, companyKey = null) {
             if (state.busy) return;
             if (!state.pending) {
                 const d = state.detail; if (!d) return;
-                if (!window.confirm(kind === 'emit' ? `Emitir ${d.folio}, revisión ${d.revision}, versión ${d.edit_version}? No enviará correo ni permitirá sobrescribir el original.` : `Crear un borrador nuevo desde ${d.folio}, revisión ${d.revision}? El original no se modifica.`)) return;
-                state.pending = { kind, actor: state.actor, folio: d.folio, revision: d.revision,
-                    body: kind === 'emit' ? { edit_version: d.edit_version, state_fingerprint: d.state_fingerprint } : { schema_version: 2, request_id: crypto.randomUUID() } };
+                if (!companyKey && !window.confirm(kind === 'emit' ? `Emitir ${d.folio}, revisión ${d.revision}, versión ${d.edit_version}? No enviará correo ni permitirá sobrescribir el original.` : `Crear un borrador nuevo desde ${d.folio}, revisión ${d.revision}? El original no se modifica.`)) return;
+                const body = kind === 'emit' ? { edit_version: d.edit_version, state_fingerprint: d.state_fingerprint } : { schema_version: 2, request_id: crypto.randomUUID() };
+                if (companyKey) body.company_key = companyKey;
+                state.pending = { kind, actor: state.actor, folio: d.folio, revision: d.revision, body };
             }
             state.busy = true; locks();
             let target;
@@ -314,10 +316,12 @@
             const d = state.detail, to = recipient.value.trim();
             if (!window.confirm(`Enviar a ${to} el PDF original de ${d.folio}, revisión ${d.revision}?`)) return;
             state.busy = true; locks();
+            text('emailStatus', 'Enviando…'); text('confirmSendEmailBtn', 'Enviando…');
             try {
                 await session();
                 await api.email(d.folio, { ...identity(d), email: to, subject: $('emailSubjectInput').value.trim(), message: $('emailMessageInput').value, attach_pdf: true });
                 $('emailDialog').close();
+                window.showToast?.(`Cotización ${d.folio} enviada a ${to}.`, 'success', 'Correo enviado', 5000);
                 text('documentNotice', `El servidor de correo aceptó ${d.folio}, revisión ${d.revision}, para ${to}. Esto no certifica la entrega al destinatario.`); error();
             } catch (err) {
                 if (err.uncertain) {
@@ -326,7 +330,7 @@
                     text('documentNotice', 'Correo con resultado desconocido: verifica la recepción antes de volver a enviar.');
                 } else text('emailStatus', err.message || String(err));
                 error(err);
-            } finally { state.busy = false; locks(); }
+            } finally { state.busy = false; text('confirmSendEmailBtn', 'Enviar'); locks(); }
         }
         async function pdf(print = false) {
             if (state.busy || state.pending || !state.detail) return;
@@ -348,10 +352,43 @@
         }
         $('editDocumentBtn').addEventListener('click', () => { if (state.detail) location.assign(editorURL(state.detail)); });
         $('emitDocumentBtn').addEventListener('click', () => mutate('emit'));
+        // Nueva revisión: con una sola empresa, como siempre; con varias, se elige en la ventana.
+        const sourceCompany = () => state.detail?.cliente?.company?.key || 'cconor';
+        function cloneHint() {
+            const d = state.detail, chosen = $('cloneCompanyOptions').querySelector('input:checked')?.value;
+            const company = state.companies.find(c => c.key === chosen);
+            if (!d || !company) { text('cloneCompanyHint', ''); return; }
+            text('cloneCompanyHint', chosen === sourceCompany()
+                ? `Se crea un borrador nuevo de ${d.folio} (siguiente revisión). La emitida no cambia.`
+                : `Se crea una cotización NUEVA de ${company.name}${company.folio_prefix ? ` (folio ${company.folio_prefix}-…)` : ''} con el mismo cliente y las mismas partidas. ${d.folio} no cambia.`);
+        }
+        function openCloneDialog() {
+            const d = state.detail, current = sourceCompany();
+            text('cloneDialogInfo', `Desde ${d.folio} · Rev. ${d.revision} (emitida).`);
+            $('cloneCompanyOptions').replaceChildren(...state.companies.map(company => {
+                const box = node('div', '', 'form-check');
+                const input = document.createElement('input');
+                Object.assign(input, { type: 'radio', name: 'cloneCompany', id: `clone-company-${company.key}`, value: company.key, className: 'form-check-input', checked: company.key === current });
+                input.addEventListener('change', cloneHint);
+                const label = node('label', company.key === current ? `${company.name} (la misma)` : company.name, 'form-check-label');
+                label.htmlFor = input.id;
+                box.append(input, label);
+                return box;
+            }));
+            cloneHint(); $('cloneDialog').showModal();
+        }
         $('cloneDocumentBtn').addEventListener('click', () => {
             if (state.detail?.schema_version === 1) {
                 if (window.confirm('Preparar una revisión comercial nueva sin copiar costos, márgenes o unidades automáticamente del histórico?')) location.assign(`/cotizador/?${new URLSearchParams({ transition_folio: state.detail.folio, transition_revision: state.detail.revision })}`);
-            } else mutate('clone');
+            } else if (state.companies.length > 1 && state.detail?.status === 'ISSUED') openCloneDialog();
+            else mutate('clone');
+        });
+        for (const id of ['cloneCancelBtn', 'cloneCloseBtn']) $(id).addEventListener('click', () => $('cloneDialog').close());
+        $('confirmCloneBtn').addEventListener('click', () => {
+            const chosen = $('cloneCompanyOptions').querySelector('input:checked')?.value;
+            if (!chosen) return;
+            $('cloneDialog').close();
+            mutate('clone', chosen);
         });
         $('resolveDocumentBtn').addEventListener('click', () => {
             if (state.pending?.kind === 'email') {

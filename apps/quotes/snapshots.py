@@ -23,7 +23,7 @@ from django.utils import timezone
 
 from apps.providers.contracts import ProviderOffer
 
-from .commercial import MARGEN_INICIAL
+from .commercial import CALCULO_VIGENTE, MARGEN_INICIAL, VERSIONES_CALCULO
 from .comparison import OfertaComparada, TipoCambio
 from .models import Quote, QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
 from .snapshot_values import MAX_ITEMS, MONEY_CONTEXT, amount, decimal_limit
@@ -540,18 +540,20 @@ def _commercial_data(partidas):
     return salida
 
 
-def _commercial_calculate(parts, tipo, tax, discount):
+def _commercial_calculate(parts, tipo, tax, discount, version=CALCULO_VIGENTE):
     from .commercial import DescuentoGlobal, calcular_cotizacion
 
     return calcular_cotizacion((QuoteSnapshot(**p).commercial_input() for p in parts),
-        tipo_cambio=tipo, tasa_iva=tax, descuento=DescuentoGlobal(discount))
+        tipo_cambio=tipo, tasa_iva=tax, descuento=DescuentoGlobal(discount), version=version)
 
 
-def _commercial_fingerprint(header, parts, tipo, tax, discount, issue_date, days, based_on, context_id):
+def _commercial_fingerprint(header, parts, tipo, tax, discount, issue_date, days, based_on, context_id,
+        version=CALCULO_VIGENTE):
     # Sin concepto editado no entra la llave: las revisiones guardadas antes de edited_name
     # conservan su huella.
     parts = [{k: v for k, v in p.items() if k != "edited_name" or v} for p in parts]
-    payload = {"schema": 2, "calculation": 1, "header": header, "parts": parts,
+    # La versión de cálculo entra en la huella: pasar un borrador de la 1 a la 2 invalida sus confirmaciones.
+    payload = {"schema": 2, "calculation": version, "header": header, "parts": parts,
         "fx": None if tipo is None else {"value": str(decimal_limit(tipo.valor, 18, 8)),
             "source": tipo.origen, "date": tipo.fecha.astimezone(dt_timezone.utc).isoformat(), "context": str(context_id)},
         "tax": str(tax), "discount": str(discount), "date": issue_date.isoformat(),
@@ -576,8 +578,10 @@ def _commercial_adjustments(actor, parts, old_parts, *, tipo, context_id, tax, d
     from .permissions import DISCOUNT, FX, MANUAL_SALE, MARGIN, TAX, require_commercial_permission
 
     previous_parts = {p["line_key"]: p for p in old_parts}
+    # La unidad no está aquí: el proveedor no la manda, la escribe el asesor y puede corregirla en un borrador
+    # (al cambiarla se vuelve a registrar quién la validó, _commercial_write_parts).
     original_fields = ("source_kind", "source_unit_price", "source_currency", "cost_tax_rate_included",
-        "provider_code", "provider_name", "external_id", "name", "brand", "model", "mpn", "stock", "source_unit_label")
+        "provider_code", "provider_name", "external_id", "name", "brand", "model", "mpn", "stock")
     for p in parts:
         old = previous_parts.get(p["line_key"])
         if old and old["source_kind"] == "API" and any(p[f] != old[f] for f in original_fields):
@@ -625,7 +629,8 @@ def _commercial_write_parts(revision, parts, actor, old_snapshots=()):
 
 
 def _create_commercial(quote, parts, *, actor, company, conditions, tipo_cambio, exchange_context_id,
-        client, tax_rate, discount_percent, issue_date, valid_days, request_id, based_on=None, commercial_source=None):
+        client, tax_rate, discount_percent, issue_date, valid_days, request_id, based_on=None, commercial_source=None,
+        keep_captures=False):
     actor = _commercial_actor(quote, actor)
     if not isinstance(request_id, UUID):
         raise TypeError("request_id debe ser UUID estable entre reintentos.")
@@ -640,7 +645,9 @@ def _create_commercial(quote, parts, *, actor, company, conditions, tipo_cambio,
         issue_date, valid_days, based_on, exchange_context_id)
     previous = quote.revisions.filter(request_id=request_id).first()
     if previous:
-        if previous.schema_version != 2 or previous.request_fingerprint != fingerprint:
+        # Un reintento de un alta hecha con la versión 1 (antes de la 2) se reconoce por su huella de la 1.
+        if previous.schema_version != 2 or previous.request_fingerprint not in (fingerprint, _commercial_fingerprint(
+                header, parts, tipo_cambio, tax, discount, issue_date, valid_days, based_on, exchange_context_id, version=1)):
             raise RevisionConflict("request_id ya pertenece a otra intención.")
         return previous
     _commercial_adjustments(actor, parts, _commercial_stored(commercial_source) if commercial_source else [],
@@ -648,19 +655,27 @@ def _create_commercial(quote, parts, *, actor, company, conditions, tipo_cambio,
     revision = QuoteRevision.objects.create(quote=quote,
         number=(quote.revisions.aggregate(number=Max("number"))["number"] or 0) + 1,
         based_on_id=based_on, request_id=request_id, request_fingerprint=fingerprint,
-        schema_version=2, calculation_version=1, state_fingerprint=fingerprint,
+        schema_version=2, calculation_version=CALCULO_VIGENTE, state_fingerprint=fingerprint,
         discount_percent=discount, header=header, tax_rate=tax, issue_date=issue_date, valid_days=valid_days,
         exchange_rate=decimal_limit(tipo_cambio.valor, 18, 8) if tipo_cambio else None,
         exchange_rate_source=tipo_cambio.origen if tipo_cambio else "",
         exchange_rate_date=tipo_cambio.fecha if tipo_cambio else None, exchange_context_id=exchange_context_id)
-    _commercial_write_parts(revision, parts, actor)
+    # keep_captures: al copiar a otra empresa, cada partida conserva su fecha de captura y su validación de unidad.
+    _commercial_write_parts(revision, parts, actor, commercial_source.snapshots.all() if keep_captures else ())
     return revision
 
 
 def crear_borrador_comercial(quote_id, partidas, *, actor, company, conditions,
         tipo_cambio=None, exchange_context_id=None, client=None, tax_rate=TASA_IVA_INICIAL,
-        discount_percent=Decimal("0"), issue_date=None, valid_days=None, request_id=None):
-    """Crea v2 explícita. No cambia defaults/contrato de crear_borrador v1."""
+        discount_percent=Decimal("0"), issue_date=None, valid_days=None, request_id=None, commercial_source=None):
+    """Crea v2 explícita. No cambia defaults/contrato de crear_borrador v1.
+
+    commercial_source: emisión v2 de OTRA cotización cuyas partidas se copian (cotizar como otra empresa). Sus
+    datos de proveedor no se pueden alterar y los ajustes (margen, IVA, descuento, FX) se comparan contra ella.
+    """
+    if commercial_source is not None and (commercial_source.schema_version != 2
+            or commercial_source.status != QuoteRevision.Status.ISSUED or commercial_source.quote_id == quote_id):
+        raise RevisionConflict("Solo se copian las partidas de una emisión comercial de otra cotización.")
     with transaction.atomic():
         quote = Quote.objects.select_for_update(of=("self",)).select_related("advisor").get(pk=quote_id)
         return _create_commercial(quote, _commercial_data(partidas), actor=actor, company=company,
@@ -669,7 +684,8 @@ def crear_borrador_comercial(quote_id, partidas, *, actor, company, conditions,
             tax_rate=tax_rate, discount_percent=discount_percent,
             issue_date=quote.issue_date if issue_date is None else issue_date,
             valid_days=quote.valid_days if valid_days is None else valid_days,
-            request_id=request_id if request_id is not None else uuid4())
+            request_id=request_id if request_id is not None else uuid4(),
+            commercial_source=commercial_source, keep_captures=commercial_source is not None)
 
 
 def _commercial_edit_inputs(quote, revision, partidas, *, actor, expected_version, company, conditions,
@@ -707,6 +723,8 @@ def guardar_borrador_comercial(revision_id, partidas, *, actor, expected_version
         revision.exchange_rate = decimal_limit(tipo_cambio.valor, 18, 8) if tipo_cambio else None
         revision.exchange_rate_source = tipo_cambio.origen if tipo_cambio else ""
         revision.exchange_rate_date = tipo_cambio.fecha if tipo_cambio else None
+        # Guardar un borrador lo pasa a las reglas de cálculo vigentes (las emisiones nunca cambian).
+        revision.calculation_version = CALCULO_VIGENTE
         revision.state_fingerprint = _commercial_fingerprint(header, parts, tipo_cambio, tax, discount,
             issue_date, valid_days, revision.based_on_id, exchange_context_id)
         revision.edit_version += 1
@@ -736,14 +754,16 @@ def crear_revision_comercial(revision_id, partidas, *, actor, request_id, tax_ra
 
 
 def _current_commercial_state(revision):
-    if revision.schema_version != 2 or revision.calculation_version != 1:
+    if revision.schema_version != 2 or revision.calculation_version not in VERSIONES_CALCULO:
         raise ValidationError("Versión comercial no soportada.")
+    version = revision.calculation_version
     parts = _commercial_stored(revision)
     fingerprint = _commercial_fingerprint(revision.header, parts, _tipo(revision), revision.tax_rate,
-        revision.discount_percent, revision.issue_date, revision.valid_days, revision.based_on_id, revision.exchange_context_id)
+        revision.discount_percent, revision.issue_date, revision.valid_days, revision.based_on_id, revision.exchange_context_id,
+        version=version)
     if fingerprint != revision.state_fingerprint:
         raise RevisionConflict("El estado comercial no coincide con su huella; revisar integridad.")
-    return _commercial_calculate(parts, _tipo(revision), revision.tax_rate, revision.discount_percent)
+    return _commercial_calculate(parts, _tipo(revision), revision.tax_rate, revision.discount_percent, version)
 
 
 def _commercial_client_context(revision, result=None, *, snapshots=None):
@@ -818,7 +838,7 @@ def previsualizar_revision_comercial(revision_id, *, actor, expected_version):
 
 def _preview_commercial_capture(quote, parts, result, *, actor, header, tipo_cambio,
         exchange_context_id, tax, discount, issue_date, valid_days, based_on=None, number=None):
-    revision = QuoteRevision(quote=quote, schema_version=2, calculation_version=1, header=header,
+    revision = QuoteRevision(quote=quote, schema_version=2, calculation_version=CALCULO_VIGENTE, header=header,
         number=number, tax_rate=tax, discount_percent=discount, issue_date=issue_date, valid_days=valid_days,
         exchange_rate=decimal_limit(tipo_cambio.valor, 18, 8) if tipo_cambio else None,
         exchange_rate_source=tipo_cambio.origen if tipo_cambio else "",

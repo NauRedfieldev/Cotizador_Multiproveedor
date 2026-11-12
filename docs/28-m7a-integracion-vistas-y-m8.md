@@ -1016,6 +1016,49 @@ Solo navegador (`static/js/main.js`, `static/js/cotizador.js`, `templates/compar
 - Pruebas: `ConceptoEditadoTests` (test_commercial_persistence), `test_concepto_editado_*` (test_api_busqueda) y
   «concepto editado viaja solo en partidas API» (tools/test_cotizador_comercial.cjs). cotizador.js v35, custom.css v24.
 
+### 14.22 Envío de correo más rápido (B3b, 2026-11-10)
+
+- **Problema:** enviar una cotización de Torva (Gmail) tardaba 10–23 s. `smtp.gmail.com` da primero su dirección
+  IPv6; en una red que anuncia IPv6 pero no lo enruta, Python esperaba los 20 s del envío (`timeout`) en esa dirección
+  antes de pasar a la IPv4, que conecta en 0.05 s. El inicio de sesión y el PDF (80–150 KB) no influían.
+- **Arreglo:** `MAILERS` usa `apps.quotes.smtp.EmailBackend` (sigue terminando en `smtp.EmailBackend`, como esperan
+  `_correo_empresa` y `usuarios._correo_sistemas`). Cada dirección tiene `ESPERA_CONEXION` = 3 s para conectar; ya
+  conectado, el envío conserva sus 20 s. Además recuerda en memoria qué tipo de dirección conectó con cada servidor y
+  la prueba primero: solo el primer envío tras arrancar paga los 3 s. Medido con Gmail: 3.8 s el primero y < 1 s los
+  siguientes (conectar + iniciar sesión). Aplica igual a CCONOR y a `sistemas`.
+- **Pantalla:** al pulsar «Enviar», el botón y el estado de la ventana dicen «Enviando…» hasta que el servidor
+  responde. Al aceptarse, la ventana se cierra y sale un aviso verde «Correo enviado · Cotización <folio> enviada a
+  <correo>» (5 s, `showToast` de api.js); la línea bajo el documento sigue aclarando que no certifica la entrega. Un
+  error se queda dentro de la ventana, como antes (cotizacion_actions.js v14).
+- Pruebas: `CorreoConexionRapidaTests` (test_api_cotizaciones), sin red: sockets falsos.
+
+### 14.23 Ajustes del cotizador (2026-11-10)
+
+- **Unidad editable en un borrador guardado.** La unidad de una partida de proveedor la escribe el asesor (el
+  proveedor no la manda), así que ya no es parte de los originales fijos (`_commercial_adjustments` ya no incluye
+  `source_unit_label`; cotizador.js quitó `lockSource`). Al cambiarla se vuelve a pedir «Revisé la unidad» y
+  `_commercial_write_parts` registra quién la validó. Precio, marca, modelo y demás datos del proveedor siguen fijos.
+- **Unitario en centavos (cálculo v2).** `calcular_cotizacion(version=2)`: venta por unidad HALF_UP a centavos e
+  importe = unitario × cantidad (p. ej. 20 × $5.01 = $100.20, antes $100.17 con unitario «$5.0085 (aprox.)»).
+  Revisiones nuevas y borradores al guardarse usan la v2; emitidas v1 intactas (docs/31). Migración 0008 solo amplía
+  la restricción. La nota del cotizador sobre unitarios aproximados ahora explica unitario × cantidad.
+- **PDF: solo marca.** La columna «Marca / Modelo» pasa a «Marca» y no imprime el modelo (para que el cliente no
+  identifique el producto exacto); su ancho se devuelve a la descripción. El nombre del producto no se toca: si trae
+  el modelo, el asesor lo ajusta en «Concepto en la cotización» (§14.21). Las emisiones anteriores conservan su PDF.
+- **Precios revisados hoy.** En «Revisar precios», las partidas «Sin cambio» se reemplazan por la consulta de hoy
+  (mismo precio, `replaceWithOffer`), así que al guardar su `captured_at` es de hoy y «Mis cotizaciones» deja de decir
+  «de hace X días». Las que «ya no aparecen» o «no se pudieron revisar» conservan su fecha.
+- **Otra empresa desde una emitida.** «Nueva revisión» de una emisión v2, con más de una empresa configurada, abre la
+  ventana «Cotizar como». La misma empresa = siguiente revisión del folio, como antes. Otra empresa =
+  `POST …/revisiones/<n>/nueva/` con `company_key`: `_copy_to_company` crea una cotización NUEVA con el prefijo de esa
+  empresa y copia cliente, condiciones, notas internas, partidas (con su `captured_at` y validación de unidad), IVA,
+  descuento y tipo de cambio; los ajustes se comparan contra la emisión de origen. La original no cambia. Un borrador
+  no se copia (409); un histórico v1 no acepta `company_key` (400).
+- Pruebas: `test_v2_*` y oráculos v1/v2 (test_commercial); `test_unidad_de_partida_api_guardada_se_puede_corregir`,
+  `test_borrador_v1_pasa_a_v2_*`, `test_emitida_v1_conserva_*`, `test_version_de_calculo_no_retrocede_*`,
+  `test_v2_unitario_en_centavos_*` (test_commercial_persistence); `test_nueva_revision_como_otra_empresa_*` y
+  `test_otra_empresa_solo_desde_emitida_*` (test_api_cotizaciones). cotizador.js v36, cotizacion_actions.js v15.
+
 ## 15. P6 · Mis cotizaciones, resumen y documentos exactos
 
 > **Rediseño 12A (2026-10-20, rama `feature/ui-interfaz-general`).** La pantalla pasó a lista y

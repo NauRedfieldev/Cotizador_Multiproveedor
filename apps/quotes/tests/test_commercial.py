@@ -151,16 +151,33 @@ class MargenYVentaTests(unittest.TestCase):
 
 class UnidadesIvaYFxTests(unittest.TestCase):
     def test_bobina_completa_y_metros(self):
-        completa = calcular_cotizacion([margen("3050")])
-        metros = calcular_cotizacion([margen("3050", 20, factor="305")])
+        completa = calcular_cotizacion([margen("3050")], version=1)
+        metros = calcular_cotizacion([margen("3050", 20, factor="305")], version=1)
         self.assertEqual(completa.subtotal_venta, D("4692.31"))
         self.assertEqual(metros.partidas[0].costo_unitario_mxn, D("10"))
         self.assertEqual((metros.costo_conocido, metros.subtotal_venta), (D("200"), D("307.69")))
 
+    def test_v2_bobina_en_metros_unitario_en_centavos_por_cantidad(self):
+        metros = calcular_cotizacion([margen("3050", 20, factor="305")])
+        p = metros.partidas[0]
+        self.assertEqual(p.venta_unitaria_mxn, D("15.38"))                  # 10 / 0.65 = 15.3846… → 15.38
+        self.assertEqual((p.importe_venta, metros.subtotal_venta), (D("307.60"), D("307.60")))   # 15.38 × 20
+        self.assertEqual(metros.costo_conocido, D("200"))                   # el costo interno no cambia de regla
+
     def test_unitario_periodico_no_se_redondea_antes_de_multiplicar(self):
-        r = calcular_cotizacion([margen(cantidad=3)])
+        r = calcular_cotizacion([margen(cantidad=3)], version=1)
         self.assertEqual(r.subtotal_venta, D("461.54"))
         self.assertNotEqual(r.subtotal_venta, D("153.85") * 3)
+
+    def test_v2_el_importe_es_el_unitario_mostrado_por_la_cantidad(self):
+        r = calcular_cotizacion([margen(cantidad=3)])
+        self.assertEqual(r.partidas[0].venta_unitaria_mxn, D("153.85"))
+        self.assertEqual(r.subtotal_venta, D("153.85") * 3)                 # 461.55: el cliente puede comprobarlo
+
+    def test_version_de_calculo_desconocida_se_rechaza(self):
+        for version in (0, 3, "2", None, True):
+            with self.subTest(version=version), self.assertRaises(ValidationError):
+                calcular_cotizacion([margen()], version=version)
 
     def test_empate_half_up_no_se_pierde_por_division_periodica(self):
         # .025 / 3 * 3 da .025 exacto, aunque el unitario tenga infinitos decimales.
@@ -421,12 +438,17 @@ class ContratoYPurezaTests(unittest.TestCase):
             tipo = fx()
             p = PartidaComercial.con_margen(str(i), cantidad, PrecioCapturado(costo, "USD", iva_compra),
                                            margen=porcentaje, factor_conversion=factor)
-            r = calcular_cotizacion([p], tipo_cambio=tipo)
+            r = calcular_cotizacion([p], tipo_cambio=tipo, version=1)
+            r2 = calcular_cotizacion([p], tipo_cambio=tipo)
             neto = Fraction(costo) * Fraction(tipo.valor) / ((1 + Fraction(iva_compra)) * Fraction(factor))
             venta = neto / (1 - Fraction(porcentaje) / 100)
             with self.subTest(i=i):
                 self.assertEqual(r.partidas[0].importe_costo, redondeo_independiente(neto * cantidad))
                 self.assertEqual(r.subtotal_venta, redondeo_independiente(venta * cantidad))
+                # v2: unitario a centavos y luego × cantidad; el costo sigue la misma regla que en v1.
+                self.assertEqual(r2.partidas[0].venta_unitaria_mxn, redondeo_independiente(venta))
+                self.assertEqual(r2.subtotal_venta, redondeo_independiente(venta) * cantidad)
+                self.assertEqual(r2.partidas[0].importe_costo, r.partidas[0].importe_costo)
 
     def test_oraculo_en_extremos_de_precision_m8_y_factores_decimales(self):
         azar = random.Random(641868)
@@ -440,10 +462,13 @@ class ContratoYPurezaTests(unittest.TestCase):
                                            margen=porcentaje, factor_conversion=factor)
             neto = Fraction(costo) * Fraction(tipo.valor) / (Fraction("1.16") * Fraction(factor))
             venta = neto / (1 - Fraction(porcentaje) / 100)
-            r = calcular_cotizacion([p], tipo_cambio=tipo)
+            r = calcular_cotizacion([p], tipo_cambio=tipo, version=1)
+            r2 = calcular_cotizacion([p], tipo_cambio=tipo)
             with self.subTest(i=i):
                 self.assertEqual(r.costo_conocido, redondeo_independiente(neto * cantidad))
                 self.assertEqual(r.subtotal_venta, redondeo_independiente(venta * cantidad))
+                self.assertEqual(r2.costo_conocido, r.costo_conocido)
+                self.assertEqual(r2.subtotal_venta, redondeo_independiente(venta) * cantidad)
 
     def test_fecha_fx_no_se_inventa_y_precisiones_maximas_no_se_cuantizan_a_centavos(self):
         tipo = fx("17.12345678")

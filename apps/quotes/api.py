@@ -382,7 +382,8 @@ async def emitir(request, folio, numero):
 @_api("POST")
 async def nueva_revision(request, folio, numero):
     """POST …/revisiones/<n>/nueva/ → borrador nuevo desde una emisión (M8 crear_revision)."""
-    datos = _leer_json(request, {"request_id", "schema_version", "items", "tax_rate", "discount_percent", "fx_context_id", "source_edit_version"})
+    datos = _leer_json(request, {"request_id", "schema_version", "items", "tax_rate", "discount_percent", "fx_context_id",
+                                 "source_edit_version", "company_key"})
     if datos.get("schema_version") == 2:
         output = await sync_to_async(_commercial_clone, thread_sensitive=True)(folio, numero, await request.auser(), datos)
         return JsonResponse({"success": True, "data": output}, status=201)
@@ -1128,6 +1129,20 @@ def _request_once(actor, data, operation, target, action):
         return {**output, "replayed": replay}
 
 
+def _save_new_quote(quote):
+    """Alta del Quote con su folio; reintenta únicamente el choque de folio en un savepoint propio."""
+    quote.full_clean(exclude=["folio"])
+    for attempt in range(_INTENTOS_FOLIO):
+        try:
+            with transaction.atomic():
+                quote.save(force_insert=True)
+            return quote
+        except IntegrityError:
+            if attempt == _INTENTOS_FOLIO - 1:
+                raise
+            quote.pk, quote.folio = None, ""
+
+
 def _commercial_create(actor, data):
     def create(current, request_id):
         kwargs = _header_inputs(data, current)
@@ -1140,17 +1155,7 @@ def _commercial_create(actor, data):
             issue_date=kwargs["issue_date"], valid_days=kwargs["valid_days"],
             notes=_texto_requerido(data.get("notes", ""), "notes", 6000))
         quote.folio_prefix = _prefijo_folio(clave)
-        quote.full_clean(exclude=["folio"])
-        # Reintentar únicamente el choque de folio en un savepoint propio.
-        for attempt in range(_INTENTOS_FOLIO):
-            try:
-                with transaction.atomic():
-                    quote.save(force_insert=True)
-                break
-            except IntegrityError:
-                if attempt == _INTENTOS_FOLIO - 1:
-                    raise
-                quote.pk, quote.folio = None, ""
+        _save_new_quote(quote)
         return commercial_services.crear_borrador_comercial(quote.pk, parts, actor=current,
             company=empresa, request_id=request_id, **kwargs)
     return _request_once(actor, data, "CREATE", None, create)
@@ -1261,9 +1266,14 @@ def _commercial_clone(folio, number, actor, data):
         if "source_edit_version" in data and _entero(data["source_edit_version"], "source_edit_version") != revision.edit_version:
             raise RevisionConflict("La revisión de origen cambió; recarga antes de crear otra revisión.")
         if revision.schema_version == 2:
-            _fields(data, {"request_id", "schema_version", "source_edit_version"})
+            _fields(data, {"request_id", "schema_version", "source_edit_version", "company_key"})
             parts = [commercial_services.PartidaComercialCapturada(**p) for p in commercial_services._commercial_stored(revision)]
             tax, discount, tipo, fx_id = revision.tax_rate, revision.discount_percent, commercial_services._tipo(revision), revision.exchange_context_id
+            clave = data.get("company_key", revision.header["company"].get("key", EMPRESA_PRINCIPAL))
+            if clave != revision.header["company"].get("key", EMPRESA_PRINCIPAL):
+                return _copy_to_company(quote, revision, parts, current, request_id, clave)
+        elif "company_key" in data:
+            raise _EntradaInvalida("Un histórico v1 conserva su empresa.")
         else:
             parts = _commercial_items(data.get("items"), current)
             tax = _decimal_text(data.get("tax_rate"), 5, 4, maximum=Decimal("1"))
@@ -1272,6 +1282,27 @@ def _commercial_clone(folio, number, actor, data):
         return commercial_services.crear_revision_comercial(revision.pk, parts, actor=current, request_id=request_id,
             tax_rate=tax, discount_percent=discount, tipo_cambio=tipo, exchange_context_id=fx_id)
     return _request_once(actor, data, "CLONE", [folio, number], clone)
+
+
+def _copy_to_company(source_quote, source, parts, actor, request_id, clave):
+    """Punto 5: «Nueva revisión» de una emisión como OTRA empresa = cotización nueva con el folio de esa empresa.
+
+    El folio lleva el prefijo de su empresa, así que no puede ser otra revisión del mismo folio. Se copian
+    cliente, condiciones, partidas (con su fecha de captura), IVA, descuento y tipo de cambio; la original no cambia.
+    """
+    # crear_borrador_comercial exige que el origen sea una emisión v2 de otra cotización.
+    empresa = _empresa(clave)
+    client = source.header["client"]
+    quote = Quote(advisor=actor, client_name=client["business_name"], client_rfc=client.get("rfc", ""),
+        client_email=client.get("email", ""), issue_date=timezone.localdate(), valid_days=source.valid_days,
+        notes=source_quote.notes)
+    quote.folio_prefix = _prefijo_folio(clave)
+    _save_new_quote(quote)
+    return commercial_services.crear_borrador_comercial(quote.pk, parts, actor=actor, company=empresa,
+        conditions=source.header["conditions"], client=client, tipo_cambio=commercial_services._tipo(source),
+        exchange_context_id=source.exchange_context_id, tax_rate=source.tax_rate,
+        discount_percent=source.discount_percent, issue_date=quote.issue_date, valid_days=source.valid_days,
+        request_id=request_id, commercial_source=source)
 
 
 @_api("POST")
