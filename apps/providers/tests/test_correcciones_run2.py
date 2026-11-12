@@ -7,10 +7,11 @@ declarado en CCONOR_PROVIDER_HOSTS, y el token no sigue al host nuevo.
 from datetime import timedelta
 
 import httpx
+from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.exceptions import ValidationError
-from django.test import TestCase, tag
+from django.test import RequestFactory, TestCase, tag
 from django.urls import reverse
 from django.utils import timezone
 
@@ -74,27 +75,39 @@ class AdminBaseUrlTests(TestCase):
     def datos(self, base_url):
         return {"code": "syscom", "name": "SYSCOM", "base_url": base_url, "active": "on", "timeout_ms": "8000"}
 
+    def peticion_de(self, usuario):
+        request = RequestFactory().get(self.url)
+        request.user = usuario
+        return request
+
     def test_staff_no_superusuario_no_cambia_base_url(self):
-        """Auditoría run-2 / #5 de la run-1: el POST del staff ya no redirige las credenciales."""
+        """Auditoría run-2 / #5 de la run-1: el POST del staff ya no redirige las credenciales. Desde docs/37 §9
+        el staff ni siquiera entra a /admin/ (va al login)."""
         self.client.force_login(self.staff)
         respuesta = self.client.post(self.url, self.datos("https://evil.invalid/api/v1"))
-        self.assertEqual(respuesta.status_code, 302)  # guarda lo demás
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertIn(reverse("admin:login"), respuesta["Location"])
         self.proveedor.refresh_from_db()
         self.assertEqual(self.proveedor.base_url, SYSCOM_OFICIAL)
         self.assertTrue(ProviderToken.objects.filter(pk=self.token.pk).exists())
 
-    def test_staff_guarda_un_proveedor_con_base_url_anterior_a_la_lista(self):
-        """Regresión: el validador no debe romper (500) el guardado del staff, que no ve base_url."""
+    def test_segunda_capa_base_url_de_solo_lectura_para_el_staff(self):
+        """Si el staff volviera a entrar al admin: base_url sigue de solo lectura y el formulario guarda un valor
+        anterior a la lista de hosts sin romper (regresión del 500)."""
         Provider.objects.filter(pk=self.proveedor.pk).update(base_url="https://api.syscom.mx/api/v1")
-        self.client.force_login(self.staff)
-        respuesta = self.client.post(self.url, {**self.datos("ignorado"), "timeout_ms": "9000"})
-        self.assertEqual(respuesta.status_code, 302)
         self.proveedor.refresh_from_db()
-        self.assertEqual((self.proveedor.base_url, self.proveedor.timeout_ms), ("https://api.syscom.mx/api/v1", 9000))
+        modelo_admin = admin.site._registry[Provider]
+        request = self.peticion_de(self.staff)
+        self.assertIn("base_url", modelo_admin.get_readonly_fields(request, self.proveedor))
+        formulario = modelo_admin.get_form(request, self.proveedor)(
+            data={**self.datos("ignorado"), "timeout_ms": "9000"}, instance=self.proveedor)
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+        self.assertEqual(formulario.save().base_url, "https://api.syscom.mx/api/v1")
 
     def test_staff_no_superusuario_no_da_de_alta_proveedores(self):
         self.client.force_login(self.staff)
-        self.assertEqual(self.client.get(reverse("admin:providers_provider_add")).status_code, 403)
+        self.assertEqual(self.client.get(reverse("admin:providers_provider_add")).status_code, 302)
+        self.assertFalse(admin.site._registry[Provider].has_add_permission(self.peticion_de(self.staff)))
 
     def test_superusuario_con_host_no_declarado_ve_el_error(self):
         self.client.force_login(self.superusuario)

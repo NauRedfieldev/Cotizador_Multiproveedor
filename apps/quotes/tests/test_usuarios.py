@@ -200,7 +200,9 @@ class RolesTests(UsuariosBase):
         otro = self.client_class()
         otro.force_login(self.asesor)
         self.assertEqual(otro.get(reverse("api_capacidades_comerciales")).status_code, 200)
-        fila = self.patch(self.asesor, {"is_active": False}).json()["data"]
+        with self.captureOnCommitCallbacks(execute=True) as al_confirmar:  # se cierran tras el commit (docs/37 §9)
+            fila = self.patch(self.asesor, {"is_active": False}).json()["data"]
+        self.assertEqual(len(al_confirmar), 1)
         self.assertFalse(fila["is_active"])
         self.assertEqual(otro.get(reverse("api_capacidades_comerciales")).status_code, 401)
         self.assertTrue(self.patch(self.asesor, {"is_active": True}).json()["data"]["is_active"])
@@ -230,7 +232,8 @@ class RolesTests(UsuariosBase):
         self.assertEqual(otro.get(reverse("api_capacidades_comerciales")).status_code, 200)
         dueno = self.client_class()
         dueno.force_login(self.root)
-        self.assertRedirects(self.guardar_en_admin(dueno, self.asesor, activo=False), reverse("admin:auth_user_changelist"))
+        with self.captureOnCommitCallbacks(execute=True):  # se cierran tras el commit (docs/37 §9)
+            self.assertRedirects(self.guardar_en_admin(dueno, self.asesor, activo=False), reverse("admin:auth_user_changelist"))
         self.assertFalse(get_user_model().objects.get(pk=self.asesor.pk).is_active)
         self.assertRedirects(self.guardar_en_admin(dueno, self.asesor, activo=True), reverse("admin:auth_user_changelist"))
         self.assertTrue(get_user_model().objects.get(pk=self.asesor.pk).is_active)
@@ -258,13 +261,36 @@ class RolesTests(UsuariosBase):
                  reverse("admin:auth_group_change", args=[Group.objects.get(name=ADMIN_GROUP).pk])]
         cliente = self.client_class()
         cliente.force_login(staff)
+        # Desde docs/37 §9 todo /admin/ es solo del Dueño: el staff va al login del admin (302), no a un 403.
         for ruta in rutas:
             with self.subTest(ruta=ruta):
-                self.assertEqual(cliente.get(ruta).status_code, 403)
+                self.assertEqual(cliente.get(ruta).status_code, 302)
         datos = {"username": "staff1", "is_staff": "on", "is_active": "on", "is_superuser": "on"}
-        self.assertEqual(cliente.post(reverse("admin:auth_user_change", args=[staff.pk]), datos).status_code, 403)
+        self.assertEqual(cliente.post(reverse("admin:auth_user_change", args=[staff.pk]), datos).status_code, 302)
         self.assertFalse(get_user_model().objects.get(pk=staff.pk).is_superuser)
-        self.assertNotContains(cliente.get(reverse("admin:index")), reverse("admin:auth_user_changelist"))
+        self.assertEqual(cliente.get(reverse("admin:index")).status_code, 302)
+        dueno = self.client_class()
+        dueno.force_login(self.root)
+        for ruta in rutas:
+            with self.subTest(dueno=ruta):
+                self.assertEqual(dueno.get(ruta).status_code, 200)
+
+    def test_todo_el_admin_solo_para_el_dueno(self):
+        """docs/37 §9: catálogo y proveedores también; un staff con todos sus permisos no entra a /admin/."""
+        from django.contrib.auth.models import Permission
+        staff = self.usuario("staff_catalogo", is_staff=True)
+        staff.user_permissions.set(Permission.objects.filter(content_type__app_label__in=["catalog", "providers"]))
+        sin_staff = self.usuario("root_sin_staff", is_superuser=True)
+        rutas = [reverse("admin:index"), reverse("admin:catalog_sinonimored_changelist"),
+                 reverse("admin:catalog_productocanonico_changelist"), reverse("admin:providers_provider_changelist")]
+        for usuario in (staff, sin_staff):
+            cliente = self.client_class()
+            cliente.force_login(usuario)
+            for ruta in rutas:
+                with self.subTest(usuario=usuario.username, ruta=ruta):
+                    respuesta = cliente.get(ruta)
+                    self.assertEqual(respuesta.status_code, 302)
+                    self.assertIn(reverse("admin:login"), respuesta["Location"])
         dueno = self.client_class()
         dueno.force_login(self.root)
         for ruta in rutas:
@@ -691,22 +717,24 @@ class RevocacionDuranteContrasenaTests(UsuariosBase):
             "old_password": "Clave-Qa-2026!", "new_password1": nueva, "new_password2": nueva})
 
     def test_quitar_staff_mientras_cambia_contrasena_en_admin(self):
-        staff = self.usuario("staff1", is_staff=True)
-        cliente = self.client_class()
-        cliente.force_login(staff)
-        RevocarDuranteLaValidacion.accion = lambda: get_user_model().objects.filter(pk=staff.pk).update(is_staff=False)
-        self.assertEqual(self.cambiar_en_admin(cliente).status_code, 403)
-        fresco = get_user_model().objects.get(pk=staff.pk)
-        self.assertFalse(fresco.is_staff)
-        self.assertTrue(fresco.check_password("Clave-Qa-2026!"))
-        self.assertEqual(cliente.get(reverse("admin:index")).status_code, 302)   # sin staff, el admin manda al login
+        # /admin/ es solo del Dueño (docs/37 §9): quitarle staff o superusuario a la mitad gana igual.
+        for revocar in ({"is_staff": False}, {"is_superuser": False}):
+            with self.subTest(revocar=revocar):
+                jefe = self.usuario(f"jefe_{next(iter(revocar))}", is_staff=True, is_superuser=True)
+                cliente = self.client_class()
+                cliente.force_login(jefe)
+                RevocarDuranteLaValidacion.accion = lambda: get_user_model().objects.filter(pk=jefe.pk).update(**revocar)
+                self.assertEqual(self.cambiar_en_admin(cliente).status_code, 403)
+                fresco = get_user_model().objects.get(pk=jefe.pk)
+                self.assertTrue(fresco.check_password("Clave-Qa-2026!"))
+                self.assertEqual(cliente.get(reverse("admin:index")).status_code, 302)   # el admin manda al login
 
     def test_sin_revocacion_el_cambio_en_admin_sigue_igual(self):
-        staff = self.usuario("staff1", is_staff=True)
+        jefe = self.usuario("jefe1", is_staff=True, is_superuser=True)
         cliente = self.client_class()
-        cliente.force_login(staff)
+        cliente.force_login(jefe)
         self.assertRedirects(self.cambiar_en_admin(cliente), reverse("admin:password_change_done"))
-        self.assertTrue(get_user_model().objects.get(pk=staff.pk).check_password("Otra-Clave-Nueva-9"))
+        self.assertTrue(get_user_model().objects.get(pk=jefe.pk).check_password("Otra-Clave-Nueva-9"))
         self.assertEqual(cliente.get(reverse("admin:index")).status_code, 200)   # la sesión sigue viva
 
 
@@ -733,3 +761,96 @@ class VencimientoDeSesionTests(UsuariosBase):
         sesion.expire_date = timezone.now() - timedelta(seconds=1)
         sesion.save()
         self.assertEqual(self.client.get(reverse("api_capacidades_comerciales")).status_code, 401)
+
+
+class EndurecimientoRun1Tests(UsuariosBase):
+    """docs/37 §9: las 8 recomendaciones de endurecimiento de la run-1 (§5 del informe) que faltaban."""
+
+    datos = InvitacionTests.datos
+
+    def invitar(self, **cambios):
+        return self.api("post", reverse("api_usuarios"), {**self.datos, **cambios})
+
+    def sesiones_de(self, usuario):
+        from django.contrib.sessions.models import Session
+        return [s for s in Session.objects.all() if s.get_decoded().get("_auth_user_id") == str(usuario.pk)]
+
+    def test_a_las_sesiones_se_cierran_despues_del_commit(self):
+        otro = self.client_class()
+        otro.force_login(self.asesor)
+        with self.captureOnCommitCallbacks() as al_confirmar:
+            self.assertEqual(self.patch(self.asesor, {"is_active": False}).status_code, 200)
+            self.assertEqual(len(self.sesiones_de(self.asesor)), 1)  # dentro de la transacción no se tocan
+        self.assertEqual(otro.get(reverse("api_capacidades_comerciales")).status_code, 401)  # inactivo: ya no entra
+        for funcion in al_confirmar:
+            funcion()
+        self.assertEqual(self.sesiones_de(self.asesor), [])
+
+    def test_b_el_enlace_caduca_si_cambia_activo_staff_o_superusuario(self):
+        for campo, valor in (("is_active", False), ("is_staff", True), ("is_superuser", True)):
+            with self.subTest(campo=campo):
+                usuario = self.usuario(f"enlace_{campo}", INTERNAL_GROUP)
+                token = usuarios.generador_de_enlaces.make_token(usuario)
+                self.assertTrue(usuarios.generador_de_enlaces.check_token(usuario, token))
+                get_user_model().objects.filter(pk=usuario.pk).update(**{campo: valor})
+                usuario.refresh_from_db()
+                self.assertFalse(usuarios.generador_de_enlaces.check_token(usuario, token))
+
+    def test_c_set_commercial_permission_deja_registro(self):
+        from apps.quotes.permissions import set_commercial_permission
+        set_commercial_permission(self.personal.pk, FX, actor=self.admin, enabled=True)
+        registro = LogEntry.objects.get(object_id=str(self.personal.pk), change_message__contains=FX)
+        self.assertEqual(registro.user_id, self.admin.pk)
+        self.assertIn("concedido", registro.change_message)
+        self.assertTrue(registro.change_message.startswith(usuarios.PREFIJO_LOG))
+
+    def test_d_sin_gestionar_usuarios_no_toma_el_lock(self):
+        from django.core.exceptions import PermissionDenied
+        from django.db import connection, transaction
+        from django.test.utils import CaptureQueriesContext
+        with CaptureQueriesContext(connection) as consultas, transaction.atomic(), self.assertRaises(PermissionDenied):
+            usuarios._bloquear_y_cargar(self.asesor, self.personal.pk)
+        self.assertFalse([q for q in consultas.captured_queries if "FOR UPDATE" in q["sql"]])
+
+    def test_e_una_invitacion_pendiente_no_cuenta_como_administrador(self):
+        pendiente = self.usuario("admin_pendiente", ADMIN_GROUP)
+        pendiente.set_unusable_password()
+        pendiente.save()
+        self.client.force_login(self.root)
+        respuesta = self.patch(self.admin, {"role": "asesor"})
+        self.assertEqual(respuesta.status_code, 400)
+        self.assertIn("único administrador", respuesta.json()["error"])
+        pendiente.set_password("Clave-Qa-2026!")  # aceptó la invitación
+        pendiente.last_login = timezone.now()
+        pendiente.save()
+        self.assertEqual(self.patch(self.admin, {"role": "asesor"}).status_code, 200)
+
+    @override_settings(MAILERS={"default": DUMMY, "sistemas": {"BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+                                                                 "OPTIONS": {"host": "smtp.qa.example.invalid", "username": ""}}},
+                       SISTEMAS_SMTP_FROM="")
+    def test_f_sin_gestionar_usuarios_es_403_aunque_falte_el_remitente(self):
+        self.client.force_login(self.asesor)
+        self.assertEqual(self.invitar().status_code, 403)
+        self.assertEqual(self.api("post", reverse("api_reenviar_invitacion", args=[self.personal.pk])).status_code, 403)
+        self.assertEqual(self.api("post", reverse("api_enlace_contrasena", args=[self.personal.pk])).status_code, 403)
+        self.client.force_login(self.admin)
+        self.assertEqual(self.invitar().status_code, 503)  # quien gestiona sí ve el aviso de configuración
+
+    def test_g_nombres_sin_saltos_ni_caracteres_invisibles(self):
+        for nombre in ("Luis\nPérez", "Luis\rX", "Luis‮X", "Luis​X", "Luis\x00X"):
+            for campo in ("first_name", "last_name"):
+                with self.subTest(campo=campo, nombre=repr(nombre)):
+                    respuesta = self.invitar(**{campo: nombre})
+                    self.assertEqual(respuesta.status_code, 400)
+                    self.assertIn("caracteres invisibles", respuesta.json()["error"])
+        self.assertFalse(get_user_model().objects.filter(username="lperez").exists())
+        self.assertEqual(self.invitar(first_name="José Ñandú").status_code, 201)
+
+    @override_settings(MAILERS={"default": DUMMY, "sistemas": {"BACKEND": "django.core.mail.backends.console.EmailBackend"}})
+    def test_h_la_consola_nunca_lleva_el_enlace(self):
+        with mock.patch.object(usuarios, "_enviar", return_value="console") as enviar:
+            self.assertEqual(self.invitar().status_code, 201)
+        mensaje = enviar.call_args.args[0]
+        for cuerpo in (mensaje.body, mensaje.alternatives[0][0]):
+            self.assertNotIn("/elegir-contrasena/", cuerpo)
+            self.assertIn("Enlace no incluido", cuerpo)

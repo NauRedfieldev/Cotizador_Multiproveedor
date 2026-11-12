@@ -43,7 +43,7 @@ from .comparison import NIVEL_SIN_COINCIDENCIA, TipoCambio, comparar_configurado
 from .models import DefaultCommercialCondition, Quote, QuoteRevision
 from .pdf import build_demo_quote, colores_marca, generate_quote_pdf, money, safe_filename
 from .permissions import require_commercial_permission
-from .snapshots import ArchivedPDFError, CotizacionAjena, RevisionConflict, obtener_documento
+from .snapshots import ArchivedPDFError, CotizacionAjena, PdfOcupado, RevisionConflict, obtener_documento
 from .taxes import TASA_IVA_INICIAL
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,11 @@ def _document_error(exc):
         return JsonResponse({"error": "No tienes acceso a esta cotización."}, status=403)
     if isinstance(exc, ArchivedPDFError):
         return JsonResponse({"error": "PDF original no disponible o dañado; requiere recuperación."}, status=503)
+    if isinstance(exc, PdfOcupado):
+        # docs/37 §9: ya hay 2 borradores generándose; reintentar en unos segundos.
+        response = JsonResponse({"error": "Se están generando otros PDF; intenta de nuevo en unos segundos."}, status=503)
+        response["Retry-After"] = "5"
+        return response
     if isinstance(exc, RevisionConflict):
         # Mensajes propios de M8, sin datos internos: explican qué recargar o preparar.
         message = exc.messages[0] if exc.messages else "La revisión requiere emisión o recarga."

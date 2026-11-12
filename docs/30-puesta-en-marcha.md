@@ -1,6 +1,6 @@
 # Puesta en marcha · Pendientes antes del uso real
 
-> **Estado del documento: ABIERTO** · Última revisión: 2026-10-26 (B3 CCONOR hecho y probado; B6 esquema de roles hecho; M4 hecho; 2026-10-27: B5 Exel hecho por web scraping. 2026-11-10: B3b correo de Torva hecho. 2026-11-12: A10–A13 para el servidor sin Docker (proxy + uvicorn, un worker, estáticos); B6b roles por puesto y Dueño decididos. Pendiente: B7 aceptación y respaldos)
+> **Estado del documento: ABIERTO** · Última revisión: 2026-10-26 (B3 CCONOR hecho y probado; B6 esquema de roles hecho; M4 hecho; 2026-10-27: B5 Exel hecho por web scraping. 2026-11-10: B3b correo de Torva hecho. 2026-11-12: A10–A13 para el servidor sin Docker (proxy + uvicorn, un worker, estáticos); B6b roles por puesto y Dueño decididos; A14 sin Docker. Pendiente: B7 aceptación y respaldos)
 >
 > Este es el único documento de pendientes; los demás de `docs/` son técnicos y no
 > llevan estados. Reglas:
@@ -37,7 +37,7 @@ No tienen estado global: que estén hechos en un equipo no significa que lo est�
 | A11 | Solo servidor. HTTPS en un proxy o en el hosting (IIS, Apache, nginx o el panel), que pone el certificado y reenvía a `http://127.0.0.1:8000` con `X-Forwarded-For` y `X-Forwarded-Proto`. Después, `USE_HTTPS=True` en `.env` | `http://<dominio>` redirige a `https://`; la cookie `sessionid` sale con `Secure`; el log **no** muestra el aviso de `settings/proxy.py` («proxy no reconocido») | Auditoría run-1 #8, #12, #13 |
 | A12 | Solo servidor. Arrancar con `despliegue/iniciar_servidor.ps1` (Windows; `-IpProxy` = IP del proxy) o `despliegue/cotizador.service.ejemplo` (Linux, systemd; `FORWARDED_ALLOW_IPS`). **Un solo worker**: los límites de login, recuperar contraseña, búsquedas, PDF y correo viven en la memoria del proceso | Tras 20 logins fallidos desde una IP, otra IP sigue entrando (los límites ven la IP real, no la del proxy); el proceso tiene `--workers 1` | Auditoría run-1 #12–#14, run-2 #16 y #20; docs/37 |
 | A13 | Solo servidor. `SERVIR_ESTATICOS=True` en `.env` si el proxy no entrega `/static/` (con `DEBUG=False` Django no lo hace solo) | `/static/admin/css/base.css` → 200 y `/login/` se ve con estilos | `settings/asgi.py` |
-| A14 | Solo servidor. Borrar las sesiones vencidas una vez al día con `python manage.py clearsessions`: tarea programada de Windows, `cron` o un timer de systemd en Linux, o `docker compose exec web python manage.py clearsessions` con Docker. La sesión vence tras 8 h sin uso (`SESSION_COOKIE_AGE`), pero la fila sigue en la BD hasta que se borra | La tabla `django_session` no guarda filas con `expire_date` de días anteriores | docs/37 §8 |
+| A14 | Solo servidor. Borrar las sesiones vencidas una vez al día con `python manage.py clearsessions`: tarea programada de Windows, o `cron` o un timer de systemd en Linux. La sesión vence tras 8 h sin uso (`SESSION_COOKIE_AGE`), pero la fila sigue en la BD hasta que se borra | La tabla `django_session` no guarda filas con `expire_date` de días anteriores | docs/37 §8 |
 
 ## B. Decisiones y validaciones únicas
 

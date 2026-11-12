@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.admin import GroupAdmin, UserAdmin
 from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
 
 from .models import DefaultCommercialCondition, QuoteCommercialConfirmation, QuoteRevision, QuoteSnapshot
 from .permissions import require_commercial_permission
@@ -12,6 +13,18 @@ from .usuarios import FormularioCambiarContrasenaAdmin, FormularioLoginAdmin, _c
 admin.site.password_change_form = FormularioCambiarContrasenaAdmin
 # admin/login/ comparte el límite de intentos fallidos por IP con login/.
 admin.site.login_form = FormularioLoginAdmin
+
+
+def _solo_dueno(request):
+    """docs/37 §9: todo /admin/ es solo del superusuario (el Dueño). Ningún rol del portal recibe is_staff, y
+    desde aquí se cambia el emparejamiento de productos (catálogo) y a dónde viajan las credenciales de los
+    proveedores. Un staff que no sea superusuario ve el login del admin. Las reglas por modelo
+    (SoloSuperusuario, base_url de solo lectura) quedan como segunda capa."""
+    usuario = request.user
+    return usuario.is_active and usuario.is_staff and usuario.is_superuser
+
+
+admin.site.has_permission = _solo_dueno
 
 
 class SoloSuperusuario:
@@ -44,7 +57,7 @@ class UsuarioAdmin(SoloSuperusuario, UserAdmin):
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
         if change and "is_active" in form.changed_data and not obj.is_active:
-            _cerrar_sesiones(obj)
+            transaction.on_commit(lambda: _cerrar_sesiones(obj))  # fuera de la transacción (docs/37 §9)
 
 
 class GrupoAdmin(SoloSuperusuario, GroupAdmin):

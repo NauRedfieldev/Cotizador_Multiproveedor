@@ -212,3 +212,67 @@ class TipoCambioConTopeTests(TestCase):
             valor, fallo = await tipo_cambio_sugerido()
         self.assertEqual((valor, fallo), (None, True))
         self.assertIn("RespuestaDemasiadoGrande", registros.output[0])
+
+
+class PdfDeBorradorTests(CommercialFixtures, TestCase):
+    """docs/37 §9 (auditoría run-2 #20): caché del PDF ya generado, máximo 2 a la vez y tope de texto total."""
+
+    def setUp(self):
+        super().setUp()
+        for alias in ("pdfs", "limites"):
+            caches[alias].clear()
+            self.addCleanup(caches[alias].clear)
+        self.v1 = self.draft()
+        self.client.force_login(self.actor)
+        self.url = f"/cotizaciones/{self.quote.folio}/pdf/?revision={self.v1.number}"
+
+    def test_el_mismo_borrador_se_genera_una_sola_vez(self):
+        from apps.quotes import pdf
+
+        with mock.patch("apps.quotes.pdf.generate_quote_pdf", wraps=pdf.generate_quote_pdf) as generar:
+            primero, segundo = self.client.get(self.url), self.client.get(self.url)
+        self.assertEqual((primero.status_code, segundo.status_code), (200, 200))
+        self.assertEqual(generar.call_count, 1)
+        self.assertEqual(primero.content, segundo.content)
+
+    def test_si_el_borrador_cambia_se_genera_de_nuevo(self):
+        with mock.patch("apps.quotes.pdf.generate_quote_pdf", return_value=b"%PDF-QA") as generar:
+            self.client.get(self.url)
+            self.edit(self.v1, [partida(precio="2.5")])
+            self.client.get(self.url)
+        self.assertEqual(generar.call_count, 2)
+
+    def test_con_dos_pdf_en_curso_el_tercero_da_503_y_el_de_cache_sale(self):
+        from apps.quotes import snapshots
+
+        self.client.get(self.url)  # queda en caché
+        otro = self.draft([partida(precio="7")])
+        tomados = [snapshots._GENERANDO.acquire(blocking=False) for _ in range(snapshots.MAX_PDF_SIMULTANEOS)]
+        try:
+            ocupado = self.client.get(f"/cotizaciones/{self.quote.folio}/pdf/?revision={otro.number}")
+            de_cache = self.client.get(self.url)
+        finally:
+            for _ in tomados:
+                snapshots._GENERANDO.release()
+        self.assertEqual(tomados, [True] * snapshots.MAX_PDF_SIMULTANEOS)
+        self.assertEqual(ocupado.status_code, 503)
+        self.assertEqual(ocupado["Retry-After"], "5")
+        self.assertIn("error", ocupado.json())
+        self.assertEqual(de_cache.status_code, 200)
+
+    def test_tope_de_texto_total_en_borradores_v1_y_v2(self):
+        from django.core.exceptions import ValidationError
+
+        from apps.quotes.snapshot_values import MAX_TEXTO_TOTAL
+
+        n = 25
+        por_partida = MAX_TEXTO_TOTAL // n
+        v1 = lambda extra: [partida(description="d" * (por_partida - len("Equipo de prueba") + (extra if i == 0 else 0)))
+                            for i in range(n)]
+        v2 = lambda extra: [commercial_line(description="d" * (por_partida - len("Concepto sintético") + (extra if i == 0 else 0)))
+                            for i in range(n)]
+        self.assertIsNotNone(self.draft(v1(0)))
+        self.assertIsNotNone(self.commercial_draft(v2(0)))
+        for crear, partes in ((self.draft, v1(1)), (self.commercial_draft, v2(1))):
+            with self.subTest(crear=crear.__name__), self.assertRaisesMessage(ValidationError, "150 000 caracteres"):
+                crear(partes)

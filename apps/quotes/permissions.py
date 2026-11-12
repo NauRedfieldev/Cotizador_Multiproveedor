@@ -4,6 +4,7 @@ Se consulta un usuario fresco en cada comprobación: las cachés de has_perm del
 actor de una petición anterior no deben sobrevivir a una revocación.
 """
 
+from django.contrib.admin.models import CHANGE, LogEntry
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -93,4 +94,8 @@ def set_commercial_permission(user_id, capability, *, actor, enabled):
             target.user_permissions.add(permission)
         else:
             target.user_permissions.remove(permission)
+        # docs/37 §9: queda en el mismo historial que «Usuarios y permisos» (prefijo «B6: » de usuarios.py).
+        LogEntry.objects.log_actions(manager.pk, [target], CHANGE, change_message=(
+            f"B6: permiso extra {capability} {'concedido' if enabled else 'retirado'} "
+            "(api/v1/commercial/permissions)"))
         return target
